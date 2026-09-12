@@ -1,0 +1,20 @@
+# =====================================================================
+#  weasel.custom.example.yaml —— 多行候选框（每行约 5 个候选）
+#
+#  放到 rime 用户目录，文件名必须是 weasel.custom.yaml，
+#  然后重新部署 + 重启 WeaselServer 才会生效。
+#
+#  作用：`style/layout/max_width` > 0 时，横向候选框一旦超过这个宽度就换行，
+#        于是候选会排成多行网格（实测 300 时 9 个候选排成 2 行、每行约 5 个；
+#        620 时不会换行，因为一行还没那么宽）。
+#
+#  想让候选框回到原来的「一行 9 个」：
+#    把下面的 max_width 改成 0，并把 menu/page_size 改回 9，重启 WeaselServer。
+#
+#  注意：Weasel 读取的是编译产物 build/weasel.yaml。本项目的部署脚本
+#  （src/windows/patch-build-schema.ps1 / 重建部署）只负责 schema 的结构键；
+#  改主题键时要同时改 build/weasel.yaml 和 %APPDATA%\Rime\build\weasel.yaml，
+#  而且必须用 UTF-8 读写（见 docs/TROUBLESHOOTING.md 的 YAML 编码坑）。
+# =====================================================================
+patch:
+  "style/layout/max_width": 300   # 候选框超过此宽度就换行（形成多行候选框）

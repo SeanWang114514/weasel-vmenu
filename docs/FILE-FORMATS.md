@@ -7,7 +7,7 @@
 | --- | --- | --- | --- |
 | `clipboard-cache.txt` | UTF-8 **无 BOM** | `clipboard-sync.ps1`、设置窗口 | Lua、设置窗口 |
 | `cn_dicts/favorites.dict.yaml` | UTF-8 无 BOM | 设置窗口、用户 | Lua、设置窗口 |
-| `vmenu-settings.txt` | UTF-8 无 BOM | 设置窗口、Lua（`v`→`5`→`3`） | Lua、设置窗口 |
+| `vmenu-settings.txt` | UTF-8 无 BOM | 设置窗口、Lua（`vsetn` 子模式；`v` 菜单第 5 项已于 0.2.0 去掉，现在只能手打 `vset` 进入） | Lua、设置窗口 |
 | `open-settings.flag` | 文本（内容不解析） | Lua | 常驻设置窗口（读完即删） |
 
 > **为什么强调「无 BOM」**：带 BOM 时第一条剪贴板内容会多出一个看不见的字符（`U+FEFF`），

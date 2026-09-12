@@ -177,7 +177,7 @@ $tabs.Padding = New-Object Drawing.Point(14, 6)
 $tabClip = New-Object Windows.Forms.TabPage
 $tabClip.Text = '  剪贴板历史  '
 $tabFav = New-Object Windows.Forms.TabPage
-$tabFav.Text = '  收藏内容  '
+$tabFav.Text = '  常用语  '
 $tabSet = New-Object Windows.Forms.TabPage
 $tabSet.Text = '  设置与缓存  '
 
@@ -232,7 +232,7 @@ $clipHint.Left = 10
 $clipHint.Top = 236
 $clipHint.Width = 160
 $clipHint.Height = 280
-$clipHint.Text = "输入法里按 v → 2 可以快速取用。`n`n超过 50 条时自动丢弃最旧的。`n`n多行内容会被压平成一行。"
+$clipHint.Text = "输入法里按 v → 2 可以快速取用。`n`n双击某一条可以直接编辑。`n`n超过 50 条时自动丢弃最旧的。`n`n多行内容会被压平成一行。"
 
 function Refresh-Clipboard {
   Load-Clipboard
@@ -251,7 +251,47 @@ function Refresh-Clipboard {
   $clipInfo.Text = "当前缓存 $($script:clip.Count) 条（上限 $MAX_CLIP 条）。输入法剪贴板列表默认显示 $($script:pageSize) 条，按 m 键每次 +$STEP 条，最多 $MAX_PAGE 条。"
 }
 
-# ===== 收藏页 =====
+function Edit-Clipboard {
+  param([int]$Index = -1)
+  if ($Index -lt 0 -or $Index -ge $script:clip.Count) { return }
+  $dlg = New-Object Windows.Forms.Form
+  $dlg.Text = "编辑第 $($Index + 1) 条"
+  $dlg.ClientSize = New-Object Drawing.Size(560, 150)
+  $dlg.StartPosition = 'CenterParent'
+  $dlg.FormBorderStyle = 'FixedDialog'
+  $dlg.MaximizeBox = $false
+  $dlg.MinimizeBox = $false
+  $dlg.Font = $form.Font
+
+  $l1 = New-Object Windows.Forms.Label
+  $l1.Text = '内容（保存后立即生效，输入法里按 v → 2 就能取用）'
+  $l1.Left = 18; $l1.Top = 16; $l1.Width = 520
+
+  $t1 = New-Object Windows.Forms.TextBox
+  $t1.Left = 18; $t1.Top = 40; $t1.Width = 520
+  $t1.Text = $script:clip[$Index]
+  $t1.SelectionStart = 0
+  $t1.SelectionLength = $t1.Text.Length
+
+  $ok = New-Object Windows.Forms.Button
+  $ok.Text = '确定'; $ok.Left = 354; $ok.Top = 92; $ok.Width = 88; $ok.DialogResult = 'OK'
+  $cancel = New-Object Windows.Forms.Button
+  $cancel.Text = '取消'; $cancel.Left = 450; $cancel.Top = 92; $cancel.Width = 88; $cancel.DialogResult = 'Cancel'
+
+  $dlg.Controls.AddRange(@($l1, $t1, $ok, $cancel))
+  $dlg.AcceptButton = $ok
+  $dlg.CancelButton = $cancel
+
+  if ($dlg.ShowDialog($form) -ne [Windows.Forms.DialogResult]::OK) { return }
+  $v = ($t1.Text -replace "`r?`n", ' ').Trim()
+  if ($v.Length -eq 0) { [void][Windows.Forms.MessageBox]::Show('内容不能为空。', '提示'); return }
+  $script:clip[$Index] = $v
+  Save-Clipboard
+  Refresh-Clipboard
+  $statusLabel.Text = "已修改第 $($Index + 1) 条"
+}
+
+# ===== 常用语页 =====
 $favInfo = New-Object Windows.Forms.Label
 $favInfo.Padding = New-Object Windows.Forms.Padding(8, 8, 8, 0)
 
@@ -280,7 +320,7 @@ $favHint.Left = 10
 $favHint.Top = 318
 $favHint.Width = 160
 $favHint.Height = 200
-$favHint.Text = "用法：`n· 打字时键入编码的前 3 位，内容就会出现在候选第 2 位（纯数字编码则把编码打完）。`n`n· 输入法里按 v → 3 也能搜索取用。`n`n· 这里的改动立即生效（输入法直接读这个文件）。"
+$favHint.Text = "用法：`n· 打字时键入编码的前 3 位，内容就会出现在候选第 2 位（纯数字编码则把编码打完，再按回车直接上屏）。`n`n· 双击某一条可以直接修改。`n`n· 输入法里按 v → 3 也能搜索取用。`n`n· 这里的改动立即生效（输入法直接读这个文件）。"
 
 function Refresh-Favorites {
   Load-Favorites
@@ -294,13 +334,13 @@ function Refresh-Favorites {
     [void]$favList.Items.Add($it)
   }
   $favList.EndUpdate()
-  $favInfo.Text = "共 $($script:favs.Count) 条收藏。打字时键入编码前 3 位，内容会出现在候选第 2 位。"
+  $favInfo.Text = "共 $($script:favs.Count) 条常用语。打字时键入编码前 3 位，内容会出现在候选第 2 位；纯数字编码把编码打完再按回车即可直接上屏。"
 }
 
 function Edit-Favorite {
   param([int]$Index = -1)
   $dlg = New-Object Windows.Forms.Form
-  $dlg.Text = if ($Index -ge 0) { '修改收藏' } else { '添加收藏' }
+  $dlg.Text = if ($Index -ge 0) { '修改常用语' } else { '添加常用语' }
   $dlg.ClientSize = New-Object Drawing.Size(420, 190)
   $dlg.StartPosition = 'CenterParent'
   $dlg.FormBorderStyle = 'FixedDialog'
@@ -383,7 +423,7 @@ $btnClearClip = New-Object Windows.Forms.Button
 $btnClearClip.Text = '清理剪贴板缓存'; $btnClearClip.Left = 18; $btnClearClip.Top = 74; $btnClearClip.Width = 160; $btnClearClip.Height = 32
 
 $btnClearFav = New-Object Windows.Forms.Button
-$btnClearFav.Text = '清空全部收藏'; $btnClearFav.Left = 190; $btnClearFav.Top = 74; $btnClearFav.Width = 160; $btnClearFav.Height = 32
+$btnClearFav.Text = '清空全部常用语'; $btnClearFav.Left = 190; $btnClearFav.Top = 74; $btnClearFav.Width = 160; $btnClearFav.Height = 32
 
 $grpFiles = New-Object Windows.Forms.GroupBox
 $grpFiles.Text = '文件位置（改动即时写入）'
@@ -396,7 +436,7 @@ $tbFiles.Multiline = $true
 $tbFiles.ReadOnly = $true
 $tbFiles.ScrollBars = 'Vertical'
 $tbFiles.BackColor = [Drawing.Color]::White
-$tbFiles.Text = "剪贴板历史：$CLIP_PATH`r`n收藏：$FAV_PATH`r`n设置：$SET_PATH`r`n`r`n" +
+$tbFiles.Text = "剪贴板历史：$CLIP_PATH`r`n常用语：$FAV_PATH`r`n设置：$SET_PATH`r`n`r`n" +
   "提示：改完这里的内容后无需重启输入法；输入法每次打开 v 菜单都会重新读取。`r`n" +
   "若在输入法里改了内容想在这里看到，点「重新载入」即可。"
 
@@ -450,11 +490,16 @@ $btnClipTop.Add_Click({
   $statusLabel.Text = '已置顶'
 })
 
+# 双击所选条目 → 直接在弹框里编辑
 $clipList.Add_DoubleClick({
   if ($clipList.SelectedItems.Count -eq 0) { return }
-  $i = [int]$clipList.SelectedItems[0].Tag
-  [Windows.Forms.Clipboard]::SetText($script:clip[$i])
-  $statusLabel.Text = "已复制第 $($i + 1) 条到剪贴板"
+  Edit-Clipboard -Index ([int]$clipList.SelectedItems[0].Tag)
+})
+
+# 双击常用语 → 直接修改
+$favList.Add_DoubleClick({
+  if ($favList.SelectedItems.Count -eq 0) { return }
+  Edit-Favorite -Index ([int]$favList.SelectedItems[0].Tag)
 })
 
 $btnFavAdd.Add_Click({ Edit-Favorite -Index -1 })
@@ -468,7 +513,7 @@ $btnFavDel.Add_Click({
   if ($favList.SelectedItems.Count -eq 0) { $statusLabel.Text = '请先选中要删除的条目'; return }
   $idx = @($favList.SelectedItems | ForEach-Object { [int]$_.Tag }) | Sort-Object -Descending
   $n = $idx.Count
-  if (-not (Confirm -Message "确定删除选中的 $n 条收藏？此操作不可恢复。" -Title '删除收藏')) { return }
+  if (-not (Confirm -Message "确定删除选中的 $n 条常用语？此操作不可恢复。" -Title '删除常用语')) { return }
   $list = New-Object System.Collections.ArrayList
   for ($i = 0; $i -lt $script:favs.Count; $i++) {
     if ($idx -notcontains $i) { [void]$list.Add($script:favs[$i]) }
@@ -476,16 +521,16 @@ $btnFavDel.Add_Click({
   $script:favs = @($list)
   Save-Favorites
   Refresh-Favorites
-  $statusLabel.Text = "已删除 $n 条收藏"
+  $statusLabel.Text = "已删除 $n 条常用语"
 })
 
 $btnFavClear.Add_Click({
-  if ($script:favs.Count -eq 0) { $statusLabel.Text = '收藏已经是空的'; return }
-  if (-not (Confirm -Message "确定清空全部 $($script:favs.Count) 条收藏？此操作不可恢复。" -Title '清空收藏')) { return }
+  if ($script:favs.Count -eq 0) { $statusLabel.Text = '常用语已经是空的'; return }
+  if (-not (Confirm -Message "确定清空全部 $($script:favs.Count) 条常用语？此操作不可恢复。" -Title '清空常用语')) { return }
   $script:favs = @()
   Save-Favorites
   Refresh-Favorites
-  $statusLabel.Text = '收藏已全部清空'
+  $statusLabel.Text = '常用语已全部清空'
 })
 
 $btnFavReload.Add_Click({ Refresh-Favorites; $statusLabel.Text = '已重新载入' })
@@ -532,11 +577,11 @@ $btnClearClip.Add_Click({
 })
 
 $btnClearFav.Add_Click({
-  if (-not (Confirm -Message "确定清空全部收藏？`n`n这会删除 favorites.dict.yaml 里的全部词条，不可恢复。" -Title '清空收藏 · 二次确认')) { return }
+  if (-not (Confirm -Message "确定清空全部常用语？`n`n这会删除 favorites.dict.yaml 里的全部词条，不可恢复。" -Title '清空常用语 · 二次确认')) { return }
   $script:favs = @()
   Save-Favorites
   Refresh-Favorites
-  $statusLabel.Text = '收藏已清空'
+  $statusLabel.Text = '常用语已清空'
 })
 
 # ---------------------------------------------------------------------------

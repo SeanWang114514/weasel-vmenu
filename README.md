@@ -1,15 +1,17 @@
 # weasel-vmenu · 小狼毫输入法「v 功能菜单」
 
-给小狼毫（Weasel / librime）加一套 **v 功能菜单**：可视化设置窗口、剪贴板历史、收藏快捷输入，
-以及「原符号输入」还原。全部用 **librime-lua + PowerShell 5.1** 实现，不改输入法源码、不重新编译。
+给小狼毫（Weasel / librime）加一套 **v 功能菜单**：可视化设置窗口、剪贴板历史、常用语快捷输入、
+多行候选框，以及「原符号输入」还原。全部用 **librime-lua + PowerShell 5.1** 实现，
+不改输入法源码、不重新编译。
 
 > **English TL;DR** — A Lua + PowerShell extension pack for the
 > [Weasel](https://github.com/rime/weasel) IME on Windows (built and verified against
 > Weasel 0.17.4 + librime 1.13.1 + [rime-ice](https://github.com/iDvel/rime-ice)):
-> press `v` for a menu (`1` 设置 / `2` 剪贴板 / `3` 收藏 / `4` 原符号 / `5` 文字设置).
+> press `v` for a menu (`1` 设置 / `2` 剪贴板 / `3` 常用语 / `4` 原符号).
 > Includes a **resident WinForms settings GUI** that opens in ~0.1 s, a clipboard-history
 > quick picker, favourite snippets that appear as **candidate #2 while you type their code**
-> (Enter invokes them), and the isolation/tooling to verify everything with screenshots.
+> (Enter invokes them), a **multi-row candidate window** (theme `max_width` + schema `page_size`),
+> and the isolation/tooling to verify everything with screenshots.
 > Source in `src/`, verification harness in `tools/`, docs in `docs/`.
 > See [`docs/AGENT-HANDOFF.md`](docs/AGENT-HANDOFF.md) before changing anything.
 
@@ -17,21 +19,31 @@
 
 ## 1. 它是什么
 
-按 `v` 打开功能菜单（候选栏里只有 5 个短词）：
+按 `v` 打开功能菜单（候选栏里只有 4 个短词）：
 
 | 候选 | 功能 | 说明 |
 | --- | --- | --- |
 | `1 设置` | 可视化设置窗口 | 常驻进程，`v`→`1` 后约 **0.1 秒**出现窗口 |
 | `2 剪贴板` | 剪贴板快查 | 后台脚本同步系统剪贴板到文本文件，Lua 只读文件 |
-| `3 收藏` | 收藏快查 | 可继续输入编码过滤 |
+| `3 常用语` | 常用语快查 | 可继续输入编码过滤（注释显示「快捷内容」） |
 | `4 原符号` | 还原原版 `v` 模式 | 之后直接输入符号编码（`2` → 二 贰 ² ₂ Ⅱ …） |
-| `5 文字设置` | 纯键盘设置 | 和图形窗口共用同一批配置文件 |
 
-除菜单外还有两条「不用按 v」的能力：
+> 原来的第 5 项「文字设置」（`vset` 纯键盘设置）已从菜单**去掉**：`vset` / `vsetc` / `vsetf` /
+> `vsetn` / `vsetx` 的 Lua 代码**保留但不再能从菜单进入**，只有手打 `vset` 才进得去。
+> 设置一律走第 1 项的可视化窗口。
 
-* **收藏候选第 2 位**：正常打字时键入收藏编码的**前 3 位**，内容直接出现在候选第 2 位。
-* **编码打完 + 回车 = 直接调用**：输入与某条收藏编码**完全一致**时，回车把收藏内容上屏
+除菜单外还有三条「不用按 v」的能力：
+
+* **常用语候选第 2 位**：正常打字时键入常用语编码的**前 3 位**，内容直接出现在候选第 2 位
+  （注释显示「常用语」）。
+* **编码打完 + 回车 = 直接调用**：输入与某条编码**完全一致**时，回车把内容上屏
   （字母编码、纯数字编码都支持）。
+* **多行候选框**：候选多了会自动换行排成多栏（见 §4「多行候选框」）。
+
+> **关于「收藏 → 常用语」改名**：本次只改**用户可见文本**（菜单项、列表标题/空态/搜索提示、
+> 候选注释、设置窗口标签页与按钮文案）。内部命名与文件格式**沿用旧名**——
+> `favorites.dict.yaml`、候选 `type` 前缀 `vfav`、`vset*` 模式、`vmenu-settings.txt` 都没变，
+> 以免破坏已有数据与配置。
 
 ## 2. 界面
 
@@ -39,22 +51,24 @@
 
 | 截图 | 说明 |
 | --- | --- |
-| ![v 菜单](screenshots/ime-01-menu.png) | 按 `v`：5 个短候选（设置 / 剪贴板 / 收藏 / 原符号 / 文字设置） |
-| ![收藏候选](screenshots/ime-02-favorite-inline.png) | 打字时输入编码前 3 位 `you`，候选第 2 位就是收藏内容 `alice@example.com`（注释「收藏」） |
+| ![v 菜单](screenshots/ime-01-menu.png) | 按 `v`：4 个短候选（设置 / 剪贴板 / 常用语 / 原符号） |
+| ![常用语候选](screenshots/ime-02-favorite-inline.png) | 打字时输入编码前 3 位 `you`，候选第 2 位就是常用语内容 `alice@example.com`（注释「常用语」） |
 | ![回车调用](screenshots/ime-03-favorite-enter.png) | 编码打完按回车，内容直接上屏 |
-| ![数字编码收藏](screenshots/ime-04-digit-favorite.png) | **纯数字编码**：输入 `138` → 候选直接显示 `13800138000`，回车调用 |
-| ![收藏快查](screenshots/ime-05-favorite-list.png) | `v`→`3` 收藏快查列表 |
+| ![数字编码常用语](screenshots/ime-04-digit-favorite.png) | **纯数字编码**：输入 `138` → 候选直接显示 `13800138000`，回车调用 |
+| ![常用语快查](screenshots/ime-05-favorite-list.png) | `v`→`3` 常用语快查列表 |
+| ![多行候选框](screenshots/ime-06-multirow-candidates.png) | **多行候选框**：一页 18 条候选按 `max_width` 自动换行，排成约 4 行 × 5 列 |
 
 ### 可视化设置窗口（三个标签页）
 
 | 截图 | 说明 |
 | --- | --- |
-| ![剪贴板历史](screenshots/gui-01-clipboard.png) | 剪贴板历史：复制到剪贴板 / 删除选中 / 清空全部（二次确认）/ 重新载入 / 置顶，双击某条也能复制 |
-| ![收藏内容](screenshots/gui-02-favorites.png) | 收藏内容：添加 / 修改 / 删除 / 清空（二次确认）/ 上移 / 下移；改动**立即**对输入法生效 |
+| ![剪贴板历史](screenshots/gui-01-clipboard.png) | 剪贴板历史：复制到剪贴板 / 删除选中 / 清空全部（二次确认）/ 重新载入 / 置顶；双击某条 = **弹出「编辑第 N 条」直接改内容** |
+| ![常用语](screenshots/gui-02-favorites.png) | 常用语：添加 / 修改 / 删除 / 清空（二次确认）/ 上移 / 下移；改动**立即**对输入法生效；双击某条 = 直接「修改常用语」 |
 | ![设置与缓存](screenshots/gui-03-settings.png) | 设置与缓存：列表默认条数（20–50）、缓存清理、文件位置一览 |
+| ![双击编辑](screenshots/gui-04-dblclick-edit.png) | 双击剪贴板某一行后弹出的「编辑第 N 条」编辑框（打开时原文已全选） |
 
 > README 里的截图全部使用**示例数据**（`alice@example.com`、`13800138000` 等），
-> 不包含任何真实剪贴板或收藏内容。
+> 不包含任何真实剪贴板或常用语内容。
 
 ## 3. 安装
 
@@ -145,22 +159,55 @@
 | 文件（相对 `<RimeUserDir>`） | 内容 |
 | --- | --- |
 | `clipboard-cache.txt` | 剪贴板历史，UTF-8 **无 BOM**，一行一条，最新在最前 |
-| `cn_dicts/favorites.dict.yaml` | 收藏，正文在 `...` 之后：`内容<Tab>编码<Tab>词频` |
+| `cn_dicts/favorites.dict.yaml` | 常用语（内部沿用旧名 `favorites`），正文在 `...` 之后：`内容<Tab>编码<Tab>词频` |
 | `vmenu-settings.txt` | `clip_page=20`（列表默认显示条数，20–50） |
 | `open-settings.flag` | 「打开设置窗口」标记文件，平时不存在（被守护进程秒删） |
 
 详细格式说明见 [`docs/FILE-FORMATS.md`](docs/FILE-FORMATS.md)；
 示例数据见 [`examples/`](examples/)。
 
-### 收藏的匹配规则（重要）
+### 常用语的匹配规则（重要）
 
 | 你输入 | 结果 |
 | --- | --- |
-| 编码 `you`，键入 `you`（= 前 3 位） | 候选第 2 位出现收藏内容，按 `2` 上屏 |
-| 编码 `you` 打完，按 **回车** | 收藏内容直接上屏 |
-| 编码 `138`（纯数字），键入 `138` | 数字本来会被当成「选字键」，由 `menu_processor` 接管后进入编码；候选即收藏内容 |
+| 编码 `you`，键入 `you`（= 前 3 位） | 候选第 2 位出现常用语内容，按 `2` 上屏 |
+| 编码 `you` 打完，按 **回车** | 常用语内容直接上屏 |
+| 编码 `138`（纯数字），键入 `138` | 数字本来会被当成「选字键」，由 `menu_processor` 接管后进入编码；候选即常用语内容 |
 | 输入 `12345`（不是任何编码） | 完全按原样输入，回车也是原样 |
-| 英文 / ASCII 模式 | v 功能整体关闭，收藏也不会插进候选 |
+| 英文 / ASCII 模式 | v 功能整体关闭，常用语也不会插进候选 |
+
+### 多行候选框（重要）
+
+候选框**换行**和**一页多少条**分别由两个不同的配置决定，都不在 Lua 里，也**不能运行时切换**：
+
+| 键 | 在哪 | 作用 | 现在的值 |
+| --- | --- | --- | --- |
+| `style/layout/max_width` | Weasel 主题（`weasel.custom.yaml` → `build/weasel.yaml`） | 候选窗口宽度上限，超过就换行；`0` = 不换行 | `300` |
+| `menu/page_size` | 方案（`rime_ice.custom.yaml` → `build/rime_ice.schema.yaml`） | 一页候选条数 | `18` |
+
+两个键配合的结果：一页最多 18 条，按 `300` 宽度自动折行，约为 **4 行 × 5 列** 的多行候选框。
+实测：`max_width: 0` 时不换行（原行为）；改成 `300` 后 9 条候选排成每行约 5 个的多行网格；
+改成 `620` 时**不换行**（自然宽度还没超），所以只有足够小的宽度才会折行。
+
+落地要写两个地方（`build/*.yaml` 是实际生效的编译产物，必须一起改）：
+
+* `weasel.custom.yaml` 加 `patch: "style/layout/max_width": 300`，
+  并把 `build/weasel.yaml` 的 `max_width` 也改成 `300`（同时镜像到 `%APPDATA%\Rime\build\weasel.yaml`）；
+* `rime_ice.custom.yaml` 加 `patch: menu/page_size: 18`，
+  并把 `build/rime_ice.schema.yaml` 的 `page_size` 改成 `18`。
+
+**回退方法**：把 `max_width` 改回 `0`、`page_size` 改回 `9`，然后重启 `WeaselServer`。
+
+> ⚠️ 改这两个文件时**必须按 UTF-8 读写**。用 PS 5.1 的 `Get-Content` / `Set-Content`
+> （默认按 ANSI/GBK 解码）会把中文读成乱码再写回，YAML 结构直接被破坏，
+> **候选窗口会完全不显示**。正确写法与判别方法见
+> [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md) 的「改了候选框参数后一个候选都不显示」。
+
+### 候选框里的方向键
+
+`↓` / `↑` / `←` / `→` **一律不被 Lua 拦截**，全部交回 librime 原版 `navigator`。
+实测（librime 1.13.1，横向候选框）：`↓` = 选中下一个候选，`→` = 选中下一个候选，
+`↑` = 上一个，都不上屏。所以「按向右键选候选」这个习惯天然保留。
 
 ## 5. 目录结构
 
@@ -194,6 +241,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\v1-e2e-test.ps1
 
 # 3) 只测标记文件 → 窗口出现（不含按键）
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\v1-latency-test.ps1 -Runs 3
+
+# 4) 设置窗口「双击某一行 → 弹框编辑」（截图找行 + 真实鼠标双击）
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\gui-dblclick-test.ps1 -Row 1 -Out .\shots\dblclick.png
 ```
 
 实测（本机 2560×1440 / 150%）：
@@ -203,6 +253,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\v1-latency-test.ps1 
 | 标记文件 → 窗口出现在屏幕上（稳态） | **45 / 56 / 63 / 71 / 72 ms** |
 | 真按 `v` → `1` → 窗口出现 | **84 / 94 / 103 / 106 ms**（改动前是 2–4 秒） |
 | 后台进程刚启动后的第一次显示 | 106–180 ms（窗口在启动时已离屏预建；不做预建约 348 ms） |
+| 设置窗口双击第 N 行 → 弹出「编辑第 N 条」 | 见 `tools/gui-dblclick-test.ps1`（`PASS 双击弹出编辑框`） |
 
 详见 [`docs/TESTING.md`](docs/TESTING.md)。
 
@@ -210,7 +261,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\v1-latency-test.ps1 
 
 * **候选栏里的操作行点不动**：小狼毫的鼠标点击 = 「提交这一条候选文字」，不经过按键处理链，
   所以「显示更多」这类操作行必须用键盘（`m` / `+`）。这是 Weasel 的机制，不是本项目的 bug。
-* 收藏的「打字命中」需要编码 **≥ 3 位**（不足 3 位的编码请用 `v`→`3`）；纯数字编码需要把编码打完。
+* 常用语的「打字命中」需要编码 **≥ 3 位**（不足 3 位的编码请用 `v`→`3`）；纯数字编码需要把编码打完。
+* **多行候选框是要改配置的**：行数/列数由 Weasel 主题的 `style/layout/max_width` 和方案的
+  `menu/page_size` 共同决定，改完必须重启 `WeaselServer`，**输入法里没有运行时开关**
+  （见 §4「多行候选框」的开关方法与回退方法）。
 * 常驻设置窗口是一个 PowerShell + WinForms 进程，约占 150 MB 内存 —— 这是「秒开」的代价。
 * 设置窗口是 DPI 不感知的，在 150% 缩放下由 Windows 整体放大，布局正确但文字略软。
 * 剪贴板多行内容会被压平成一行（缓存格式一行一条）。

@@ -21,19 +21,20 @@ end
 
 -- ===== 主菜单 =====
 -- 文案尽量短（候选行越短越好看）：正文 2-4 字，注释也压到最短。
+-- 说明：原来的第 5 项「文字设置」（vset 纯键盘设置）已按要求去掉，
+--       设置请用第 1 项的可视化窗口。vset* 的代码保留但不再可从菜单进入。
 local function yield_menu(seg)
   yield(item(seg, "vmenu", "设置", "图形窗口"))
   yield(item(seg, "vmenu", "剪贴板", "历史"))
-  yield(item(seg, "vmenu", "收藏", "快捷内容"))
+  yield(item(seg, "vmenu", "常用语", "快捷内容"))
   yield(item(seg, "vmenu", "原符号", "原版 v"))
-  yield(item(seg, "vmenu", "文字设置", "键盘操作"))
 end
 
 -- ===== 设置根菜单 =====
 local function yield_set(seg)
   local page = core.read_page()
   yield(item(seg, "vset", "剪贴板管理 " .. page .. " 条", "按 1"))
-  yield(item(seg, "vset", "收藏管理", "按 2"))
+  yield(item(seg, "vset", "常用语管理", "按 2"))
   yield(item(seg, "vset", "显示条数 " .. page, "按 3"))
   yield(item(seg, "vset", "清理缓存", "按 4 · 二次确认"))
   yield(item(seg, "vset", "返回", "按 5"))
@@ -110,7 +111,7 @@ local function yield_clip_delete(seg, more)
   end
 end
 
--- ===== 收藏 =====
+-- ===== 常用语（原「收藏」，同一份 favorites.dict.yaml）=====
 local function yield_fav_list(seg, query, is_admin)
   local favs = core.read_fav()
   local shown = 0
@@ -118,19 +119,19 @@ local function yield_fav_list(seg, query, is_admin)
     if core.fav_match(favs[i], query) then
       shown = shown + 1
       if shown > core.MAX_PAGE then break end
-      yield(item(seg, "vfav", favs[i].word, "收藏 " .. favs[i].key))
+      yield(item(seg, "vfav", favs[i].word, "常用语 " .. favs[i].key))
     end
   end
   if shown == 0 then
     if query == "" then
-      yield(item(seg, "vfav", "还没有收藏", "在设置窗口里添加"))
+      yield(item(seg, "vfav", "还没有常用语", "在设置窗口里添加"))
     else
-      yield(item(seg, "vfav", "没有匹配的收藏：" .. query, "收藏"))
+      yield(item(seg, "vfav", "没有匹配的常用语：" .. query, "常用语"))
     end
   end
   if is_admin then
     yield(action(seg, "[d] 删除模式", 1))
-    yield(action(seg, "[x] 清空收藏", 2))
+    yield(action(seg, "[x] 清空常用语", 2))
     yield(action(seg, "[q] 返回 · 共 " .. #favs .. " 条", 3))
   end
 end
@@ -203,7 +204,7 @@ local function gen(input, seg, env)
   end
 
   if act == "x" then
-    if base == "c" then yield_confirm(seg, "剪贴板历史缓存") else yield_confirm(seg, "全部收藏") end
+    if base == "c" then yield_confirm(seg, "剪贴板历史缓存") else yield_confirm(seg, "全部常用语") end
     return
   end
   if act == "d" then

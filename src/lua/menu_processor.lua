@@ -46,6 +46,10 @@ local function handle(key, env)
     end
   end
 
+  -- 注意：↓ / ↑ / ← / → 一律不拦截，交给原版 navigator 处理
+  --   （横向候选框里 ↓ 就是「选下一个候选」，→ 也是；用户要求保留 → 的选词方式）
+  --   多行候选框由 weasel 主题的 style/layout/max_width 换行实现，见 docs/TROUBLESHOOTING.md
+
   -- 纯数字收藏编码（如 131）：数字本来是选字键，进不了编码，
   -- 只有当输入为空或全是数字、且它仍是某条数字编码的开头时才接管。
   if repr:match("^%d$") and (cur == "" or cur:match("^%d+$")) then
@@ -76,7 +80,7 @@ local function handle(key, env)
       core.set_raw(ctx, true)
       return 1
     end
-    if repr == "5" then replace_input(ctx, "vset") return 1 end
+    -- 第 5 项「文字设置」已按要求去掉；vset* 代码保留但不再可从菜单进入
     return 2
   end
 

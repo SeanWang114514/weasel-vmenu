@@ -28,3 +28,8 @@ patch:
   # 3) 滤镜：v 模式下压制普通中英文候选（排最后才能看到最终候选列表）
   engine/filters/+:
     - lua_filter@*menu_filter
+
+  # 4) 候选框：一页 18 个候选（配合 weasel 主题的 style/layout/max_width 换行，
+  #    就得到「多行候选框」；实测每行约 5 个、最多约 4 行）。
+  #    想回到原来的一行 9 个：把这里改成 9，并把 max_width 改回 0。
+  menu/page_size: 18

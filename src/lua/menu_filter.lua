@@ -89,7 +89,7 @@ local function filter(input, env)
   end
 
   -- 收藏固定占第 2 位
-  local c = Candidate("vfav", 0, #code, fav.word, "收藏")
+  local c = Candidate("vfav", 0, #code, fav.word, "常用语")
   c.quality = 500000
   local out = place(buf, 2, c)
   for i = 1, #out do

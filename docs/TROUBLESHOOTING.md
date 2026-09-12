@@ -47,6 +47,50 @@
 **这是 Weasel 的机制，不是 bug**：候选窗口的鼠标点击 = 「提交这一条候选文字」，
 不经过按键处理链，所以操作行只能用键盘（`m` / `+` / `d` / `x` / `q`）。
 
+### 改了候选框参数后**一个候选都不显示**（打字时按键被吞）
+
+**现象**：改完 `build\weasel.yaml`（比如 `style/layout/max_width`）重启服务后，正常打字
+**看不到任何候选窗口**，按键像被吞掉；输入法日志里出现：
+
+```
+E ... config_data.cc Error parsing YAML "…\build\weasel.yaml" :
+      yaml-cpp: error at line 356, column 12: end of map not found
+```
+
+**根因**：用 `Get-Content` / `Set-Content` 改这个文件。PowerShell 5.1 的这两个 cmdlet
+**默认按 ANSI（本机 GBK）解码**，UTF-8 中文被读成乱码再写回，YAML 结构直接损坏。
+
+**正确改法**（一定要这样写）：
+
+```powershell
+$p = 'D:\rime-sandbox\build\weasel.yaml'
+$t = [IO.File]::ReadAllText($p, [Text.Encoding]::UTF8)
+$t = $t -replace '(?m)^(\s*max_width:)\s*\d+', '$1 300'
+[IO.File]::WriteAllText($p, $t, (New-Object Text.UTF8Encoding($false)))   # false = 不写 BOM
+
+# 立刻验证：中文没被改写、键值对上了
+([IO.File]::ReadAllText($p, [Text.Encoding]::UTF8) -split "`n" | Select-String 'max_width')
+```
+
+**判别方法**：改完重启 `WeaselServer`，看日志里**没有** `Error parsing`：
+
+```powershell
+Get-ChildItem "$env:TEMP\rime.weasel\*.log" | Sort-Object LastWriteTime -Descending |
+  Select-Object -First 1 | Get-Content | Select-String 'Error parsing'   # 必须无输出
+```
+
+> 同一份配置要一起改的地方：`weasel.custom.yaml`（`patch`）+ `build/weasel.yaml`
+> + `%APPDATA%\Rime\build\weasel.yaml`（镜像）。`page_size` 对应
+> `rime_ice.custom.yaml` + `build/rime_ice.schema.yaml`。
+> 回退 = `max_width` 回 `0`、`page_size` 回 `9`，重启服务。
+
+### 改了 Lua 却不生效
+
+1. lua 有**两份**：`D:\rime-sandbox\lua\` 与 `%APPDATA%\Rime\lua\`，必须 **MD5 一致**
+   （`TESTING.md` §4 第 4 条）；只改一份就会出现「改了没生效」。
+2. 改完 lua **必须重启 `WeaselServer`**（librime-lua 是启动时加载模块），并等 ≥ 6 秒
+   再打字，否则方案还没加载完会丢按键。
+
 ---
 
 ## 设置窗口侧
@@ -106,6 +150,28 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\src\windows\vmenu-watcher-
 * 数据文件必须 UTF-8 **不带** BOM。
 详见 `FILE-FORMATS.md` §5。
 
+**为什么丢了 BOM 会炸**：PS 5.1 对**没有 BOM 的 UTF-8 脚本按 ANSI 解析**，中文注释/字符串变乱码，
+严重时「多字节字符吃掉后面的引号」→ 直接**语法错误**（脚本跑不起来）。
+
+```powershell
+# 判别（基线）：前三个字节必须是 239,187,191
+$p = 'D:\VibeCoding\输入法\vmenu-settings-gui.ps1'
+(([IO.File]::ReadAllBytes($p)[0..2]) -join ',')
+
+# 修法：读成 UTF-8 字符串，再用「带 BOM 的 UTF-8」写回
+$t = [IO.File]::ReadAllText($p, [Text.Encoding]::UTF8)
+[IO.File]::WriteAllText($p, $t, (New-Object Text.UTF8Encoding($true)))
+'BOM: ' + (([IO.File]::ReadAllBytes($p)[0..2]) -join ',')   # 必须是 239,187,191
+
+# 改完做语法检查（能抓到上面那种「吃引号」错误）
+$e = $null
+[void][System.Management.Automation.Language.Parser]::ParseFile($p, [ref]$null, [ref]$e)
+if ($e) { $e | ForEach-Object { "line $($_.Extent.StartLineNumber): $($_.Message)" } }  # 期望无输出
+```
+
+> 注意 `[IO.File]::ReadAllText($p, [Text.Encoding]::UTF8)` 里的 UTF8 是**读取用的**解码器，
+> 写回时必须另外传 `UTF8Encoding($true/false)` 才能决定**要不要写 BOM** —— 别混用。
+
 ---
 
 ## 服务与生命周期
@@ -135,11 +201,65 @@ Start-Process powershell -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass
 
 ---
 
+## 自动化测试 / 写测试脚本时的坑
+
+### UI Automation 看不到设置窗口的控件
+
+`System.Windows.Automation` 对这个 WinForms 窗口**抓不到任何子控件**：
+`FindAll(Descendants, TrueCondition)` 返回 **0 个元素**（TabItem / Button / List 全是 0）。
+
+→ 结论：GUI 自动化**只能走「截图找行 + 真实鼠标」**，现成工具是
+`tools/gui-dblclick-test.ps1`（见 `TESTING.md` §1）。别再花时间试 UIA 选择器。
+
+### 自动点击点错了行（DPI 缩放）
+
+测试进程如果不是 DPI-aware，`SetCursorPos` 传进去的坐标会被系统按 **1.5 倍**缩放，
+点击落到下面几行（实测：想点第 1 行，结果点到了第 9 行）。
+
+→ 修法：使用前先调 `SetProcessDPIAware()`（`shot-window.ps1` 里已有同样说明，
+`gui-dblclick-test.ps1` 在 `Add-Type` 之后第一件事就是它）。
+
+### 找不到模态弹框
+
+「编辑第 N 条」这种模态弹框**不会出现在 `Process.MainWindowTitle` 里**，
+`Get-Process | Where-Object MainWindowTitle` 找不到它。
+
+→ 修法：用 `EnumWindows` + `GetWindowTextW` 枚举**顶层窗口标题**（含不可见的判断），
+再按标题子串匹配。`gui-dblclick-test.ps1` 的 `[VmWin]::Find` / `[VmWin]::Titles` 就是这套。
+
+### 清理脚本把自己的 pwsh 也杀了
+
+**现象**：命令直接结束，`[exit code: 4294967295]`（-1）。原因是在命令行里**写出了脚本字面名**：
+
+```powershell
+# ❌ 危险：自己的命令行里含 'vmenu-settings-gui.ps1'，会被下面的匹配一起选中
+Get-CimInstance Win32_Process | Where-Object CommandLine -like '*vmenu-settings*' |
+  ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
+```
+
+→ 修法两条，**都要**：
+
+```powershell
+# ✅ 1) 排除自己；2) 脚本名在运行时拼接，命令行里不出现完整字面名
+$pat = 'vmenu-' + 'settings-gui.ps1'
+Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" |
+  Where-Object { $_.ProcessId -ne $PID -and $_.CommandLine -and $_.CommandLine.IndexOf($pat) -ge 0 } |
+  ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
+```
+
+### 双击编辑测试会**真的改文件**
+
+`gui-dblclick-test.ps1 -TypeInto <文本>` 会真的写回 `clipboard-cache.txt` / `favorites.dict.yaml`。
+测前**先备份并记录 sha256**，测后还原并校验一致（做法见 `TESTING.md` §3 第 1、3 步）。
+
+---
+
 ## 日志与现场
 
 | 东西 | 位置 |
 | --- | --- |
 | Rime / lua 日志 | `%TEMP%\rime.weasel\rime.weasel.<host>.<user>.log.INFO.*.log` |
 | 输入法文件 | `<RimeUserDir>`（本机 `D:\rime-sandbox`） |
-| 编译后的方案 | `<RimeUserDir>\build\rime_ice.schema.yaml` |
+| 编译后的方案 | `<RimeUserDir>\build\rime_ice.schema.yaml`（`menu/page_size` 在这里生效） |
+| Weasel 主题（编译后） | `<RimeUserDir>\build\weasel.yaml`（`style/layout/max_width` 在这里生效），镜像在 `%APPDATA%\Rime\build\weasel.yaml` |
 | 截好的验证图 | 项目目录下 `shots\`（发布用的图在仓库 `screenshots\`） |
