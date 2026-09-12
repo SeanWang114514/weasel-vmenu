@@ -1,0 +1,181 @@
+-- v 功能菜单：按键处理（必须排在 speller / selector 之前）
+-- 只在 v 相关模式下拦截按键，其余按键一律 return 2 放行。
+-- 整个处理体用 pcall 包裹：任何异常都退化为「不处理」，绝不阻塞输入。
+local core = require("vmenu_core")
+
+local function replace_input(ctx, s)
+  ctx:clear()
+  ctx:push_input(s)
+end
+
+local function is_more_key(repr)
+  return repr == "m" or repr == "plus"
+end
+
+local function handle(key, env)
+  if key:release() then return 2 end
+
+  local ctx = env.engine.context
+  local repr = key:repr() or ""
+  local cur = ctx.input or ""
+
+  -- 英文 / ASCII 模式：v 功能整体关闭，按键原样放行
+  local ok_ascii, ascii = pcall(function() return ctx:get_option("ascii_mode") end)
+  if ok_ascii and ascii then
+    core.set_raw(ctx, false)
+    return 2
+  end
+
+  -- 输入清空 = 本次组合结束，退出原符号模式
+  if cur == "" then core.set_raw(ctx, false) end
+  -- 原符号模式：完全不拦截，让 speller / punctuator 按原版行为处理
+  if core.raw(ctx) then return 2 end
+
+  -- 收藏编码「打完 + 回车」= 直接调用收藏内容。
+  -- 纯数字编码（如 131）本来靠「整屏只有一个候选时回车上屏」这个巧合生效，
+  -- 这里显式接管：数字编码、字母编码一律支持，行为统一，也不再依赖巧合。
+  -- 只有输入和某条编码完全一致时才接管，其余回车行为原样放行。
+  if repr == "Return" and cur ~= "" and not core.mode_of(cur) then
+    local ok_hit, hit = pcall(core.fav_exact, cur)
+    if ok_hit and hit then
+      local ok_commit = pcall(function()
+        env.engine:commit_text(hit.word)
+        ctx:clear()
+      end)
+      if ok_commit then return 1 end
+    end
+  end
+
+  -- 纯数字收藏编码（如 131）：数字本来是选字键，进不了编码，
+  -- 只有当输入为空或全是数字、且它仍是某条数字编码的开头时才接管。
+  if repr:match("^%d$") and (cur == "" or cur:match("^%d+$")) then
+    local ok_pre, is_pre = pcall(core.digit_prefix, cur .. repr)
+    if ok_pre and is_pre then
+      ctx:push_input(repr)
+      return 1
+    end
+  end
+
+  -- ===== 主菜单 =====
+  if cur == "" and repr == "v" then
+    ctx:push_input("v")
+    return 1
+  end
+  if cur == "v" then
+    if repr == "1" then
+      -- 打开可视化设置界面：只写标记文件，由后台守护进程打开窗口
+      core.request_gui()
+      ctx:clear()
+      return 1
+    end
+    if repr == "2" then replace_input(ctx, "vclip") return 1 end
+    if repr == "3" then replace_input(ctx, "vfav") return 1 end
+    if repr == "4" then
+      -- 还原原版 v 模式：输入回到 v，之后用户直接输入符号编码
+      replace_input(ctx, "v")
+      core.set_raw(ctx, true)
+      return 1
+    end
+    if repr == "5" then replace_input(ctx, "vset") return 1 end
+    return 2
+  end
+
+  -- ===== 设置根菜单 =====
+  if cur == "vset" then
+    if repr == "1" then replace_input(ctx, "vsetc") return 1 end
+    if repr == "2" then replace_input(ctx, "vsetf") return 1 end
+    if repr == "3" then replace_input(ctx, "vsetn") return 1 end
+    if repr == "4" then replace_input(ctx, "vsetx") return 1 end
+    if repr == "5" then replace_input(ctx, "v") return 1 end
+    return 2
+  end
+
+  -- ===== 默认显示条数 =====
+  if cur == "vsetn" then
+    local n
+    if repr == "1" then n = 20
+    elseif repr == "2" then n = 30
+    elseif repr == "3" then n = 40
+    elseif repr == "4" then n = 50 end
+    if n then
+      core.write_page(n)
+      replace_input(ctx, "vset")
+      return 1
+    end
+    if repr == "5" then replace_input(ctx, "vset") return 1 end
+    return 2
+  end
+
+  -- ===== 缓存清理（二次确认页）=====
+  if cur == "vsetx" then
+    if repr == "1" or repr == "y" then
+      core.write_clip({})
+      replace_input(ctx, "vset")
+      return 1
+    end
+    if repr == "2" or repr == "n" then replace_input(ctx, "vset") return 1 end
+    return 2
+  end
+
+  -- ===== 剪贴板 / 收藏 的子模式 =====
+  local base, act, more = core.parse_sub(cur)
+  if base then
+    if act == "x" then
+      -- 清空确认页
+      if repr == "1" or repr == "y" then
+        if base == "c" then core.write_clip({}) else core.write_fav({}) end
+        replace_input(ctx, "vset")
+        return 1
+      end
+      if repr == "2" or repr == "n" then replace_input(ctx, "vset") return 1 end
+      return 2
+    end
+
+    if act == "d" then
+      -- 删除模式：数字按「本屏第 N 条」删除；m 下一组；q 返回
+      if is_more_key(repr) then
+        replace_input(ctx, "vset" .. base .. "d" .. string.rep("m", more + 1))
+        return 1
+      end
+      if repr == "q" then replace_input(ctx, "vset") return 1 end
+      local n = tonumber(repr)
+      if n and n >= 1 and n <= core.WINDOW then
+        local items
+        if base == "c" then items = core.read_clip() else items = core.read_fav() end
+        local idx = more * core.WINDOW + n
+        if items[idx] then
+          table.remove(items, idx)
+          if base == "c" then core.write_clip(items) else core.write_fav(items) end
+        end
+        -- 原地刷新，便于连续删除
+        replace_input(ctx, "vset" .. base .. "d" .. string.rep("m", more))
+        return 1
+      end
+      if repr:match("^%a$") then return 1 end
+      return 2
+    end
+
+    -- 列表模式
+    if base == "c" and is_more_key(repr) then
+      if more < math.floor((core.MAX_PAGE - core.MIN_PAGE) / core.STEP) then
+        replace_input(ctx, "vsetc" .. string.rep("m", more + 1))
+      end
+      return 1
+    end
+    if repr == "d" then replace_input(ctx, "vset" .. base .. "d") return 1 end
+    if repr == "x" then replace_input(ctx, "vset" .. base .. "x") return 1 end
+    if repr == "q" then replace_input(ctx, "vset") return 1 end
+    -- 管理列表里字母没有用途（数字才是选择标签），吞掉以免污染编码
+    if repr:match("^%a$") then return 1 end
+    -- 数字等其余按键交给 selector，正常上屏候选
+    return 2
+  end
+
+  return 2
+end
+
+return function(key, env)
+  local ok, res = pcall(handle, key, env)
+  if ok and type(res) == "number" then return res end
+  return 2
+end

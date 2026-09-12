@@ -1,0 +1,23 @@
+# 本仓库故意不忽略任何源码/文档/截图，只忽略临时与本地环境产物。
+*.tmp
+*.log
+*.bak
+*~
+Thumbs.db
+desktop.ini
+
+# 本地验证截图输出目录（tools 的默认输出；发布用的是 screenshots/）
+shots/
+_tmp/
+_temp/
+
+# 可能包含**真实剪贴板/收藏内容**的本地文件，绝不入库
+clipboard-cache.txt
+favorites.dict.yaml
+vmenu-settings.txt
+open-settings.flag
+
+# 编辑器
+.vscode/
+.idea/
+*.swp

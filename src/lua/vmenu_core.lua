@@ -1,0 +1,270 @@
+-- v 功能菜单：共享核心（设置 / 剪贴板 / 收藏 / 原符号模式）
+-- 设计原则：
+--   1) 绝不在 Rime 输入线程里启动子进程（禁用 io.popen / os.execute），这是之前 v2 卡死的根因；
+--   2) 普通打字路径完全不读写文件，只有进入 v 相关模式才访问磁盘；
+--   3) 所有对外函数都用 pcall 兜底，异常时退化为「不处理」，绝不影响正常输入。
+local M = {}
+
+M.DEFAULT_PAGE = 20   -- 默认显示条数
+M.MIN_PAGE = 20       -- 下限
+M.MAX_PAGE = 50       -- 上限（超出丢弃最旧的）
+M.STEP = 10           -- 每次「显示更多」+10
+M.WINDOW = 9          -- 管理/删除模式每屏条数，与 menu/page_size 保持一致
+
+local raw_flag = false
+
+local function user_dir()
+  local ok, d = pcall(rime_api.get_user_data_dir)
+  if ok and type(d) == "string" and d ~= "" then return d end
+  return "."
+end
+
+function M.clip_path() return user_dir() .. "/clipboard-cache.txt" end
+function M.fav_path() return user_dir() .. "/cn_dicts/favorites.dict.yaml" end
+function M.set_path() return user_dir() .. "/vmenu-settings.txt" end
+function M.gui_flag_path() return user_dir() .. "/open-settings.flag" end
+
+-- 请求打开「可视化设置界面」。
+-- 这里只写一个标记文件，绝不在这里启动子进程：在 Rime 输入线程里创建进程
+-- （io.popen / os.execute）正是之前 v2 卡死的根因。
+-- 后台守护脚本 vmenu-watcher.ps1 看到标记文件后删掉它并打开设置窗口。
+function M.request_gui()
+  local f = io.open(M.gui_flag_path(), "w")
+  if not f then return false end
+  f:write(tostring(os.time()), "\n")
+  f:close()
+  return true
+end
+
+-- ---------------------------------------------------------------------------
+-- 原符号模式（v → 4）
+-- 模块内标记 + context option 双写：即使 librime-lua 为每个组件建立独立 Lua 环境，
+-- 处理器/翻译器/滤镜三方也一定能读到同一个值。
+-- ---------------------------------------------------------------------------
+function M.set_raw(ctx, v)
+  raw_flag = v and true or false
+  if ctx then
+    pcall(function() ctx:set_option("vraw_mode", raw_flag) end)
+  end
+end
+
+function M.raw(ctx)
+  if raw_flag then return true end
+  if ctx then
+    local ok, v = pcall(function() return ctx:get_option("vraw_mode") end)
+    if ok and v then return true end
+  end
+  return false
+end
+
+-- ---------------------------------------------------------------------------
+-- 模式判定
+-- ---------------------------------------------------------------------------
+-- 返回 "menu" | "clip" | "fav" | "set" | nil
+function M.mode_of(code)
+  if type(code) ~= "string" or code == "" then return nil end
+  if code == "v" then return "menu" end
+  if code:sub(1, 5) == "vclip" then return "clip" end
+  if code:sub(1, 4) == "vfav" then return "fav" end
+  if code:sub(1, 4) == "vset" then return "set" end
+  return nil
+end
+
+-- 解析 vsetc / vsetf 系列：返回 base("c"/"f"), act(""/"d"/"x"), more(m 的个数)
+function M.parse_sub(code)
+  if type(code) ~= "string" then return nil end
+  local base, act, ms = code:match("^vset([cf])([dx]?)(m*)$")
+  if not base then return nil end
+  return base, act, #ms
+end
+
+-- 每个模式下「必须保留」的候选类型；vact 为操作行，任何 v 模式下都保留
+function M.want_type(code)
+  local m = M.mode_of(code)
+  if m == "menu" then return "vmenu" end
+  if m == "clip" then return "vclip" end
+  if m == "fav" then return "vfav" end
+  if m == "set" then
+    local base, act = M.parse_sub(code)
+    if base == "c" and act ~= "x" then return "vclip" end
+    if base == "f" and act ~= "x" then return "vfav" end
+    return "vset"
+  end
+  return nil
+end
+
+-- ---------------------------------------------------------------------------
+-- 设置读写
+-- ---------------------------------------------------------------------------
+function M.read_page()
+  local page = M.DEFAULT_PAGE
+  local f = io.open(M.set_path(), "r")
+  if not f then return page end
+  for line in f:lines() do
+    local k, v = line:match("^%s*([%w_]+)%s*=%s*(%d+)")
+    if k == "clip_page" then
+      local n = tonumber(v)
+      if n and n >= M.MIN_PAGE and n <= M.MAX_PAGE then page = n end
+    end
+  end
+  f:close()
+  return page
+end
+
+function M.write_page(n)
+  n = tonumber(n) or M.DEFAULT_PAGE
+  if n < M.MIN_PAGE then n = M.MIN_PAGE end
+  if n > M.MAX_PAGE then n = M.MAX_PAGE end
+  local path = M.set_path()
+  local tmp = path .. ".tmp"
+  local f = io.open(tmp, "w")
+  if not f then return false end
+  f:write("# v 功能菜单设置\n")
+  f:write("clip_page=" .. tostring(n) .. "\n")
+  f:close()
+  os.remove(path)
+  return os.rename(tmp, path) and true or false
+end
+
+-- ---------------------------------------------------------------------------
+-- 剪贴板历史（由独立的 clipboard-sync.bat 后台写入，Lua 只读写文本文件）
+-- ---------------------------------------------------------------------------
+function M.read_clip()
+  local list = {}
+  local f = io.open(M.clip_path(), "r")
+  if not f then return list end
+  for line in f:lines() do
+    line = line:gsub("^%s+", ""):gsub("%s+$", "")
+    if line ~= "" then list[#list + 1] = line end
+    if #list >= M.MAX_PAGE then break end
+  end
+  f:close()
+  return list
+end
+
+function M.write_clip(list)
+  local path = M.clip_path()
+  local tmp = path .. ".tmp"
+  local f = io.open(tmp, "w")
+  if not f then return false end
+  if list then
+    for i = 1, #list do
+      if i > M.MAX_PAGE then break end
+      f:write(list[i], "\n")
+    end
+  end
+  f:close()
+  os.remove(path)
+  return os.rename(tmp, path) and true or false
+end
+
+-- ---------------------------------------------------------------------------
+-- 收藏（cn_dicts/favorites.dict.yaml）：正文在 "..." 之后，格式 内容<Tab>键<Tab>词频
+-- ---------------------------------------------------------------------------
+local FAV_HEADER = "# Rime dictionary\n"
+  .. "# encoding: utf-8\n"
+  .. "---\n"
+  .. "name: favorites\n"
+  .. "version: \"2026-09-11\"\n"
+  .. "sort: by_weight\n"
+  .. "...\n"
+
+function M.read_fav()
+  local list = {}
+  local f = io.open(M.fav_path(), "r")
+  if not f then return list end
+  local body = false
+  for line in f:lines() do
+    if body then
+      local word, key = line:match("^([^\t#][^\t]*)\t([^\t]+)")
+      if word and key then
+        list[#list + 1] = { word = word, key = key }
+      end
+    elseif line:match("^%.%.%.") then
+      body = true
+    end
+  end
+  f:close()
+  return list
+end
+
+function M.write_fav(list)
+  local path = M.fav_path()
+  local tmp = path .. ".tmp"
+  local f = io.open(tmp, "w")
+  if not f then return false end
+  f:write(FAV_HEADER)
+  if list then
+    for i = 1, #list do
+      local it = list[i]
+      if it and it.word and it.word ~= "" and it.key and it.key ~= "" then
+        f:write(it.word, "\t", it.key, "\t100000\n")
+      end
+    end
+  end
+  f:close()
+  os.remove(path)
+  return os.rename(tmp, path) and true or false
+end
+
+-- 正常打字时的收藏命中：输入满 3 个字符后，只要输入的 3 个字符是某条收藏
+-- 编码的开头（编码本身不足 3 位的不用这种方式，靠 v 菜单取用），就命中它。
+-- 只在输入 >= 3 个字符时查找，2 个字符以内不读文件，保证打字速度。
+function M.fav_hit(code)
+  if type(code) ~= "string" or #code < 3 then return nil end
+  local key = code:lower()
+  local list = M.read_fav()
+  for i = 1, #list do
+    local k = (list[i].key or ""):lower()
+    local w = list[i].word or ""
+    if w ~= "" and (k == key or k:sub(1, #key) == key) then
+      return { word = w, key = list[i].key }
+    end
+  end
+  return nil
+end
+
+-- 纯数字收藏编码（如 131）在正常打字时有一个先天问题：
+-- 中文模式下数字是「选字键」，根本进不了编码。所以由 menu_processor 在
+-- 输入为空 / 全是数字时接管：只要「已输入的数字 + 刚按的数字」还是某条
+-- 数字编码的开头，就把这个数字并进编码，而不是交给选字逻辑。
+function M.digit_prefix(s)
+  if type(s) ~= "string" or s == "" then return false end
+  if not s:match("^%d+$") then return false end
+  local list = M.read_fav()
+  for i = 1, #list do
+    local k = list[i].key or ""
+    if #s <= #k and k:match("^%d+$") and k:sub(1, #s) == s then return true end
+  end
+  return false
+end
+
+-- 收藏编码「原样打完」才算精确命中：只有当输入和某条收藏编码完全相同
+-- （不分大小写）时返回，用于「打完编码 + 回车 = 直接调用收藏内容」。
+-- 与 fav_hit 的区别：fav_hit 是「前 3 位就算命中」（用于候选第 2 位预览），
+-- fav_exact 要求整条编码一字不差，避免回车抢走正常的原始输入。
+function M.fav_exact(code)
+  if type(code) ~= "string" or code == "" then return nil end
+  local key = code:lower()
+  local list = M.read_fav()
+  for i = 1, #list do
+    local k = (list[i].key or ""):lower()
+    local w = list[i].word or ""
+    if w ~= "" and k == key then
+      return { word = w, key = list[i].key }
+    end
+  end
+  return nil
+end
+
+function M.fav_match(it, query)
+  if query == nil or query == "" then return true end
+  query = query:lower()
+  local k = (it.key or ""):lower()
+  local w = (it.word or ""):lower()
+  if k:sub(1, #query) == query then return true end
+  if w:find(query, 1, true) == 1 then return true end
+  return false
+end
+
+return M

@@ -1,0 +1,2 @@
+# v menu settings
+clip_page=30

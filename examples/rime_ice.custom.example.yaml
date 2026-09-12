@@ -1,0 +1,30 @@
+# 雾凇拼音个人扩展（沙箱测试版）
+# 全部改动通过 patch 注入，不改动 rime_ice.schema.yaml 本体。
+#
+# 设计要点
+#   1. 内部编码全部使用纯字母（v / vset / vsetc / vsetf / vsetcmm …），
+#      与 symbols_v.yaml 的任何键都不冲突，因此不需要再改动 punctuator/symbols，
+#      v2 / v3 等原版符号编码保持完好。
+#   2. v → 4 进入「原符号模式」后，处理器完全放行，v 恢复原版行为
+#      （例如接着按 2 得到 v2 的「二」变体、按 a 得到 ā á ǎ à）。
+patch:
+  # 1) 处理器：v 菜单按键拦截必须排在 speller / selector 之前
+  engine/processors:
+    - lua_processor@*menu_processor
+    - lua_processor@*select_character
+    - ascii_composer
+    - recognizer
+    - key_binder
+    - speller
+    - punctuator
+    - selector
+    - navigator
+    - express_editor
+
+  # 2) 翻译器：菜单 / 设置 / 剪贴板 / 收藏（合并为一个，减少每键开销）
+  engine/translators/+:
+    - lua_translator@*lua_menu
+
+  # 3) 滤镜：v 模式下压制普通中英文候选（排最后才能看到最终候选列表）
+  engine/filters/+:
+    - lua_filter@*menu_filter
