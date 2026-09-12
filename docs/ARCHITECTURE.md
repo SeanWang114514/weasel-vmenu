@@ -38,7 +38,9 @@
 | `menu_processor.lua` | `lua_processor@*` | 按键总管。**必须排在 `speller` / `selector` 之前**，否则数字会被当成选字键、`v` 会被当普通字母 | 只拦自己认识的键，其余一律 `return 2` |
 | `lua_menu.lua` | `lua_translator@*` | 所有菜单/列表候选的文案与数据（菜单文案要改就改这里） | 候选 `type` 用于 filter 分流：`vmenu`/`vclip`/`vfav`/`vset`/`vact`（`vset` 自第二轮起已不可从菜单进入，属保留代码） |
 | `menu_filter.lua` | `lua_filter@*` | ① v 模式：只保留当前模式需要的候选类型；② 普通打字：命中常用语时插入候选第 2 位 | 插位后必须重排 `quality`（严格递减） |
-| `vmenu-settings-gui.ps1` | 常驻 WinForms | 三个标签页的可视化设置；轮询标记文件；改动即时写文件；列表支持**双击编辑** | DPI 不感知 → 所有坐标在 `Layout-Tabs` 里按「实际客户区」现算，不能用 Dock/Anchor/写死坐标 |
+| `vmenu-settings-gui.ps1` | 常驻 WinForms | 三个标签页的可视化设置；轮询标记文件；改动即时写文件；列表支持**双击编辑**；「设置与缓存」页底部还有 **`小狼毫原生设置`** 分组 + `打开小狼毫原生设置` 按钮（打开小狼毫自带的设置对话框） | DPI 不感知 → 所有坐标在 `Layout-Tabs` 里按「实际客户区」现算，不能用 Dock/Anchor/写死坐标 |
+| `vmenu-deployer-wrapper.cs` | 代理（C#） | 顶替安装目录下的 `WeaselDeployer.exe`：**无参数** → 打开 vmenu 设置窗口（`vmenu-settings-gui.ps1 -ShowNow`）；**带参数** → 原样转发给 `WeaselDeployer.real.exe`（见 §3.8） | 用 `csc.exe /target:winexe /r:System.Windows.Forms.dll` 编译；源文件必须 UTF-8 **带 BOM**；找不到窗口脚本时退回原生对话框 |
+| `vmenu-tray-setup.ps1` | 部署工具 | 托盘菜单入口的**安装 / 撤销**：改 `WeaselServer.exe` 里的菜单文字、安装代理、开始菜单快捷方式改名 | 幂等；`-Revert` 可还原；`WeaselServer.exe.vmenu-bak` 只在第一次安装时生成 |
 | `vmenu-watcher.ps1` | 监督者 | 保证「常驻窗口永远有一个」；自身单实例 | 不杀进程、不做别的判断 |
 | `clipboard-sync.ps1` | 独立进程 | 系统剪贴板 → 文本文件（去重、上限、新的在前） | 必须在输入法进程之外 |
 | `patch-build-schema.ps1` | 部署工具 | 把结构性配置写回 `build\rime_ice.schema.yaml` | 幂等、可重复运行 |
@@ -150,6 +152,78 @@ request_gui()  ──写──► open-settings.flag ──轮询 60 ms──►
 * 弹框是模态的（`ShowDialog($form)`），因此它是**顶层窗口**而不是子窗口 ——
   自动化测试里必须用 `EnumWindows` 找它，`Process.MainWindowTitle` 看不到（见 `TESTING.md`）。
 
+### 3.8 托盘图标右键菜单的接管（「输入法设置 (S)」）
+
+在**托盘图标右键菜单**里点第一项「输入法设置 (S)」，打开的也是 §3.5 那个常驻窗口。
+这**不是新加的菜单项**（菜单有 12 项，仍然是 12 项），而是「**改一句菜单文字 + 顶替被调用的程序**」
+两件可逆的事。
+
+**为什么只能这么做**（源码核对结论）：
+
+| 事实 | 说明 |
+| --- | --- |
+| 菜单是 `WeaselServer.exe` 里的**菜单资源** | `IDR_MENU_POPUP`（资源号 105）；菜单项的文字与命令号都写死在资源里 |
+| **没有配置文件能新增菜单项** | `weasel.yaml` / `weasel.custom.yaml` 只能改候选窗口样式，改不了托盘菜单 |
+| 服务端只做一件事 | 源码 `WeaselServer/WeaselServerApp.cpp` 的 `SetupMenuHandlers()`：**启动安装目录下的 `WeaselDeployer.exe` 并带参数** |
+| 没有可用的扩展钩子 | `WeaselTrayIcon` 里的 `void CustomizeMenu(HMENU) {}` 是**空实现**，没有配置钩子；再加一个「**全新命令号**」的菜单项服务端不会处理（点了没反应） |
+
+命令号（`include/resource.h`）与服务端动作的对应关系：
+
+| 菜单项 | 命令号 | 服务端实际执行的 |
+| --- | --- | --- |
+| 输入法设置 (S) | `ID_WEASELTRAY_SETTINGS` = **40008** | `WeaselDeployer.exe`（**无参数**） |
+| 重新部署 (R) | `ID_WEASELTRAY_DEPLOY` = 40002 | `WeaselDeployer.exe /deploy` |
+| 用户词典管理 (D) | `ID_WEASELTRAY_DICT_MANAGEMENT` = 40010 | `WeaselDeployer.exe /dict` |
+| 用户资料同步 (N) | `ID_WEASELTRAY_SYNC` = 40012 | `WeaselDeployer.exe /sync` |
+| 其余项（帮助文档 / 参加讨论 / 检查新版本 / 程序文件夹 / 用户文件夹 / 日志文件夹 / 重启算法服务 / 退出算法服务…） | 40001–40016 中的其它值 | 打开网址 / 打开文件夹 / 检查更新 / 退出 |
+
+> `include/resource.h` 里的其它命令号：`ID_WEASELTRAY_QUIT=40001`、`CHECKUPDATE=40003`、
+> `FORUM=40004`、`HOMEPAGE=40005`、`INSTALLDIR=40006`、`USERCONFIG=40007`、`WIKI=40009`、
+> `ENABLE_ASCII=40013` / `DISABLE_ASCII=40014`、`RERUN_SERVICE=40015`、`LOGDIR=40016`。
+
+**接管链路**：
+
+```
+托盘右键「输入法设置 (S)」
+  └─ 命令号 40008（ID_WEASELTRAY_SETTINGS）
+      └─ WeaselServer.exe 启动  <InstallDir>\WeaselDeployer.exe  （无参数）
+          └─ 这个位置现在是代理（vmenu-deployer-wrapper.cs 编译，本机 5632 字节）
+              ├─ 无参数（托盘「输入法设置」）
+              │    └─ powershell -NoProfile -ExecutionPolicy Bypass -File
+              │         vmenu-settings-gui.ps1 -ShowNow
+              │         ├─ 窗口没在跑 → 新实例启动并显示（标题「小狼毫 v 功能 · 可视化设置」）
+              │         └─ 已在跑     → 写 open-settings.flag，常驻实例把窗口亮出来（§3.5）
+              │       （找不到窗口脚本时退回原生对话框，避免「点了没反应」）
+              └─ 带参数 /deploy /dict /sync
+                   └─ 原样转发给 WeaselDeployer.real.exe（真正的部署器，工作目录 = 安装目录）
+```
+
+**安装脚本做的两件可逆的事**（`tools/vmenu-tray-setup.ps1`）：
+
+1. **就地改菜单文字**：`输入法设定 (&S)` → `输入法设置 (&S)`。UTF-16 **等长替换**，
+   只改最后 1 个汉字 `定`(U+5B9A) → `置`(U+7F6E)（2 个字节），字节偏移 `0x220E40`，
+   不动任何偏移量 / 长度；改前确认命中 1 处，改完回读校验「旧标签 0 处 / 新标签 1 处」。
+   exe 无数字签名，改它不破坏签名。
+2. **安装代理**：真正的 `WeaselDeployer.exe` → `WeaselDeployer.real.exe`，
+   再把 `vmenu-deployer-wrapper.cs` 编译出的代理放到 `WeaselDeployer.exe` 的位置。
+
+**撤销链路**：
+
+```
+vmenu-tray-setup.ps1 -Revert
+  ├─ 停 WeaselServer（运行中的 exe 被系统锁住，写不进去）
+  ├─ 用 WeaselServer.exe.vmenu-bak 还原 WeaselServer.exe
+  ├─ WeaselDeployer.real.exe 改名回 WeaselDeployer.exe
+  ├─ 开始菜单「【小狼毫】输入法设置.lnk」名字还原
+  ├─ 起 WeaselServer
+  └─ 回读校验（期望 旧标签 1 处 / 新标签 0 处）
+```
+
+> 独立的一条：开始菜单里的 `【小狼毫】输入法设定.lnk` 会被改名为 `【小狼毫】输入法设置.lnk`；
+> 它指向的也是 `WeaselDeployer.exe`，所以现在同样打开 vmenu 窗口。
+> 原生设置对话框（标题 `【小狼毫】方案选单设定`）的入口因此挪到了设置窗口的
+> 「小狼毫原生设置」分组里（等价于直接运行 `WeaselDeployer.real.exe`）。
+
 ## 4. 结构性配置（`build/rime_ice.schema.yaml`）
 
 ```yaml
@@ -182,6 +256,8 @@ engine:
 | **Lua 一律不拦截方向键**（`↓↑←→` 不写进任何分支） | 原版 `navigator` 已经是对的（`↓`/`→` = 下一个候选），自己接管会和 Weasel 的换行/翻页逻辑打架 |
 | 候选框行列数只由「主题 + 方案」两个键决定，**不放进 Lua** | 换行是 Weasel 主题 `style/layout/max_width` 的渲染行为，一页条数是 schema 的 `menu/page_size`，Lua 里没有任何接口能改 |
 | 改 `build/*.yaml` 只用 `[IO.File]::ReadAllText/WriteAllText`（UTF-8） | PS 5.1 的 `Get-Content`/`Set-Content` 按 ANSI 解码，写坏 YAML 后候选窗口完全不显示 |
+| 改 `WeaselServer.exe` **必须先停 `WeaselServer`**，且只做 **UTF-16 等长替换** | 运行中的 exe 被系统锁住写不进去；等长替换不动偏移量 / 长度，不会破坏文件结构（详见 §3.8） |
+| 托盘菜单**不去想「新增一项」**，只做「改名 + 顶替 `WeaselDeployer.exe`」 | 菜单项写死在 `WeaselServer.exe` 的资源里，服务端只认 `WeaselDeployer.exe` 这一个入口，新命令号不会被处理（详见 §3.8） |
 
 ## 6. 状态与持久化
 

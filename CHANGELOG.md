@@ -3,6 +3,87 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 本项目在真机（Windows 11 + Weasel 0.17.4 + librime 1.13.1 + rime-ice）上验证。
 
+## [0.2.1] — 2026-09-13
+
+托盘图标右键菜单第一项变成 **「输入法设置 (S)」**，点它打开 vmenu 可视化设置窗口；
+小狼毫自带的设置对话框改从设置窗口里的「小狼毫原生设置」分组打开。
+
+### 新增 · 托盘菜单「输入法设置」
+
+* 托盘右键菜单第一项：`输入法设定 (S)` → **`输入法设置 (S)`**，点击打开 vmenu 可视化设置窗口
+  （就是输入法里按 `v` → `1` 打开的那个 WinForms 窗口）。
+
+**机制（源码核对结论）**：托盘右键菜单是 **`WeaselServer.exe` 里的菜单资源** `IDR_MENU_POPUP`
+（资源号 105），菜单项的**文字与命令号写死在资源里**，**没有任何配置文件能新增菜单项**
+（`weasel.yaml` / `weasel.custom.yaml` 只能改候选窗口样式，改不了托盘菜单）。
+服务端对这些命令号的处理只有一件事（源码 `WeaselServer/WeaselServerApp.cpp` 的
+`SetupMenuHandlers()`）：**启动安装目录下的 `WeaselDeployer.exe` 并带参数**：
+
+| 命令号（`include/resource.h`） | 服务端执行 |
+| --- | --- |
+| `ID_WEASELTRAY_SETTINGS` = 40008 | `WeaselDeployer.exe`（**无参数**） |
+| `ID_WEASELTRAY_DEPLOY` = 40002 | `WeaselDeployer.exe /deploy` |
+| `ID_WEASELTRAY_DICT_MANAGEMENT` = 40010 | `WeaselDeployer.exe /dict` |
+| `ID_WEASELTRAY_SYNC` = 40012 | `WeaselDeployer.exe /sync` |
+
+其余项是打开网址 / 打开文件夹 / 检查更新 / 退出。
+
+所以本项目做**两件可逆的事**：
+
+1. **就地改菜单文字**：`WeaselServer.exe` 里的 `输入法设定 (&S)` → `输入法设置 (&S)`。
+   这是 **UTF-16 等长替换，只改最后 1 个汉字**（`定`(U+5B9A) → `置`(U+7F6E)，2 个字节），
+   字节偏移 `0x220E40`，**不动任何偏移量 / 长度**；脚本改前确认命中 1 处，
+   改完回读校验「旧标签 0 处 / 新标签 1 处」。该 exe **没有数字签名**（`NotSigned`，
+   同目录 `WeaselDeployer.exe` 也未签名），所以改它不会破坏签名。
+2. **安装部署器代理**：把真正的 `WeaselDeployer.exe` 改名为 `WeaselDeployer.real.exe`，
+   用 `src/windows/vmenu-deployer-wrapper.cs` 编译出的小代理顶替它
+   （`csc.exe /target:winexe /r:System.Windows.Forms.dll`，安装脚本自动编译）：
+   不带参数 → 打开 vmenu 设置窗口（`powershell -File vmenu-settings-gui.ps1 -ShowNow`；
+   窗口脚本自己有单实例互斥体，已在跑就写 `open-settings.flag` 让常驻实例亮出来）；
+   带参数 → 原样转发给 `WeaselDeployer.real.exe`，**重新部署 / 用户词典管理 /
+   用户资料同步三个功能完全不受影响**。
+
+* 脚本 `tools/vmenu-tray-setup.ps1`（安装，幂等；`-Revert` 撤销）；
+  备份 `C:\Program Files\Rime\weasel-0.17.4\WeaselServer.exe.vmenu-bak` 只在第一次安装时生成。
+
+### 新增 · 设置窗口里的「小狼毫原生设置」分组
+
+* 设置窗口「设置与缓存」页底部新增分组 **`小狼毫原生设置`** 与按钮 **`打开小狼毫原生设置`**，
+  用来打开小狼毫自带的设置对话框（标题 `【小狼毫】方案选单设定`，配色 / 字体等）。
+* 因为托盘那一项现在被 vmenu 占用了，原生对话框的入口改到这里
+  （也可以直接运行 `WeaselDeployer.real.exe`）。
+* 实测截图：`screenshots/gui-05-native-settings.png`。
+
+### 变更 · 开始菜单快捷方式改名
+
+* `【小狼毫】输入法设定.lnk` → **`【小狼毫】输入法设置.lnk`**。它指向的也是
+  `WeaselDeployer.exe`，所以现在同样打开 vmenu 设置窗口。
+
+### 修复 / 踩坑（详见 `docs/TROUBLESHOOTING.md`）
+
+* **托盘菜单不能靠配置文件新增项**：菜单项写死在 `WeaselServer.exe` 的资源里；
+  `WeaselTrayIcon` 里那个 `void CustomizeMenu(HMENU) {}` 是**空实现**，没有可用的配置钩子；
+  新增一个「**全新命令号**」的菜单项服务端不会处理（点了没反应）。所以只能「改名 + 改行为」。
+* **改 `WeaselServer.exe` 前必须先停掉 `WeaselServer` 进程**：正在运行的 exe 文件被系统锁住，
+  写不进去；脚本会自动停 / 起。
+* **必须是等长替换**：`定` → `置` 都是 1 个 UTF-16 码元，字节偏移与长度都不变，
+  不会破坏文件里任何偏移量。
+* **脚本文件本身必须 UTF-8 带 BOM**（`.ps1` 与 `.cs` 都是）：否则 PowerShell 5.1 / csc 会按
+  GBK 解析，中文提示变乱码（脚本里匹配用的「输入法设定」是用字符码 `[char]0x8F93…` 拼出来的，
+  不受文件编码影响）。
+
+### 已知限制（本节新增）
+
+* 托盘那一项是**改名 + 改行为**，不是新增第 13 项：原生设置对话框的直接入口从托盘挪到了
+  vmenu 设置窗口里（服务端只认 `WeaselDeployer.exe` 这一个入口，无法凭空加一个全新命令号）。
+* 小狼毫**升级 / 修复安装**会覆盖 `WeaselServer.exe` 与 `WeaselDeployer.exe`，托盘项会退回原样
+  （`输入法设置` 变回 `输入法设定` 且指向原生对话框）；重新跑一次 `tools/vmenu-tray-setup.ps1`
+  即可（幂等：备份已存在就沿用，菜单文字已是新标签就跳过，代理每次重新编译覆盖安装）。
+  注意：脚本只在**没有** `WeaselDeployer.real.exe` 时才做改名，升级后重跑时它通常还在，
+  于是本次的 `WeaselDeployer.exe` 会被代理**直接覆盖**，`.real.exe` 可能仍是升级前的旧版。
+* `weasel.dll` / `weaselx64.dll` 里也有同样的菜单文字（那是输入法**语言栏**那条右键菜单用的），
+  **本次没有改**：它们是注入到所有进程里的 IME 模块，改了要重启所有程序才生效，风险不值得。
+
 ## [0.2.0] — 2026-09-13
 
 菜单瘦身、术语改名、**多行候选框**、设置窗口**双击编辑**，以及配套的验证工具与踩坑记录。

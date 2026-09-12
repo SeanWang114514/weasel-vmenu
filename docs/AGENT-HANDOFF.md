@@ -9,14 +9,19 @@
 
 1. 这是 **Windows 输入法扩展**项目，宿主是 **小狼毫 Weasel 0.17.4 + librime 1.13.1 + rime-ice**。
    它给输入法加了一套「按 `v` 打开的功能菜单」（现在 **4 项**：设置 / 剪贴板 / 常用语 / 原符号）、
-   常驻的 WinForms 设置窗口（支持双击编辑）、以及多行候选框。
+   常驻的 WinForms 设置窗口（支持双击编辑）、多行候选框，以及**托盘图标右键菜单里的
+   「输入法设置 (S)」**（改 `WeaselServer.exe` 的菜单文字 + 用代理顶替 `WeaselDeployer.exe`，
+   可一键撤销，见 §4「改托盘菜单入口」与 `ARCHITECTURE.md` §3.8）。
 2. 输入法侧是 **librime-lua**（`src/lua/`），宿主侧是 **PowerShell 5.1 脚本 + bat**（`src/windows/`）。
-   **没有任何需要编译的代码。**
-3. 改动之后通常要做这两件事，否则看不到效果：
+   **唯一需要编译的东西**是托盘入口的 C# 代理（`src/windows/vmenu-deployer-wrapper.cs`），
+   由安装脚本用系统自带的 `csc.exe` 自动编译，只需要.NET Framework 的 csc（无需 SDK）。
+3. 改动之后通常要做这几件事，否则看不到效果：
    * 改了 **lua** → 把文件同步到两个 lua 目录，然后**重启 `WeaselServer.exe`**；
    * 改了 **`.ps1`** → 结束对应的常驻进程，让 `vmenu-watcher.ps1` 用新脚本重新拉起。
    * 改了 **主题/方案的候选框键**（`max_width` / `page_size`）→ 改 `custom.yaml` **和**
      `build/*.yaml`，再重启 `WeaselServer`。
+   * 改了 **托盘入口**（`tools/vmenu-tray-setup.ps1` / `src/windows/vmenu-deployer-wrapper.cs`）
+     → 重跑一次 `tools/vmenu-tray-setup.ps1`（它会重新编译并覆盖代理、按需改菜单文字）。
 4. 验证一律用**截图 + 真按键**（`tools/` 里现成的脚本），不要靠「读代码觉得对」。
 5. 当前状态与开放问题见 [`PROGRESS.md`](PROGRESS.md) 第 4、5 节。
 
@@ -29,6 +34,10 @@
 | 系统 | Windows 10/11（本机用户名/主机名从略：`$env:USERNAME` / `$env:COMPUTERNAME`） |
 | Python / Node | 本机有 Node v24（用于读 DSH 会话文件等）；主脚本语言是 **Windows PowerShell 5.1**（**没有** pwsh 7） |
 | Weasel | `C:\Program Files\Rime\weasel-0.17.4\`（`WeaselServer.exe`、`WeaselDeployer.exe`） |
+| 托盘入口的三个 exe | 同目录：`WeaselServer.exe` = 2243072 字节（菜单文字已就地改成「输入法设置 (&S)」）；`WeaselDeployer.exe` = **5632 字节 = vmenu 代理**；`WeaselDeployer.real.exe` = 638976 字节 = 真正的部署器 |
+| 托盘入口的备份 | `C:\Program Files\Rime\weasel-0.17.4\WeaselServer.exe.vmenu-bak`（2243072 字节 = 原始 exe；只在第一次安装时生成，撤销时用它还原） |
+| 托盘入口脚本 | 仓库 `tools/vmenu-tray-setup.ps1`；本机部署副本 `D:\VibeCoding\输入法\vmenu-tray-setup.ps1`（它的 `-WrapperCs` 默认指向 `D:\VibeCoding\输入法\vmenu-deployer-wrapper.cs`，本机与仓库副本一致） |
+| 开始菜单快捷方式 | `C:\ProgramData\Microsoft\Windows\Start Menu\Programs\小狼毫输入法\【小狼毫】输入法设置.lnk`（由「输入法设定」改名而来） |
 | Rime 用户目录 | 注册表 `HKCU\Software\Rime\Weasel` 的 `RimeUserDir` → **`D:\rime-sandbox`**（这是当前生效目录） |
 | Lua 镜像目录 | `%APPDATA%\Rime\lua\` —— **必须与 `<RimeUserDir>\lua\` 保持 MD5 一致**（历史遗留的双目录结构，两边都要放） |
 | 方案 | `rime_ice`（雾凇拼音），编译产物 `D:\rime-sandbox\build\rime_ice.schema.yaml` |
@@ -45,6 +54,20 @@ librime 的 `DetectModifications` 判定「无改动」后会**直接中止整�
 所以 `engine/processors|translators|filters`、`punctuator/symbols`、`recognizer/patterns`
 这些**结构性**配置的改动，必须用 `src/windows/patch-build-schema.ps1`
 把语义**直接写回** `build\rime_ice.schema.yaml`，再重启服务。脚本可重复运行。
+
+### 托盘菜单的机制（别再试「新增一项」）
+
+* 托盘右键菜单是 **`WeaselServer.exe` 里的菜单资源** `IDR_MENU_POPUP`（资源号 105），
+  菜单项的文字与命令号**写死在资源里**；`weasel.yaml` / `weasel.custom.yaml` 只能改候选窗口样式，
+  **改不了托盘菜单**。
+* 服务端对这几个命令号**只做一件事**（`WeaselServer/WeaselServerApp.cpp` 的 `SetupMenuHandlers()`）：
+  启动安装目录下的 `WeaselDeployer.exe` 并带参数 —— `ID_WEASELTRAY_SETTINGS`(40008) 无参数、
+  `ID_WEASELTRAY_DEPLOY`(40002) `/deploy`、`ID_WEASELTRAY_DICT_MANAGEMENT`(40010) `/dict`、
+  `ID_WEASELTRAY_SYNC`(40012) `/sync`；其余项是打开网址 / 打开文件夹 / 检查更新 / 退出。
+* `WeaselTrayIcon` 里的 `void CustomizeMenu(HMENU) {}` 是**空实现**，没有可用配置钩子；
+  新增一个「全新命令号」的菜单项服务端不会处理（点了没反应）。
+* → 本项目走的是「**就地改菜单文字** + **用代理顶替 `WeaselDeployer.exe`**」，完整细节
+  （含安装 / 撤销链路）见 `ARCHITECTURE.md` §3.8。
 
 ---
 
@@ -65,6 +88,9 @@ librime 的 `DetectModifications` 判定「无改动」后会**直接中止整�
 | 11 | **Lua 一律不拦截方向键**（`↓`/`↑`/`←`/`→` 不写进任何分支） | 原版 `navigator` 的行为已正确（`↓`/`→` = 下一个候选、不上屏），自己接管会破坏手感并与换行/翻页逻辑打架 |
 | 12 | 改 `build/*.yaml`（`weasel.yaml` / `rime_ice.schema.yaml`）**只用 `[IO.File]::ReadAllText/WriteAllText` + UTF-8** | PS 5.1 的 `Get-Content`/`Set-Content` 按 ANSI 解码，写坏 YAML 后**候选窗口完全不显示** |
 | 13 | 候选框行数/列数**不要去 Lua 里找办法** | 换行是 Weasel 主题 `style/layout/max_width` 的渲染行为，一页条数是 schema 的 `menu/page_size`，输入法内无法运行时切换 |
+| 14 | **改 `WeaselServer.exe` 前必须先停掉 `WeaselServer` 进程**，且只做 **UTF-16 等长替换** | 运行中的 exe 文件被系统锁住，写不进去；等长替换（`定`→`置`，2 个字节）不动偏移量 / 长度，不会破坏文件结构 |
+| 15 | 托盘菜单**不要试图新增菜单项或新命令号**，只做「改文字 + 用代理顶替 `WeaselDeployer.exe`」 | 菜单项写死在 `WeaselServer.exe` 的资源里，服务端只认 `WeaselDeployer.exe` 这一个入口（`CustomizeMenu` 是空实现，新命令号不会被处理） |
+| 16 | 托盘相关的 `.ps1` 与**代理源码 `.cs`** 都必须 **UTF-8 带 BOM**；脚本里匹配中文用字符码拼（`[char]0x8F93…`） | 否则 PS 5.1 / csc 按 GBK 解析，中文提示变乱码，字面量也匹配不上 |
 
 ---
 
@@ -87,11 +113,15 @@ src/windows/       → 放到任意目录（脚本间用 %~dp0 互相调用，�
   clipboard-sync.ps1      剪贴板 → clipboard-cache.txt
   clipboard-sync-stop.ps1 停止剪贴板同步
   patch-build-schema.ps1  把结构性配置写回 build\rime_ice.schema.yaml
+  vmenu-deployer-wrapper.cs  ★ 托盘「输入法设置」的代理源码（C#，安装脚本用 csc 编译成
+                             WeaselDeployer.exe 顶替真身；必须 UTF-8 带 BOM）
   clipboard-sync.bat      一键重启两个服务并打开设置窗口
   打开设置.bat             先写标记文件，再拉起监督者（最快的备用入口）
   重建部署.bat             patch-build-schema + 重启服务
 
-tools/             → 验证工具（见第 5 节）
+tools/             → 验证工具（见第 5 节）+ 托盘入口安装脚本
+  vmenu-tray-setup.ps1    托盘菜单入口「输入法设置」的安装（幂等）/ 撤销（-Revert），
+                          并回读校验 exe 里的菜单文字
 examples/          → 示例数据（常用语、剪贴板缓存、设置文件、custom.yaml）
 screenshots/       → README 用图（**全部是示例数据**，不要往这里放真实剪贴板内容）
 ```
@@ -165,6 +195,34 @@ Start-Process 'C:\Program Files\Rime\weasel-0.17.4\WeaselServer.exe'
 
 验证要用**截图**：`v` 之后或打一段拼音刷出 ≥ 6 条候选，看是否折行。
 
+### 改托盘菜单入口（「输入法设置」）
+
+```powershell
+# 改完 vmenu-deployer-wrapper.cs / vmenu-tray-setup.ps1 后，重跑安装脚本即可
+# （它自动停/起 WeaselServer、重新编译代理、覆盖 WeaselDeployer.exe、按需改菜单文字）
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\vmenu-tray-setup.ps1
+# 期望结尾：校验：exe 里 旧标签=0 处 / 新标签=1 处
+
+# 撤销（还原 WeaselServer.exe、把 .real.exe 改回 WeaselDeployer.exe、快捷方式名字还原）
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\vmenu-tray-setup.ps1 -Revert
+
+# 验收「托盘那一项做的事」：无参数运行部署器位置上的程序 = 打开 vmenu 设置窗口
+& 'C:\Program Files\Rime\weasel-0.17.4\WeaselDeployer.exe'
+
+# 验收转发链（会真的重新部署：build\weasel.yaml / build\rime_ice.schema.yaml 会被重新生成）
+& 'C:\Program Files\Rime\weasel-0.17.4\WeaselDeployer.exe' /deploy
+```
+
+* 脚本参数：`-Revert`、`-InstallDir`（默认 `C:\Program Files\Rime\weasel-0.17.4`）、
+  `-GuiScript`（默认 `D:\VibeCoding\输入法\vmenu-settings-gui.ps1`）、
+  `-WrapperCs`（默认 `D:\VibeCoding\输入法\vmenu-deployer-wrapper.cs`）。
+* 备份**只在第一次安装时**生成（`WeaselServer.exe.vmenu-bak`），`-Revert` 用它还原 exe；
+  备份已存在时脚本不会覆盖它。
+* **注意（脚本现有行为）**：改名只在**不存在** `WeaselDeployer.real.exe` 时才发生。所以
+  「小狼毫升级后重跑」时，这次的 `WeaselDeployer.exe` 会被代理**直接覆盖**，`.real.exe`
+  可能仍是升级前的旧版；想稳妥就先把它挪走再跑脚本（见 `PROGRESS.md` §5 开放问题 8）。
+* 改完 `.cs` / `.ps1` 记得确认 BOM（`TESTING.md` §4 第 2、2b 条）。
+
 ---
 
 ## 5. 验证工具（全部在 `tools/`，都是 ASCII-only 的 PS 5.1 脚本）
@@ -181,6 +239,7 @@ Start-Process 'C:\Program Files\Rime\weasel-0.17.4\WeaselServer.exe'
 | `window-keys-shot.ps1` | 抢前台 + 发组合键（如 `ctrl+tab`）+ 抓窗口 | `-Match ' v ' -Keys 'ctrl+tab' -Out x.png` |
 | `list-windows.ps1` | 列出可见窗口（pid / hwnd / 物理坐标 / 标题） | `-MinWidth 600` |
 | `focus-notepad.ps1` | 只抢焦点 | 无参数 |
+| `vmenu-tray-setup.ps1` | **托盘菜单入口安装 / 撤销**（改 exe 菜单文字 + 装代理 + 快捷方式改名），结尾打印回读校验 | 无参数安装；`-Revert` 撤销 |
 
 ### 截图取证的正确姿势
 
@@ -214,6 +273,9 @@ Start-Process 'C:\Program Files\Rime\weasel-0.17.4\WeaselServer.exe'
 | 按 `↓` / `→` 没反应或行为怪 | `menu_processor.lua` 里是不是有人加了方向键分支 —— **不该有**，方向键必须放行给原版 `navigator` |
 | 菜单里按 `5` 没反应 | **正常**：第 5 项已去掉，`vset*` 只能手打 `vset` 进入 |
 | 双击列表某一项没反应 | 是不是没点到行？列表区域默认 `ListTop=200`（跳过表头）；用 `gui-dblclick-test.ps1 -DryRun` 先确认找得到行 |
+| 点托盘「输入法设置」没反应 | `WeaselDeployer.exe` 是不是 **5632 字节**的代理、`WeaselDeployer.real.exe` 在不在；不在就重跑 `tools\vmenu-tray-setup.ps1`。窗口起不来则按「`v`→`1` 没反应」查常驻窗口 |
+| 托盘菜单第一项又变回「输入法设定」 | 多半是小狼毫升级 / 修复安装覆盖了 exe：重跑 `tools\vmenu-tray-setup.ps1`（并把 `.real.exe` 先挪走，见 §4「改托盘菜单入口」的注意） |
+| 重新部署后多行候选框没了 | **正常情况不会**：`max_width` / `page_size` 写在 `custom.yaml` 的 patch 里，重新部署会重新应用；真没了就查 `build\weasel.yaml` 与 `rime_ice.custom.yaml` 的值 |
 | 打字变卡 | 是不是在普通打字路径里读了文件或起了进程（约束 1、3） |
 
 ---
@@ -228,6 +290,9 @@ Start-Process 'C:\Program Files\Rime\weasel-0.17.4\WeaselServer.exe'
 - [ ] 回归：`ni`（普通拼音候选正常）、`12345`（纯数字正常）、`wsl`/`138`（常用语命中）、`v` 菜单（4 项）、`v`→`3` 列表
 - [ ] 改了 `.ps1` 的话补回 BOM 并检查解析（`Parser::ParseFile`）
 - [ ] 改了候选框键（`max_width`/`page_size`）的话：`custom.yaml` 与 `build/*.yaml` 都改了、用 UTF-8 读写、日志没有 `Error parsing`、截图确认折行
+- [ ] 改了托盘入口（`vmenu-tray-setup.ps1` / `vmenu-deployer-wrapper.cs`）的话：两个文件都 **UTF-8 带 BOM**、重跑安装脚本、结尾校验是「旧标签 0 处 / 新标签 1 处」、`WeaselDeployer.exe` = 5632 字节的代理且 `.real.exe` 仍在
+- [ ] 动 `WeaselServer.exe` 之前确认 **`WeaselServer` 已停**（脚本会自己停/起），并且只做**等长替换**
+- [ ] 托盘入口改完顺手回归三件不受影响的事：重新部署 / 用户词典管理 / 用户资料同步（至少跑一次 `/deploy`，看日志没有 Error 且 `max_width`/`page_size` 还在）
 - [ ] 双击编辑的测试跑完**把数据还原**并校验 sha256
 - [ ] 截图/示例数据里**不出现真实剪贴板、邮箱、手机号**
 
@@ -248,6 +313,22 @@ Start-Process 'C:\Program Files\Rime\weasel-0.17.4\WeaselServer.exe'
 * 新测试工具 `tools/gui-dblclick-test.ps1`（截图找行 + 真实鼠标双击），
   用法与实测几何见 `TESTING.md` §1；退出码 0 / 1 / 2。
 
+### 已完成并验收（2026-09-13 第三轮 · 托盘菜单）
+
+* **托盘图标右键菜单第一项 = 「输入法设置 (S)」**（`WeaselServer.exe` 里的菜单文字已就地改成
+  `输入法设置 (&S)`：UTF-16 等长替换，回读 新标签 1 处 / 旧标签 0 处，命令号 **40008**；
+  该 exe 无数字签名）。
+* **`WeaselDeployer.exe` 位置已换成代理**（5632 字节），真身 = `WeaselDeployer.real.exe`
+  （638976 字节）；无参数 → 打开 vmenu 设置窗口，`/deploy`、`/dict`、`/sync` → 原样转发。
+  透传已实测：`build\weasel.yaml` / `build\rime_ice.schema.yaml` 重新生成、日志只有 INFO、
+  `max_width: 300` 与 `page_size: 18` 都还在（**重新部署不会弄丢多行候选框**）。
+* 设置窗口「设置与缓存」页新增分组 `小狼毫原生设置` + 按钮 `打开小狼毫原生设置`
+  （弹出标题 `【小狼毫】方案选单设定`），实测截图 `screenshots/gui-05-native-settings.png`。
+* 开始菜单 `【小狼毫】输入法设定.lnk` → `【小狼毫】输入法设置.lnk`。
+* 安装 / 撤销脚本 `tools/vmenu-tray-setup.ps1`（幂等 / `-Revert`），备份
+  `WeaselServer.exe.vmenu-bak`；验收方法与命令见 `TESTING.md` §7。
+* 明确**没做**：`weasel.dll` / `weaselx64.dll` 里的语言栏菜单文字（见开放问题）。
+
 ### 下一步（按价值排序）
 
 1. **确认开放问题 1**（「最右边的回车键也要还原」的确切含义，见 `PROGRESS.md` §5）——
@@ -263,3 +344,7 @@ Start-Process 'C:\Program Files\Rime\weasel-0.17.4\WeaselServer.exe'
 6. 剪贴板条目支持多行（现在被压平成一行）；需要改缓存格式 + 读写两侧。
 7. 常用语编码不足 3 位时也能在打字时命中（现在只能用 `v`→`3`）；代价是要在 1–2 个字符时也读文件，
    需要先做性能测量。
+8. **托盘入口在「小狼毫升级后重跑」时的健壮性**（见 `PROGRESS.md` §5 开放问题 8）：
+   现在 `.real.exe` 已存在就不会把新版 `WeaselDeployer.exe` 改名过去，它会被代理直接覆盖。
+9. **`weasel.dll` / `weaselx64.dll` 的语言栏菜单文字是否也改**（见 `PROGRESS.md` §5 开放问题 7）：
+   本次没做 —— 注入所有进程的 IME 模块，改了要重启所有程序才生效。

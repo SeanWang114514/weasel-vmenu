@@ -23,6 +23,7 @@
 | 设置窗口 | `esc,v,1` | 窗口出现在屏幕上（< 300 ms） |
 | 多行候选框 | 打一段拼音刷出 ≥ 6 条候选 | 候选超过一行宽度（`max_width=300`）时自动折行，一页最多 18 条 |
 | 候选框方向键 | 候选窗口里按 `↓` / `→` | 选中下一个候选（**不上屏**）；`↑` = 上一个；Lua 不拦截 |
+| 托盘「输入法设置」 | 直接运行 `WeaselDeployer.exe`（无参数 —— 这就是那个菜单项真正做的事） | 设置窗口出现；已在跑时被常驻实例亮出来（见 §7） |
 
 ---
 
@@ -105,6 +106,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\gui-dblclick-test.ps
 | `list-windows.ps1 -MinWidth 600` | 列出可见窗口：`pid / hwnd / 物理坐标 / 标题` |
 | `ime-test.ps1` | 老版按键+截图（记事本会移到 80,60） |
 | `focus-notepad.ps1` | 只抢焦点 |
+| `vmenu-tray-setup.ps1` | 托盘菜单入口「输入法设置」的**安装 / 撤销**（`-Revert`），以及 exe 菜单文字的回读校验（见 §7） |
 
 ---
 
@@ -189,6 +191,9 @@ if ($e) { $e | ForEach-Object { "line $($_.Extent.StartLineNumber): $($_.Message
 # 2) BOM 检查（含中文的 .ps1 必须带 BOM）
 (([IO.File]::ReadAllBytes($p)[0..2]) -join ',')      # 期望 239,187,191
 
+# 2b) 托盘代理源码同样必须带 BOM（csc 按 GBK 读无 BOM 的源码，中文提示会变乱码）
+(([IO.File]::ReadAllBytes('.\src\windows\vmenu-deployer-wrapper.cs')[0..2]) -join ',')   # 期望 239,187,191
+
 # 3) bat 编码检查（必须 CRLF + 纯 ASCII）
 $b=[IO.File]::ReadAllBytes($bat); ($b | Where-Object {$_ -gt 127}).Count   # 期望 0
 
@@ -252,3 +257,78 @@ Copy-Item "$p.bak" $p -Force
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\gui-dblclick-test.ps1 `
   -PreX 300 -PreY 200 -Row 1 -Expect '修改常用语'
 ```
+
+---
+
+## 7. 本次迭代（0.2.1）的验收结论：托盘菜单「输入法设置」
+
+| # | 验收项 | 结论 |
+| --- | --- | --- |
+| 1 | 改完**回读** `WeaselServer.exe` | 新标签 `输入法设置 (&S)` 命中 **1 处**、旧标签 `输入法设定 (&S)` **0 处** |
+| 2 | 该菜单项的**命令号** | 从 `IDR_MENU_POPUP`（资源 105）读出 = **40008**，与源码 `include/resource.h` 的 `ID_WEASELTRAY_SETTINGS` 一致 |
+| 3 | 菜单文本片段顺序 | `输入法设置 (&S)` / `用户词典管理 (&D)` / `用户资料同步 (&N)` / … 与用户截图一致 |
+| 4 | 触发方式 = 该菜单项真正做的事（**直接运行 `WeaselDeployer.exe`（无参数）**） | 设置窗口没在跑 → 新实例启动、窗口出现（标题 `小狼毫 v 功能 · 可视化设置`）；已在跑 → 常驻实例把窗口亮出来（走 `open-settings.flag` 那条路） |
+| 5 | 代理透传 `/deploy` | 真的执行了部署：`D:\rime-sandbox\build\weasel.yaml` 与 `build\rime_ice.schema.yaml` 在 02:14:52/53 被重新生成，日志只有 INFO 无 Error；**`max_width: 300`、`page_size: 18` 都还在**（它们在 `weasel.custom.yaml` / `rime_ice.custom.yaml` 的 patch 里）→ **重新部署不会弄丢多行候选框** |
+| 6 | 设置窗口新按钮 | 点「打开小狼毫原生设置」→ 弹出标题 `【小狼毫】方案选单设定`（截图 `screenshots/gui-05-native-settings.png` 是设置窗口里的「小狼毫原生设置」分组与按钮） |
+
+### 7.1 安装 / 幂等 / 撤销的测试方法与命令
+
+```powershell
+# ① 安装（幂等；脚本会自己停 / 起 WeaselServer，并重新编译代理）
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\vmenu-tray-setup.ps1
+# 结尾几行就是判据：
+#   校验：exe 里 旧标签=0 处 / 新标签=1 处
+#   文件：WeaselDeployer.exe=5632 字节，WeaselDeployer.real.exe=… 字节（本机 638976）
+#   服务：WeaselServer PID=…
+
+# ② 幂等：紧接着再跑一次
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\vmenu-tray-setup.ps1
+# 期望：「WeaselServer.exe 备份已存在，沿用（不会被覆盖）」
+#       「菜单项文字已经是「输入法设置」，跳过」
+#       `.real.exe` 已存在时不再重复改名；代理每次都会重新编译并覆盖安装
+```
+
+```powershell
+# ③ 独立回读（不依赖脚本输出）：按 UTF-16 数标签出现次数
+$exe = 'C:\Program Files\Rime\weasel-0.17.4\WeaselServer.exe'
+$b   = [IO.File]::ReadAllBytes($exe)
+$old = [Text.Encoding]::Unicode.GetBytes(([char]0x8F93)+([char]0x5165)+([char]0x6CD5)+([char]0x8BBE)+([char]0x5B9A)+' (&S)')  # 输入法设定 (&S)
+$new = [Text.Encoding]::Unicode.GetBytes(([char]0x8F93)+([char]0x5165)+([char]0x6CD5)+([char]0x8BBE)+([char]0x7F6E)+' (&S)')  # 输入法设置 (&S)
+function Count-All($hay, $needle) {
+  $n = 0
+  for ($i = 0; $i -le $hay.Length - $needle.Length; $i++) {
+    if ($hay[$i] -ne $needle[0]) { continue }
+    $ok = $true
+    for ($j = 1; $j -lt $needle.Length; $j++) { if ($hay[$i + $j] -ne $needle[$j]) { $ok = $false; break } }
+    if ($ok) { $n++ }
+  }
+  $n
+}
+"旧标签 = $(Count-All $b $old) 处 / 新标签 = $(Count-All $b $new) 处"   # 期望：旧标签 = 0 处 / 新标签 = 1 处
+```
+
+（同一套计数逻辑脚本内部也有：`Find-All` + `Test-Label`。标签用字符码拼出来是为了不受文件编码影响。）
+
+```powershell
+# ④ 撤销（会真的还原两个 exe 与开始菜单快捷方式名字）
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\vmenu-tray-setup.ps1 -Revert
+# 期望输出：
+#   已还原 WeaselServer.exe（来自 …\WeaselServer.exe.vmenu-bak）
+#   已把 WeaselDeployer.real.exe 改名回 WeaselDeployer.exe
+#   校验：exe 里 旧标签=1 处，新标签=0 处
+# 撤销后想再装回来，重跑 ① 即可
+
+# ⑤ 代理透传（验收 5 的复现；会真的重新部署）
+& 'C:\Program Files\Rime\weasel-0.17.4\WeaselDeployer.exe' /deploy
+Get-Item 'D:\rime-sandbox\build\weasel.yaml','D:\rime-sandbox\build\rime_ice.schema.yaml' | Select-Object Name, LastWriteTime
+[IO.File]::ReadAllText('D:\rime-sandbox\build\weasel.yaml', [Text.Encoding]::UTF8).Contains('max_width: 300')          # 期望 True
+[IO.File]::ReadAllText('D:\rime-sandbox\build\rime_ice.schema.yaml', [Text.Encoding]::UTF8).Contains('page_size: 18') # 期望 True
+Get-ChildItem "$env:TEMP\rime.weasel\*.log" | Sort-Object LastWriteTime -Descending |
+  Select-Object -First 1 | Get-Content | Select-String 'Error'    # 期望无输出
+
+# ⑥ 设置窗口新按钮（人眼验收）：打开设置窗口 → 「设置与缓存」页 → 点「打开小狼毫原生设置」
+#    期望弹出标题为「【小狼毫】方案选单设定」的对话框
+```
+
+> 托盘项**不用真的去点**：这一项做的事就是「无参数运行 `WeaselDeployer.exe`」（脚本 + 资源回读都已确认
+> 命令号 = 40008 且服务端对它的处理就是启动这个 exe），所以第 4 条用直接运行来验收。

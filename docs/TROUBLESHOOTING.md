@@ -174,6 +174,67 @@ if ($e) { $e | ForEach-Object { "line $($_.Extent.StartLineNumber): $($_.Message
 
 ---
 
+## 托盘图标右键菜单（「输入法设置」）
+
+### 点了托盘「输入法设置」没反应
+
+托盘那一项做的事就是**无参数运行 `WeaselDeployer.exe`**，所以先看这个文件是什么：
+
+```powershell
+$d = 'C:\Program Files\Rime\weasel-0.17.4'
+Get-Item "$d\WeaselDeployer.exe", "$d\WeaselDeployer.real.exe" -ErrorAction SilentlyContinue |
+  Select-Object Name, Length, LastWriteTime
+```
+
+| 症状 | 结论 / 做法 |
+| --- | --- |
+| `WeaselDeployer.exe` **不是 5632 字节**（是几百 KB） | 代理没装上（或已被小狼毫升级覆盖）→ 重跑 `tools\vmenu-tray-setup.ps1` |
+| **没有** `WeaselDeployer.real.exe` | 同上：真身还没被改名 → 重跑安装脚本 |
+| 两个文件都在、大小也对，点了却没窗口 | 代理会去启动 `vmenu-settings-gui.ps1`（默认路径 `D:\VibeCoding\输入法\vmenu-settings-gui.ps1`）；**脚本不在那儿时代理会退回原生设置对话框**，所以「完全没反应」通常是设置窗口进程起不来 → 按上面的「`v`→`1` 按了没反应」查常驻窗口与守护进程 |
+| 想分清是「菜单文字没改」还是「行为没改」 | 回读 exe 里的菜单文字，期望 `旧标签 0 处 / 新标签 1 处`（命令见 `TESTING.md` §7.1 ③） |
+
+### 重新部署会不会弄丢多行候选框
+
+**不会。** 实测：经代理转发的 `WeaselDeployer.exe /deploy`（= 托盘菜单里的「重新部署 (R)」）
+会重新生成 `D:\rime-sandbox\build\weasel.yaml` 与 `build\rime_ice.schema.yaml`，
+日志只有 INFO 没有 Error，而 **`max_width: 300`、`page_size: 18` 都还在** —— 因为它们写在
+`weasel.custom.yaml` / `rime_ice.custom.yaml` 的 `patch` 里，重新部署会重新应用。
+
+### 升级 / 修复安装小狼毫之后，托盘项变回「输入法设定」了
+
+**这是预期的**：升级会覆盖 `WeaselServer.exe`（菜单文字回到原版）与 `WeaselDeployer.exe`
+（代理被真身盖掉）。重新跑一次安装脚本即可：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\vmenu-tray-setup.ps1
+```
+
+脚本是幂等的：备份已存在就沿用（**不会**用新 exe 覆盖第一份备份）、菜单文字已是新标签就跳过、
+快捷方式已改名就跳过；代理每次都会重新编译并覆盖安装。
+
+> ⚠️ 注意脚本只在**没有** `WeaselDeployer.real.exe` 时才做改名。升级后再重跑时 `.real.exe`
+> 通常还在，于是**不会**把这次的 `WeaselDeployer.exe` 改名过去，而是让代理**直接覆盖**它 ——
+> 也就是说 `WeaselDeployer.real.exe` 可能仍是升级前的旧版部署器。
+> 想稳妥一点：升级后先把 `.real.exe` 挪走 / 删掉，再跑安装脚本。
+
+### 已知限制 / 注意事项
+
+1. **托盘那一项是「改名 + 改行为」，不是新增第 13 项**：菜单项写死在 `WeaselServer.exe`
+   的资源（`IDR_MENU_POPUP`，资源号 105）里，服务端也只认 `WeaselDeployer.exe` 这一个入口，
+   所以无法凭空加一个全新命令号。原生设置对话框的直接入口因此从托盘挪到了 vmenu 设置窗口里
+   （「小狼毫原生设置」分组 → 「打开小狼毫原生设置」）。
+2. **小狼毫升级 / 修复安装会覆盖** `WeaselServer.exe` 与 `WeaselDeployer.exe`，
+   托盘项退回原样（`输入法设置` 变回 `输入法设定` 且指向原生对话框）；重跑一次安装脚本即可。
+3. **`weasel.dll` / `weaselx64.dll` 里也有同样的菜单文字**（那是输入法**语言栏**那条右键菜单用的），
+   本项目**没有改**：它们是注入到所有进程里的 IME 模块，改了要重启所有程序才生效，风险不值得。
+   也就是说语言栏那条右键菜单仍是「输入法设定」，点它走的是原生对话框。
+4. **改 `WeaselServer.exe` 前必须先停掉 `WeaselServer` 进程**（正在运行的 exe 被系统锁住，
+   写不进去）；安装脚本会自动停 / 起。**脚本文件本身必须 UTF-8 带 BOM**（`.ps1` 与 `.cs` 都是），
+   否则 PowerShell 5.1 / csc 会按 GBK 解析，中文提示变乱码（脚本里匹配用的「输入法设定」
+   是用字符码 `[char]0x8F93…` 拼出来的，不受文件编码影响）。
+
+---
+
 ## 服务与生命周期
 
 ### 重启电脑后 `v`→`1` 没反应
@@ -262,4 +323,5 @@ Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" |
 | 输入法文件 | `<RimeUserDir>`（本机 `D:\rime-sandbox`） |
 | 编译后的方案 | `<RimeUserDir>\build\rime_ice.schema.yaml`（`menu/page_size` 在这里生效） |
 | Weasel 主题（编译后） | `<RimeUserDir>\build\weasel.yaml`（`style/layout/max_width` 在这里生效），镜像在 `%APPDATA%\Rime\build\weasel.yaml` |
+| 托盘入口的三个 exe（都在 `C:\Program Files\Rime\weasel-0.17.4\`） | `WeaselServer.exe.vmenu-bak`（原始 exe 的备份，只在第一次安装时生成）、`WeaselDeployer.real.exe`（真正的部署器）、`WeaselDeployer.exe`（代理，本机 5632 字节） |
 | 截好的验证图 | 项目目录下 `shots\`（发布用的图在仓库 `screenshots\`） |

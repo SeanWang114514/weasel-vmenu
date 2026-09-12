@@ -440,6 +440,33 @@ $tbFiles.Text = "剪贴板历史：$CLIP_PATH`r`n常用语：$FAV_PATH`r`n设置
   "提示：改完这里的内容后无需重启输入法；输入法每次打开 v 菜单都会重新读取。`r`n" +
   "若在输入法里改了内容想在这里看到，点「重新载入」即可。"
 
+# 小狼毫原生设置：托盘右键菜单里的「输入法设置」打开的是本窗口；
+# 小狼毫自带的设置对话框（配色、字体、候选条数等）从这里打开。
+$grpNative = New-Object Windows.Forms.GroupBox
+$grpNative.Text = '小狼毫原生设置'
+$grpNative.Left = 16; $grpNative.Top = 510; $grpNative.Width = 900; $grpNative.Height = 120
+$grpNative.Anchor = 'Top,Left,Right'
+
+$lblNative = New-Object Windows.Forms.Label
+$lblNative.Left = 18; $lblNative.Top = 26; $lblNative.Width = 860; $lblNative.Height = 40
+$lblNative.Text = "托盘图标右键菜单里的「输入法设置 (S)」打开的就是本窗口。`n小狼毫自带的设置对话框（配色 / 字体 / 候选窗口样式）用下面的按钮打开。"
+
+$btnNative = New-Object Windows.Forms.Button
+$btnNative.Text = '打开小狼毫原生设置'; $btnNative.Left = 18; $btnNative.Top = 72; $btnNative.Width = 200; $btnNative.Height = 32
+
+$btnNative.Add_Click({
+  $dir = 'C:\Program Files\Rime\weasel-0.17.4'
+  $real = Join-Path $dir 'WeaselDeployer.real.exe'
+  if (-not (Test-Path -LiteralPath $real)) { $real = Join-Path $dir 'WeaselDeployer.exe' }
+  try {
+    Start-Process -FilePath $real
+    $statusLabel.Text = '已打开小狼毫原生设置'
+  } catch {
+    [void][Windows.Forms.MessageBox]::Show("打不开：`r`n$real`r`n`r`n$($_.Exception.Message)", 'vmenu')
+  }
+})
+$grpNative.Controls.AddRange(@($lblNative, $btnNative))
+
 # ---------------------------------------------------------------------------
 # 事件
 # ---------------------------------------------------------------------------
@@ -630,7 +657,7 @@ $tabFav.Controls.Add($favInfo)
 $grpPage.Controls.AddRange(@($lblPage, $cmbPage, $btnPageSave, $lblPageHint))
 $grpClear.Controls.AddRange(@($lblClear, $btnClearClip, $btnClearFav))
 $grpFiles.Controls.Add($tbFiles)
-$tabSet.Controls.AddRange(@($grpPage, $grpClear, $grpFiles))
+$tabSet.Controls.AddRange(@($grpPage, $grpClear, $grpFiles, $grpNative))
 
 [void]$tabs.TabPages.Add($tabClip)
 [void]$tabs.TabPages.Add($tabFav)

@@ -32,13 +32,18 @@
 > `vsetn` / `vsetx` 的 Lua 代码**保留但不再能从菜单进入**，只有手打 `vset` 才进得去。
 > 设置一律走第 1 项的可视化窗口。
 
-除菜单外还有三条「不用按 v」的能力：
+除菜单外还有四条「不用按 v」的能力：
 
 * **常用语候选第 2 位**：正常打字时键入常用语编码的**前 3 位**，内容直接出现在候选第 2 位
   （注释显示「常用语」）。
 * **编码打完 + 回车 = 直接调用**：输入与某条编码**完全一致**时，回车把内容上屏
   （字母编码、纯数字编码都支持）。
 * **多行候选框**：候选多了会自动换行排成多栏（见 §4「多行候选框」）。
+* **托盘图标右键菜单里的「输入法设置 (S)」**：右键任务栏托盘的小狼毫图标，菜单第一项就是它，
+  点开的是同一个 vmenu 可视化设置窗口（原来这一项叫「输入法设定 (S)」，打开的是小狼毫自带对话框）。
+  做法是**改一句菜单文字 + 用一个代理顶替 `WeaselDeployer.exe`**，可一键撤销；
+  重新部署 / 用户词典管理 / 用户资料同步三项行为完全不变（机制与安装见 §3.4）。
+  小狼毫自带的设置对话框（配色 / 字体等）改从设置窗口的「小狼毫原生设置」分组打开。
 
 > **关于「收藏 → 常用语」改名**：本次只改**用户可见文本**（菜单项、列表标题/空态/搜索提示、
 > 候选注释、设置窗口标签页与按钮文案）。内部命名与文件格式**沿用旧名**——
@@ -66,6 +71,7 @@
 | ![常用语](screenshots/gui-02-favorites.png) | 常用语：添加 / 修改 / 删除 / 清空（二次确认）/ 上移 / 下移；改动**立即**对输入法生效；双击某条 = 直接「修改常用语」 |
 | ![设置与缓存](screenshots/gui-03-settings.png) | 设置与缓存：列表默认条数（20–50）、缓存清理、文件位置一览 |
 | ![双击编辑](screenshots/gui-04-dblclick-edit.png) | 双击剪贴板某一行后弹出的「编辑第 N 条」编辑框（打开时原文已全选） |
+| ![小狼毫原生设置](screenshots/gui-05-native-settings.png) | 「设置与缓存」页底部的**小狼毫原生设置**分组与「打开小狼毫原生设置」按钮（点它会弹出小狼毫自带的 `【小狼毫】方案选单设定` 对话框：配色 / 字体 / 候选窗口样式） |
 
 > README 里的截图全部使用**示例数据**（`alice@example.com`、`13800138000` 等），
 > 不包含任何真实剪贴板或常用语内容。
@@ -154,6 +160,47 @@
 彻底退出：运行 `vmenu-watcher-stop.ps1`，或在任务管理器里结束标题为
 「小狼毫 v 功能 · 可视化设置」的 powershell 进程。
 
+### 3.4 托盘菜单入口：右键菜单里的「输入法设置」（可选，可一键撤销）
+
+让小狼毫**托盘图标右键菜单**的第一项从「输入法设定 (S)」变成「输入法设置 (S)」，
+点它直接打开上面那个 vmenu 设置窗口（机制见 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) §3.8）：
+
+```powershell
+# 安装（幂等，可重复运行；会先停掉 WeaselServer，改完自动起回来）
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\vmenu-tray-setup.ps1
+
+# 撤销：还原 WeaselServer.exe 与 WeaselDeployer.exe，开始菜单快捷方式名字也一并还原
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\vmenu-tray-setup.ps1 -Revert
+```
+
+脚本做两件事：
+
+1. **就地改菜单文字**：`WeaselServer.exe` 里那句 `输入法设定 (&S)` → `输入法设置 (&S)`。
+   这是 **UTF-16 等长替换，只改最后 1 个汉字**（`定`→`置`，2 个字节），
+   不动任何偏移量 / 长度；改完脚本会回读校验「旧标签 0 处 / 新标签 1 处」。
+   该 exe 没有数字签名（同目录 `WeaselDeployer.exe` 也未签名），所以改它不会破坏签名。
+2. **安装部署器代理**：把真正的 `WeaselDeployer.exe` 改名为 `WeaselDeployer.real.exe`，
+   用 `src/windows/vmenu-deployer-wrapper.cs` 编译出的小代理顶替它（脚本用
+   `csc.exe /target:winexe /r:System.Windows.Forms.dll` 自动编译）：
+   * 无参数（= 托盘「输入法设置」）→ 打开 vmenu 设置窗口；
+   * 带 `/deploy`、`/dict`、`/sync` → 原样转发给 `WeaselDeployer.real.exe`，
+     所以**重新部署 / 用户词典管理 / 用户资料同步完全不受影响**。
+
+其它：
+
+* 备份 `C:\Program Files\Rime\weasel-0.17.4\WeaselServer.exe.vmenu-bak` 只在**第一次**安装时生成，
+  撤销时用它还原（脚本参数：`-InstallDir` 默认 `C:\Program Files\Rime\weasel-0.17.4`、
+  `-GuiScript`、`-WrapperCs`）。
+* 顺带把开始菜单里的 `【小狼毫】输入法设定.lnk` 改名为 `【小狼毫】输入法设置.lnk`
+  （它指向的也是 `WeaselDeployer.exe`，所以现在同样打开 vmenu 窗口）。
+* 小狼毫自带的设置对话框（配色 / 字体等）没丢：设置窗口「设置与缓存」页底部有
+  **小狼毫原生设置**分组和「打开小狼毫原生设置」按钮（等价于直接运行 `WeaselDeployer.real.exe`）。
+* 小狼毫**升级 / 修复安装**会覆盖这两个 exe，托盘项退回原样 —— 重新跑一次安装命令即可。
+  但注意：脚本只在**没有** `WeaselDeployer.real.exe` 时才做改名，升级后重跑时它通常还在，
+  于是本次的 `WeaselDeployer.exe` 会被代理**直接覆盖**（`.real.exe` 可能仍是升级前的旧版）。
+* `weasel.dll` / `weaselx64.dll` 里也有同样的菜单文字（输入法语言栏那条右键菜单用的），
+  本项目**没有改**：它们是注入到所有进程里的 IME 模块，改了要重启所有程序才生效，风险不值得。
+
 ## 4. 配置与文件格式
 
 | 文件（相对 `<RimeUserDir>`） | 内容 |
@@ -225,7 +272,9 @@ weasel-vmenu/
 ├── src/
 │   ├── lua/                      ← 输入法侧（复制到 <RimeUserDir>\lua\）
 │   └── windows/                  ← 后台服务 / 设置窗口 / 启动脚本（含 .bat）
+│       └── vmenu-deployer-wrapper.cs   ← 托盘「输入法设置」的代理源码（C#，安装脚本自动编译）
 ├── tools/                        ← 验证工具（截图、聚焦、按键、延迟测试）
+│   └── vmenu-tray-setup.ps1      ← 托盘菜单入口「输入法设置」的安装 / 撤销（`-Revert`）
 ├── examples/                     ← 示例数据与示例配置
 └── screenshots/                  ← README 里用到的截图（全部为示例数据）
 ```
@@ -266,6 +315,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\gui-dblclick-test.ps
   `menu/page_size` 共同决定，改完必须重启 `WeaselServer`，**输入法里没有运行时开关**
   （见 §4「多行候选框」的开关方法与回退方法）。
 * 常驻设置窗口是一个 PowerShell + WinForms 进程，约占 150 MB 内存 —— 这是「秒开」的代价。
+* **托盘那一项是「改名 + 改行为」，不是新增第 13 项**：小狼毫托盘右键菜单写死在
+  `WeaselServer.exe` 的资源里，没有配置文件能新增项，服务端也只认
+  `WeaselDeployer.exe` 这一个入口。所以原生设置对话框的直接入口从托盘挪到了 vmenu 设置窗口里
+  （见 §3.4）。小狼毫升级 / 修复安装会覆盖那两个 exe，托盘项退回原样，重跑一次安装命令即可。
 * 设置窗口是 DPI 不感知的，在 150% 缩放下由 Windows 整体放大，布局正确但文字略软。
 * 剪贴板多行内容会被压平成一行（缓存格式一行一条）。
 * 本项目只针对 **Weasel + rime-ice** 验证过；其它方案需要自己补 `engine/*` 注册与
