@@ -66,6 +66,7 @@ function M.mode_of(code)
   if code == "v" then return "menu" end
   if code:sub(1, 5) == "vclip" then return "clip" end
   if code:sub(1, 4) == "vfav" then return "fav" end
+  if code:sub(1, 3) == "vqi" then return "quick" end
   if code:sub(1, 4) == "vset" then return "set" end
   return nil
 end
@@ -84,6 +85,7 @@ function M.want_type(code)
   if m == "menu" then return "vmenu" end
   if m == "clip" then return "vclip" end
   if m == "fav" then return "vfav" end
+  if m == "quick" then return "vqi" end
   if m == "set" then
     local base, act = M.parse_sub(code)
     if base == "c" and act ~= "x" then return "vclip" end

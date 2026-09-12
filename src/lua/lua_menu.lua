@@ -28,8 +28,24 @@ local function yield_menu(seg)
   yield(item(seg, "vmenu", "剪贴板", "历史"))
   yield(item(seg, "vmenu", "常用语", "快捷内容"))
   yield(item(seg, "vmenu", "原符号", "原版 v"))
+  yield(item(seg, "vmenu", "快捷输入", "计算 · 日期"))
 end
 
+-- ===== 快捷输入（对应雾凇拼音自带的前缀）=====
+-- 按下数字后直接把触发前缀写进输入框，之后的按键完全交给原方案：
+--   1 计算 cC（接着输入算式，如 1+2*3）  2 日期 rq  3 时间 sj  4 星期 xq
+--   5 日期时间 dt  6 农历 N+今天  7 数字大写 R  8 Unicode U
+local function yield_quick(seg)
+  yield(item(seg, "vqi", "计算", "按 1 · 接着输入算式"))
+  yield(item(seg, "vqi", "日期", "按 2 · 今天的日期"))
+  yield(item(seg, "vqi", "时间", "按 3 · 现在的时间"))
+  yield(item(seg, "vqi", "星期", "按 4 · 今天星期几"))
+  yield(item(seg, "vqi", "日期时间", "按 5 · ISO 格式"))
+  yield(item(seg, "vqi", "农历", "按 6 · 今天的农历"))
+  yield(item(seg, "vqi", "数字大写", "按 7 · 如 R1234"))
+  yield(item(seg, "vqi", "Unicode", "按 8 · 如 U4e2d"))
+  yield(item(seg, "vqi", "返回", "按 q"))
+end
 -- ===== 设置根菜单 =====
 local function yield_set(seg)
   local page = core.read_page()
@@ -179,6 +195,11 @@ local function gen(input, seg, env)
 
   if mode == "fav" then
     yield_fav_list(seg, code:sub(5), false)
+    return
+  end
+
+  if mode == "quick" then
+    yield_quick(seg)
     return
   end
 

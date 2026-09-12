@@ -80,10 +80,27 @@ local function handle(key, env)
       core.set_raw(ctx, true)
       return 1
     end
-    -- 第 5 项「文字设置」已按要求去掉；vset* 代码保留但不再可从菜单进入
+    -- 第 5 项：快捷输入（计算 / 日期 / 时间 / 星期 …）
+    -- 说明：原来的「文字设置」（vset 纯键盘设置）已去掉，vset* 代码保留但菜单进不去
+    if repr == "5" then replace_input(ctx, "vqi") return 1 end
     return 2
   end
 
+  -- ===== 快捷输入：选中后把触发前缀直接写进输入框，之后的按键交给原方案 =====
+  -- 这些前缀都是雾凇拼音自带的（recognizer/patterns + lua_translator）：
+  --   cC 计算器 / rq 日期 / sj 时间 / xq 星期 / dt 日期时间 / N 公历转农历 / R 数字大写 / U Unicode
+  if cur == "vqi" then
+    if repr == "1" then replace_input(ctx, "cC") return 1 end
+    if repr == "2" then replace_input(ctx, "rq") return 1 end
+    if repr == "3" then replace_input(ctx, "sj") return 1 end
+    if repr == "4" then replace_input(ctx, "xq") return 1 end
+    if repr == "5" then replace_input(ctx, "dt") return 1 end
+    if repr == "6" then replace_input(ctx, "N" .. os.date("%Y%m%d")) return 1 end
+    if repr == "7" then replace_input(ctx, "R") return 1 end
+    if repr == "8" then replace_input(ctx, "U") return 1 end
+    if repr == "q" then ctx:clear() return 1 end
+    return 2
+  end
   -- ===== 设置根菜单 =====
   if cur == "vset" then
     if repr == "1" then replace_input(ctx, "vsetc") return 1 end

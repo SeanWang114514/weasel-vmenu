@@ -131,15 +131,22 @@ if ($t0.New -gt 0 -and $t0.Old -eq 0) {
 }
 
 # 3) 安装部署器代理
-if (-not (Test-Path $realDep)) {
-  Stop-Server
-  Move-Item $deployer $realDep -Force
-  Write-Host '  WeaselDeployer.exe → WeaselDeployer.real.exe'
-}
+#    先把代理编译出来，再用「大小是否等于代理」判断当前的 WeaselDeployer.exe 是真身还是代理：
+#    小狼毫升级 / 修复安装后，这里躺的是新版真身（约 638 KB），必须先改名成 .real.exe，
+#    否则会被代理直接覆盖、丢掉新版部署器。
 $tmpExe = Join-Path $env:TEMP 'vmenu-deployer-wrapper.exe'
 Remove-Item $tmpExe -Force -ErrorAction SilentlyContinue
 & $csc /nologo /target:winexe /r:System.Windows.Forms.dll /out:$tmpExe $WrapperCs | Write-Host
 if (-not (Test-Path $tmpExe)) { throw '代理编译失败' }
+$proxyLen = (Get-Item $tmpExe).Length
+$curLen = if (Test-Path $deployer) { (Get-Item $deployer).Length } else { -1 }
+if ($curLen -ne $proxyLen) {
+  Stop-Server
+  Move-Item $deployer $realDep -Force
+  Write-Host ("  WeaselDeployer.exe（{0} 字节，真身）→ WeaselDeployer.real.exe" -f $curLen)
+} else {
+  Write-Host '  WeaselDeployer.exe 已经是代理，跳过改名'
+}
 Copy-Item $tmpExe $deployer -Force
 Write-Host ("  已安装代理 WeaselDeployer.exe（{0} 字节）" -f (Get-Item $deployer).Length)
 
