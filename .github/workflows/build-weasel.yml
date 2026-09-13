@@ -127,6 +127,23 @@ jobs:
           if (-not (Test-Path (Join-Path $dst 'boost\version.hpp'))) { throw "Boost 没解压成功" }
           echo "BOOST_ROOT=$dst" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
+      - name: 编译 Boost 依赖库（只编 Weasel 用到的几个，几分钟）
+        run: |
+          # 不用 build.bat 的 boost 关键字（它会 b2 全量编译，40 分钟）。Weasel 链接只需要
+          # thread / serialization / wserialization（自动链接头请求 mt-s = 静态库 + 静态运行库）。
+          $br = Join-Path $env:GITHUB_WORKSPACE 'deps\boost_1_84_0'
+          Set-Location $br
+          if (-not (Test-Path 'b2.exe')) { cmd /c "bootstrap.bat > bootstrap.log 2>&1" ; "bootstrap 完成" }
+          $args1 = '--with-thread --with-serialization --with-wserialization --with-system --with-filesystem --with-date_time --with-chrono --with-atomic --with-regex link=static runtime-link=static threading=multi address-model=64 variant=release stage'
+          cmd /c "b2.exe -j4 $args1 > b2.log 2>&1"
+          "b2 退出码: $LASTEXITCODE"
+          $libdir = Join-Path $br 'stage\lib'
+          "库目录: $libdir"
+          if (Test-Path $libdir) { Get-ChildItem $libdir -Filter '*.lib' | Select-Object -First 12 -ExpandProperty Name | Out-File prepare.log -Append -Encoding utf8 }
+          $n = 0
+          if (Test-Path $libdir) { $n = (Get-ChildItem $libdir -Filter '*.lib').Count }
+          "$libdir 下共 $n 个 .lib（期望 >= 10）" | Out-File prepare.log -Append -Encoding utf8
+          if ($n -lt 4) { Get-Content (Join-Path $br 'b2.log') -Tail 30 | Out-File prepare.log -Append -Encoding utf8 }
       - name: 修正 Boost 库的工具集标记（vc142 -> vc143）
         run: |
           # 换成 v145 工具集后，Boost 的自动链接头按编译器版本请求 -vc143- 名字，
