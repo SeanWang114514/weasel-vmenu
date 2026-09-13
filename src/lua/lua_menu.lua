@@ -44,6 +44,7 @@ local function yield_quick(seg)
   yield(item(seg, "vqi", "农历", "按 6 · 今天的农历"))
   yield(item(seg, "vqi", "数字大写", "按 7 · 如 R1234"))
   yield(item(seg, "vqi", "Unicode", "按 8 · 如 U4e2d"))
+  yield(item(seg, "vqi", "部件拆字", "按 9 · 如 nvzi = 女+子"))
   yield(item(seg, "vqi", "返回", "按 q"))
 end
 -- ===== 设置根菜单 =====

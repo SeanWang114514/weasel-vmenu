@@ -104,6 +104,7 @@ local function handle(key, env)
     if repr == "6" then replace_input(ctx, "N" .. os.date("%Y%m%d")) return 1 end
     if repr == "7" then replace_input(ctx, "R") return 1 end
     if repr == "8" then replace_input(ctx, "U") return 1 end
+    if repr == "9" then replace_input(ctx, "u") return 1 end
     if repr == "q" then ctx:clear() return 1 end
     return 2
   end

@@ -32,4 +32,8 @@ patch:
   # 4) 候选框：一页 18 个候选（配合 weasel 主题的 style/layout/max_width 换行，
   #    就得到「多行候选框」；实测每行约 5 个、最多约 4 行）。
   #    想回到原来的一行 9 个：把这里改成 9，并把 max_width 改回 0。
-  menu/page_size: 18
+  menu/page_size: 36        # 9 列 × 4 行（配合 weasel 的 max_width，按 ↓ 展开九宫格）
+  # 部件拆字：前缀 uU 改成单个 u —— 按 u 后直接输入部首的拼音名
+  #   例：unvzi（女 + 子）→ 好；   uriyue（日 + 月）→ 明
+  radical_lookup/prefix: u
+  "recognizer/patterns/radical_lookup": "^u[a-z]+$"
