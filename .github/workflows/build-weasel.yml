@@ -1,7 +1,6 @@
 name: build-weasel-grid
 
 # 在 GitHub 的 Windows runner 上编译带 vmenu-grid 方向键补丁的小狼毫 0.17.4 x64。
-# runner 自带 Windows SDK + ATL，所以不需要本地 VS 环境。
 on:
   push:
     branches: [weasel-grid-build]
@@ -21,14 +20,12 @@ jobs:
 
       - name: 环境信息
         run: |
-          cmake --version
           echo "--- SDK ---"
           if (Test-Path "C:\Program Files (x86)\Windows Kits\10\Include") { Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\Include" | Select-Object Name } else { echo "没有 SDK Include" }
           echo "--- ATL ---"
-          Get-ChildItem "C:\Program Files (x86)\Microsoft Visual Studio" -Recurse -Filter atlbase.h -ErrorAction SilentlyContinue | Select-Object -First 3 FullName
+          Get-ChildItem "C:\Program Files (x86)\Microsoft Visual Studio" -Recurse -Filter atlbase.h -ErrorAction SilentlyContinue | Select-Object -First 2 FullName
 
       - name: 安装 Boost
-        # 不用仓库自带的 install_boost.bat：它依赖 aria2c + 7z，runner 上没有 aria2c。
         run: |
           $bv = '1.84.0'
           $dst = Join-Path $env:GITHUB_WORKSPACE 'deps\boost_1_84_0'
@@ -39,31 +36,34 @@ jobs:
             Remove-Item boost.tar.gz -Force
           }
           if (-not (Test-Path (Join-Path $dst 'boost\version.hpp'))) { throw "Boost 没解压成功" }
-          echo "Boost OK: $dst"
           echo "BOOST_ROOT=$dst" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       - name: 编译 librime + Weasel
         run: .\build.bat all
 
-      - name: 看看产出了什么
+      - name: 全树列出产物（诊断用）
         if: always()
         run: |
-          if (Test-Path output) { Get-ChildItem output -Recurse -Include *.dll,*.exe | Select-Object FullName,Length,LastWriteTime } else { echo "output 目录不存在" }
-          if (Test-Path output\archives) { Get-ChildItem output\archives }
+          foreach ($d in 'output','lib') {
+            if (Test-Path $d) { echo "===== $d ====="; Get-ChildItem $d -Recurse -Include *.dll,*.exe,*.lib -ErrorAction SilentlyContinue | Select-Object FullName,Length,LastWriteTime | Format-Table -AutoSize | Out-String | Write-Host }
+          }
 
-      - name: 打包新编译出的 DLL
+      - name: 打包新编译出的 weasel DLL
         if: always()
         run: |
-          # 只打包本次构建新产出的 DLL：output 里可能有仓库自带的老文件，不能拿它们去部署
-          $cut = (Get-Date).AddMinutes(-90)
-          $dlls = @(Get-ChildItem output -Filter *.dll -ErrorAction SilentlyContinue |
-                    Where-Object { $_.LastWriteTime -gt $cut })
-          Write-Host "新 DLL 数量: $($dlls.Count)"
-          $dlls | Select-Object Name, Length, LastWriteTime
-          if ($dlls.Count -lt 2) { throw "没有新编译出的 DLL，说明构建没成功，不发布（避免把旧文件当成产物）" }
-          $dlls | Copy-Item -Destination . -Force
-          Compress-Archive -Path ($dlls.Name) -DestinationPath weasel-grid-dlls.zip -Force
-          Get-Item weasel-grid-dlls.zip | Select-Object Name, Length
+          $cut = (Get-Date).AddMinutes(-150)
+          # 不限定目录：build.bat 可能把 weasel*.dll 放在 output 的子目录里，
+          # 之前只扫 output 顶层，结果错把第三方 7z.dll/WinSparkle.dll 当成了产物。
+          $cand = @(Get-ChildItem $env:GITHUB_WORKSPACE -Recurse -File -ErrorAction SilentlyContinue -Include weasel.dll,weaselx64.dll,weaselarm64.dll |
+                    Where-Object { $_.LastWriteTime -gt $cut -and $_.FullName -notmatch '\\test\\' })
+          Write-Host "== 新生成的小狼毫 DLL =="
+          $cand | Select-Object FullName,Length,LastWriteTime | Format-Table -AutoSize | Out-String | Write-Host
+          if ($cand.Count -lt 2) { throw "没有编出 weasel*.dll（找到 $($cand.Count) 个），查看上面 output 全树" }
+          $names = @()
+          foreach ($f in $cand) { Copy-Item $f.FullName -Destination (Join-Path $env:GITHUB_WORKSPACE $f.Name) -Force; $names += $f.Name }
+          $names = $names | Sort-Object -Unique
+          Compress-Archive -Path $names -DestinationPath weasel-grid-dlls.zip -Force
+          Get-Item weasel-grid-dlls.zip | Select-Object Name,Length
 
       - name: 发布到 release
         uses: softprops/action-gh-release@v2
@@ -72,13 +72,5 @@ jobs:
           name: weasel-grid build ${{ github.run_number }}
           body: |
             带 vmenu-grid 方向键补丁的小狼毫 0.17.4 x64 DLL（GitHub Actions 编译）。
-            补丁：RimeWithWeasel/RimeWithWeasel.cpp 的 ProcessKeyEvent()。
+            部署方式：停 WeaselServer 后替换安装目录里的同名 DLL。
           files: weasel-grid-dlls.zip
-
-      - name: 清理之前失败的 release
-        if: success()
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release delete weasel-grid-1 --yes --cleanup-tag 2>$null
-          echo "已清理 weasel-grid-1（上一个失败构建留下的空包）"
