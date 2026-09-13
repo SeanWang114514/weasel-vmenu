@@ -27,7 +27,13 @@ local function handle(key, env)
   end
 
   -- 输入清空 = 本次组合结束，退出原符号模式
-  if cur == "" then core.set_raw(ctx, false) end
+  if cur == "" then
+    core.set_raw(ctx, false)
+    -- 新一次输入的第一个键：此时 ctx.input 还是空的，下面的 grid_key 收不到这个键，
+    -- 于是「展开」状态会一直留着，导致普通打字也按 36 个候选排版（候选窗口换行成 4 行）。
+    -- 用户要求「原本的一行显示」必须回来，所以在这里无条件复位成单行。
+    pcall(core.grid_reset, ctx)
+  end
   -- 原符号模式：完全不拦截，让 speller / punctuator 按原版行为处理
   if core.raw(ctx) then return 2 end
 

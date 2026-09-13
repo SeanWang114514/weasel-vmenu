@@ -71,6 +71,12 @@ local function filter(input, env)
     -- 正常打字、没命中收藏：只放出当前状态允许的个数
     --   单行（默认）= 9 个，正好一行；按 ↓ 展开后 = 36 个，自动换成 4 行 × 9 列
     local lim = core.grid_limit(ctx)
+    -- 用户要求「无论如何都在一行；候选太长就丢掉最后几个候选」。
+    -- 本机 weasel.dll 还是旧版（按宽度折行），所以这里先按估算宽度截断：
+    -- CJK/表情一个字符 3 字节、ASCII 1 字节，加上注释（序号）与间距，超出预算就停止放出。
+    -- 展开态（36 个）不做这个限制，交给 Weasel 侧「每 9 个换行」的补丁处理。
+    -- 用户要求：**不许丢候选**，全部强制显示在一行（窗口宽度随内容变宽），绝不换行。
+    -- 折行与否由 Weasel 侧补丁控制（候选 <=9 时完全不折行），这里不再做任何截断。
     local k = 0
     for cand in input:iter() do
       k = k + 1
@@ -106,7 +112,10 @@ local function filter(input, env)
       passthrough(input)
       return
     end
-    for i = 1, n do
+    -- 同样受当前状态限制：收起时最多 9 个（一行，不换行），按 ↓ 展开后才能看到最多 36 个，
+    -- 也就是「每行 9 个」，第 10 个及以后靠展开查看。
+    local lim = core.grid_limit(ctx)
+    for i = 1, math.min(n, lim) do
       -- 主题里 label_format 已留空，v 菜单的序号也改写在注释里；
       -- 注释本来就有数字的（快捷输入那种「按 1 · …」）不再重复加。
       pcall(function()

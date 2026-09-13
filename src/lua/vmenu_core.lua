@@ -86,6 +86,12 @@ local function grid_set(ctx, open)
   pcall(function() ctx:set_option(M.GRID_OPTION, open and true or false) end)
 end
 
+-- vmenu_grid 是「会话级」选项，一旦展开过就会一直开着；新一次输入开始时必须强制复位，
+-- 否则普通打字也会按 36 个候选排版，表现为候选窗口换行成 4 行（用户反馈的问题）。
+function M.grid_reset(ctx)
+  grid_set(ctx, false)
+end
+
 -- 注意：ctx.selected_candidate_index 是「从 1 开始」的（第 1 个候选读出来是 1），
 -- 而 ctx:select(i) 是「从 0 开始」的，这里统一换算成 0 基。
 local function grid_sel(ctx)
@@ -117,13 +123,18 @@ function M.grid_key(ctx, repr)
   if repr == "Down" then
     if not grid_open(ctx) then
       grid_set(ctx, true)     -- 第一次 ↓：展开成 4 行 × 9 列
-    else
-      grid_set(ctx, false)    -- 再按一次 ↓：收起（做不到「往下跳一行」，见 docs/ARCHITECTURE.md §3.6）
+      return true
     end
+    -- 已展开时按 ↓：**绝不折叠**（用户明确要求），也不再做别的动作。
+    -- 「往下跳一行 (+9)」由 Weasel 侧补丁（RimeWithWeasel.cpp::ProcessKeyEvent 里的
+    -- highlight_candidate_on_current_page）完成；只有跳到越界（已在最后一行）时才会
+    -- 落到这里，此时什么都不做，并吞掉按键，避免 rime 原生导航器把高亮挪走。
     return true
   end
   if repr == "Up" then
     if grid_open(ctx) then
+      -- ↑ 只在「选中项位于第一行」时折叠：Weasel 侧补丁发现 -9 越界才会把按键放行到这里，
+      -- 越界正说明当前在第一行，所以这里折叠是正确的；在下面几行时补丁会先处理掉按键。
       grid_set(ctx, false)    -- ↑：收回单行
       return true
     end
