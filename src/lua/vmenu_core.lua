@@ -98,6 +98,13 @@ end
 --   ↓：收起时展开；已展开时往下跳一行（+9）
 --   ↑：在第一行时收回成单行；否则往上跳一行（-9）
 --   ←/→：在同一行内左右移动
+-- 方向键：本机 librime-lua **没有**「只移动高亮」的 API（实测探针结果）：
+--   ctx.select           = function —— 但它不是「移动高亮」，而是「选中并上屏」
+--   ctx.select_candidate / set_selected_candidate_index / highlight / move_selection
+--   / menu / get_menu / selected_candidate_index 全部 = nil（不存在）
+-- 所以这里绝不能再调用 ctx.select（否则第二次按 ↓ 就把候选打出去了）。
+-- 现在的分工：↓ / ↑ 只负责「展开 / 收起」；← / → 直接放行给原生导航器，
+-- 由它做一行内的左右移动（原生行为不会上屏）。
 function M.grid_key(ctx, repr)
   local is_arrow = (repr == "Down" or repr == "Up" or repr == "Left" or repr == "Right")
   if not is_arrow then
@@ -107,30 +114,22 @@ function M.grid_key(ctx, repr)
   end
   local ok_menu, has = pcall(function() return ctx:has_menu() end)
   if not (ok_menu and has) then return false end
-  local sel = grid_sel(ctx)
-  if not grid_open(ctx) then
-    if repr == "Down" then
-      grid_set(ctx, true)
+  if repr == "Down" then
+    if not grid_open(ctx) then
+      grid_set(ctx, true)     -- 第一次 ↓：展开成 4 行 × 9 列
+    else
+      grid_set(ctx, false)    -- 再按一次 ↓：收起（做不到「往下跳一行」，见 docs/ARCHITECTURE.md §3.6）
+    end
+    return true
+  end
+  if repr == "Up" then
+    if grid_open(ctx) then
+      grid_set(ctx, false)    -- ↑：收回单行
       return true
     end
     return false
   end
-  if repr == "Down" then
-    pcall(function() ctx:select(sel + M.GRID_COLS) end)
-    return true
-  elseif repr == "Up" then
-    if sel < M.GRID_COLS then
-      grid_set(ctx, false)
-    else
-      pcall(function() ctx:select(sel - M.GRID_COLS) end)
-    end
-    return true
-  elseif repr == "Left" then
-    if sel > 0 then pcall(function() ctx:select(sel - 1) end) end
-    return true
-  end
-  pcall(function() ctx:select(sel + 1) end)
-  return true
+  return false                -- ← / → 放行，交给原生导航器做行内左右移动
 end
 function M.mode_of(code)
   if type(code) ~= "string" or code == "" then return nil end
