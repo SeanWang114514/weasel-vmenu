@@ -127,6 +127,37 @@ jobs:
           if (-not (Test-Path (Join-Path $dst 'boost\version.hpp'))) { throw "Boost 没解压成功" }
           echo "BOOST_ROOT=$dst" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
+      - name: 修正 Boost 库的工具集标记（vc142 -> vc143）
+        run: |
+          # 换成 v145 工具集后，Boost 的自动链接头按编译器版本请求 -vc143- 名字，
+          # 而缓存里的库是 v142 工具集编出来的 -vc142-，于是 LNK1104 找不到
+          # libboost_thread-vc143-mt-s-x64-1_84.lib 之类。这里把已有库复制成被请求的名字。
+          # （先走这条快路：不用重编 Boost，几分钟就能出 DLL；若之后出现运行库不匹配再考虑重编。）
+          $cands = @(
+            (Join-Path $env:GITHUB_WORKSPACE 'deps\boost_1_84_0\stage\lib'),
+            (Join-Path $env:GITHUB_WORKSPACE 'deps\boost_1_84_0\lib'),
+            (Join-Path $env:GITHUB_WORKSPACE 'lib64'),
+            (Join-Path $env:GITHUB_WORKSPACE 'lib')
+          )
+          $made = 0
+          foreach ($d in $cands) {
+            if (-not (Test-Path $d)) { continue }
+            "  扫描 $d" | Out-File prepare.log -Append -Encoding utf8
+            Get-ChildItem $d -Filter 'libboost_*.lib' -ErrorAction SilentlyContinue | ForEach-Object {
+              if ($_.Name -notmatch 'vc143') {
+                $new = $_.Name -replace '-vc14\d-', '-vc143-'
+                if ($new -ne $_.Name) {
+                  $dst = Join-Path $d $new
+                  if (-not (Test-Path $dst)) { Copy-Item $_.FullName $dst -Force; $made++ }
+                }
+              }
+            }
+          }
+          "已生成 $made 个 -vc143- 别名的 Boost 库" | Out-File prepare.log -Append -Encoding utf8
+          $found = @()
+          foreach ($d in $cands) { if (Test-Path $d) { $found += (Get-ChildItem $d -Filter 'libboost_*vc143*.lib' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name) } }
+          "vc143 库共 $($found.Count) 个" | Out-File prepare.log -Append -Encoding utf8
+          $found | Select-Object -First 10 | Out-File prepare.log -Append -Encoding utf8
       - name: 编译 librime + Weasel
         run: |
           Copy-Item prepare.log build-output.log -Force -ErrorAction SilentlyContinue
