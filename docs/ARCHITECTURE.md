@@ -6,12 +6,12 @@
                   ┌─────────────────────────── 输入法进程（WeaselServer / librime）───────────────────────────┐
    按键 ────────► │ menu_processor.lua (lua_processor)                                                     │
                   │   ├─ 输入为空 + v          → push_input("v")            → 进入 v 菜单                  │
-                  │   ├─ v + 1/2/3/4         → 写标记文件 / 切到 vclip,vfav,v（原符号）                    │
-                  │   ├─ 方向键 ↓↑←→          → 一律 return 2，交回 librime 原版 navigator                 │
+                  │   ├─ v + 1..5            → 写标记文件 / 切到 vclip / vfav / v / vqi                    │
+                  │   ├─ 方向键 ↓↑←→          → 普通打字走网格导航（grid_key），其它键交回原版             │
                   │   ├─ 纯数字编码前缀        → push_input(数字)，否则交给选字键                          │
                   │   └─ Return + 编码完全匹配 → engine:commit_text(常用语内容)                            │
                   │                                                                                        │
-                  │ lua_menu.lua (lua_translator)  ── 产出候选行：vmenu / vclip / vfav / vset / vact        │
+                  │ lua_menu.lua (lua_translator)  ── 产出候选行：vmenu / vclip / vfav / vqi / vset / vact  │
                   │ menu_filter.lua (lua_filter)   ── v 模式下只留所需候选；普通打字时把常用语插到候选第 2 位│
                   │ vmenu_core.lua (require)       ── 路径、设置、剪贴板/常用语读写、命中判断、原符号标记    │
                   └───────────────┬───────────────────────────────────────────────┬────────────────────────┘
@@ -34,10 +34,10 @@
 
 | 组件 | 类型 | 职责 | 关键约束 |
 | --- | --- | --- | --- |
-| `vmenu_core.lua` | 共享模块 | 路径解析（`rime_api.get_user_data_dir()`）、设置读写、剪贴板/常用语读写、`fav_hit` / `fav_exact` / `digit_prefix`、原符号标记 | 所有对外函数可被 `pcall` 包裹；不启动进程 |
-| `menu_processor.lua` | `lua_processor@*` | 按键总管。**必须排在 `speller` / `selector` 之前**，否则数字会被当成选字键、`v` 会被当普通字母 | 只拦自己认识的键，其余一律 `return 2` |
-| `lua_menu.lua` | `lua_translator@*` | 所有菜单/列表候选的文案与数据（菜单文案要改就改这里） | 候选 `type` 用于 filter 分流：`vmenu`/`vclip`/`vfav`/`vset`/`vact`（`vset` 自第二轮起已不可从菜单进入，属保留代码） |
-| `menu_filter.lua` | `lua_filter@*` | ① v 模式：只保留当前模式需要的候选类型；② 普通打字：命中常用语时插入候选第 2 位 | 插位后必须重排 `quality`（严格递减） |
+| `vmenu_core.lua` | 共享模块 | 路径解析（`rime_api.get_user_data_dir()`）、设置读写、剪贴板/常用语读写、`fav_hit` / `fav_exact` / `digit_prefix`、原符号标记、**候选方格状态与二维导航**（`grid_limit` / `grid_key`，见 §3.6） | 所有对外函数可被 `pcall` 包裹；不启动进程；**模块级变量在 processor/filter 之间不共享**，状态只能走 context option |
+| `menu_processor.lua` | `lua_processor@*` | 按键总管。**必须排在 `speller` / `selector` 之前**，否则数字会被当成选字键、`v` 会被当普通字母。主菜单 `1`–`5`、`vqi` 子模式（§3.9）、非 v 模式的方向键 → `grid_key`（§3.6） | 只拦自己认识的键，其余一律 `return 2` |
+| `lua_menu.lua` | `lua_translator@*` | 所有菜单/列表候选的文案与数据（菜单文案要改就改这里），含主菜单第 5 项「快捷输入」与 `yield_quick` 的 9 项 | 候选 `type` 用于 filter 分流：`vmenu`/`vclip`/`vfav`/`vqi`/`vset`/`vact`（`vset` 自第二轮起已不可从菜单进入，属保留代码） |
+| `menu_filter.lua` | `lua_filter@*` | ① v 模式：只保留当前模式需要的候选类型；② 普通打字：命中常用语时插入候选第 2 位；③ 普通打字时按方格状态限制候选个数（单行 9 / 展开 36） | 插位后必须重排 `quality`（严格递减） |
 | `vmenu-settings-gui.ps1` | 常驻 WinForms | 三个标签页的可视化设置；轮询标记文件；改动即时写文件；列表支持**双击编辑**；「设置与缓存」页底部还有 **`小狼毫原生设置`** 分组 + `打开小狼毫原生设置` 按钮（打开小狼毫自带的设置对话框） | DPI 不感知 → 所有坐标在 `Layout-Tabs` 里按「实际客户区」现算，不能用 Dock/Anchor/写死坐标 |
 | `vmenu-deployer-wrapper.cs` | 代理（C#） | 顶替安装目录下的 `WeaselDeployer.exe`：**无参数** → 打开 vmenu 设置窗口（`vmenu-settings-gui.ps1 -ShowNow`）；**带参数** → 原样转发给 `WeaselDeployer.real.exe`（见 §3.8） | 用 `csc.exe /target:winexe /r:System.Windows.Forms.dll` 编译；源文件必须 UTF-8 **带 BOM**；找不到窗口脚本时退回原生对话框 |
 | `vmenu-tray-setup.ps1` | 部署工具 | 托盘菜单入口的**安装 / 撤销**：改 `WeaselServer.exe` 里的菜单文字、安装代理、开始菜单快捷方式改名 | 幂等；`-Revert` 可还原；`WeaselServer.exe.vmenu-bak` 只在第一次安装时生成 |
@@ -50,11 +50,12 @@
 ### 3.1 按 `v` 打开菜单
 
 1. 输入为空时按下 `v`：`menu_processor` → `ctx:push_input("v")`，返回 1（已处理）。
-2. `lua_menu` 看到输入 `v` → 产出 **4 个** `vmenu` 候选（设置 / 剪贴板 / 常用语 / 原符号）。
+2. `lua_menu` 看到输入 `v` → 产出 **5 个** `vmenu` 候选
+   （设置 / 剪贴板 / 常用语 / 原符号 / 快捷输入）。
 3. `menu_filter` 看到 `core.mode_of("v") == "menu"` → 只保留 `vmenu` + `vact`，其余全丢。
-4. 按 `1`..`4`：`menu_processor` 的 `cur == "v"` 分支写标记文件（设置窗口）或改写输入
-   （`vclip` / `vfav` / 原符号模式）；**其余按键 `return 2` 放行** ——
-   第 5 项「文字设置」已从菜单去掉，`vset*` 只有手打 `vset` 才进得去。
+4. 按 `1`..`5`：`menu_processor` 的 `cur == "v"` 分支写标记文件（设置窗口）或改写输入
+   （`vclip` / `vfav` / 原符号模式 / `vqi` 快捷输入，见 §3.9）；**其余按键 `return 2` 放行** ——
+   原来的第 5 项「文字设置」已从菜单去掉（`vset*` 只有手打 `vset` 才进得去），现在第 5 项是快捷输入。
 
 ### 3.2 剪贴板（`v`→`2`）
 
@@ -108,28 +109,47 @@ request_gui()  ──写──► open-settings.flag ──轮询 60 ms──►
 * `vmenu-watcher.ps1` 每 500 ms 数一次「命令行含 `vmenu-settings-gui.ps1` 的 powershell 进程」，
   为 0 就拉起来（若标记文件已存在则带 `-ShowNow`）。
 
-### 3.6 候选框渲染（多行候选 + 方向键）
+### 3.6 候选框渲染（单行 ⇄ 4 行 × 9 列 + 网格导航）
 
-**候选框的形状完全由「主题 + 方案」决定**，与 Lua 无关，也不能运行时切换。
+**候选框的宽度与一页上限由「主题 + 方案」决定**，不能运行时切换；
+**但要「这一屏放几个候选」由 Lua 决定** —— 两者配合才是「默认单行 9 个、按 `↓` 展开 4 行 × 9 列」。
 
-| 决定什么 | 键 | 文件 | 现在的值 |
+| 决定什么 | 键 / 代码 | 文件 | 现在的值 |
 | --- | --- | --- | --- |
-| 是否换行 / 每行几个 | `style/layout/max_width` | Weasel 主题：`weasel.custom.yaml` →（编译产物）`build/weasel.yaml` | `300`（`0` = 不换行） |
-| 一页几条 | `menu/page_size` | 方案：`rime_ice.custom.yaml` →（编译产物）`build/rime_ice.schema.yaml` | `18`（原来 `9`） |
+| 一行放几个 / 是否换行 | `style/layout/max_width` | Weasel 主题：`weasel.custom.yaml` →（编译产物）`build/weasel.yaml` | `530`（逻辑像素；150% 缩放下**一行正好 9 个**，`0` = 不换行） |
+| 一页最多几条 | `menu/page_size` | 方案：`rime_ice.custom.yaml` →（编译产物）`build/rime_ice.schema.yaml` | `36`（= 9 × 4，原来 `18`） |
+| 这一屏实际放几个 | `grid_limit(ctx)` | `src/lua/menu_filter.lua`（正常打字分支） | 收起 **9**、展开 **36** |
+| 展开状态 | context option `vmenu_grid` | `src/lua/vmenu_core.lua` | 由 `↓` / `↑` 切换 |
 
-* 组合效果：一页 18 条，按 `300` 宽度折行，约 **4 行 × 5 列**。
-  实测 `620` **不换行**（自然宽度还没超），`300` 才换行 —— 想改列数就调这个值。
+* 组合效果：收起时 9 个正好一行（候选窗口 797 × 74 物理像素）；展开后 36 个，
+  Weasel 按 `max_width: 530` 自动排成 **4 行 × 9 列**（797 × 285）。
 * 两个键都是 `build/*.yaml` 里的值真正生效，改完**必须重启 `WeaselServer`**；
-  回退 = `max_width` 回 `0`、`page_size` 回 `9`。
+  回退 = `max_width` 回 `0`、`page_size` 回 `9`（回到原版一条长候选栏）。
 * ⚠️ 改这两个文件必须用 UTF-8 读写（`[IO.File]::ReadAllText/WriteAllText`）。
   PS 5.1 的 `Get-Content`/`Set-Content` 默认按 ANSI 解码，会把 YAML 写坏，
   表现为**候选窗口完全不显示**（见 `TROUBLESHOOTING.md`）。
 
-**方向键**：`↓` / `↑` / `←` / `→` **Lua 一律不拦截**（`menu_processor.lua` 里明确注释了这一点），
-全部交回 librime 原版 `navigator`。实测（librime 1.13.1，横向候选框）：
-`↓` = 选中下一个候选，`→` = 选中下一个候选，`↑` = 上一个，都不上屏。
-之所以不自己实现方向键：一旦 Lua 吞掉这些按键，既会破坏原版手感，也会在多行候选框下
-和 Weasel 自己的换行/翻页逻辑打架。
+**方向键（二维网格导航）**：`menu_processor.lua` 在**非 v 模式、且输入非空**时
+先把方向键交给 `core.grid_key(ctx, repr)`（见 §3.9 后面那张表是快捷输入，这里是候选方格）：
+
+| 按键 | 收起状态 | 展开状态 |
+| --- | --- | --- |
+| `↓` | **展开**成 36 个（选中项不动） | 往下跳一行（`ctx:select(sel + 9)`） |
+| `↑` | 交回原版 `navigator` | 选中项在第一行（下标 < 9）时**收回单行**；否则往上跳一行（`sel - 9`） |
+| `←` / `→` | 左右移动一个候选（`sel ∓ 1`） | 同上，行内左右移动 |
+| 其它任何键 | 自动收回单行，按键原样放行 | 同左 |
+
+**两个必须知道的实现约束**（都踩过）：
+
+1. **`lua_filter` 与 `lua_processor` 各自 `require` 一份 lua 模块，模块级变量不共享** ——
+   「是否展开」必须放在 **context option**（`vmenu_grid`）里传递，和 `vraw_mode` 一个思路。
+2. **`ctx.selected_candidate_index` 是 1 基，而 `ctx:select(i)` 是 0 基**，`grid_sel()` 里做了换算。
+
+**v 菜单内部不接管方向键**（`cur` 命中 `mode_of()` 时跳过 `grid_key`），保持原菜单手感。
+
+> **未完成**：展开后第 2–4 行仍带序号（rime 按候选下标发号 → `10`、`11`……），
+> 需求是「只第一行有 1–9」。`menu/alternative_select_labels` 填 36 项的尝试被 rime 拒绝
+> （`page_size` 退回 9），属开放问题（见 `PROGRESS.md` §5）。
 
 ### 3.7 设置窗口里的双击编辑
 
@@ -224,6 +244,67 @@ vmenu-tray-setup.ps1 -Revert
 > 原生设置对话框（标题 `【小狼毫】方案选单设定`）的入口因此挪到了设置窗口的
 > 「小狼毫原生设置」分组里（等价于直接运行 `WeaselDeployer.real.exe`）。
 
+### 3.9 `v` → 5 快捷输入（借用雾凇拼音的前缀）
+
+**一句话**：子菜单里选中一项后，**把该功能的触发前缀直接写进输入框，然后把键盘完全交回原方案** ——
+计算 / 日期 / 农历 / 数字大写 / Unicode / 部件拆字这些能力**本来就是雾凇拼音自带的**
+（`recognizer/patterns` + `lua_translator`），本项目只是把前缀喂进去，**没有自己实现任何一个**。
+
+**为什么不用自己实现**：rime-ice 已经带了 `calc_translator.lua`（计算）、`date_translator.lua`
+（日期 / 时间 / 星期 / ISO 日期时间）、`lunar.lua`（农历）、`number_translator.lua`（数字大写）、
+`unicode.lua`（Unicode）、`radical_pinyin` 词典（部件拆字），每个都配好了 recognizer。
+自己写一遍等于重造轮子，而且拿不到它们的边界处理（时区、大写规则、农历闰月…）。
+把前缀填进去 = 直接复用，代价为零。
+
+**链路**：
+
+```
+按 v        → lua_menu: yield_menu() 产出 5 个 vmenu 候选（第 5 项：快捷输入 / 计算 · 日期）
+按 5        → menu_processor: cur == "v" 且 repr == "5" → replace_input(ctx, "vqi")   return 1
+              （replace_input = ctx:clear() + ctx:push_input(前缀)，与 vclip / vfav 同一套）
+顶层       → vmenu_core: mode_of("vqi…") = "quick"；want_type("quick") = "vqi"
+              → lua_menu: yield_quick(seg) 产出 9 项 + 「返回」
+              → menu_filter: 只留 type == "vqi" 的候选（不会被原方案候选混进来）
+按 1..9    → menu_processor: cur == "vqi" → replace_input(ctx, 前缀)                     return 1
+按 q       → menu_processor: ctx:clear()                                                return 1
+之后       → 输入框里只剩前缀，我们不再拦截任何键：原方案的 recognizer 命中，lua_translator 出候选
+```
+
+**9 项 → 前缀 → 来源 → 实测**：
+
+| 数字 | 菜单文字 | 注释 | 填入的前缀 | 来源 | 实测上屏 |
+| --- | --- | --- | --- | --- | --- |
+| 1 | 计算 | 按 1 · 接着输入算式 | `cC` | `calc_translator.lua`（recognizer `^cC.+`） | `1+2*3` → **7**；`9*9` → **81** |
+| 2 | 日期 | 按 2 · 今天的日期 | `rq` | `date_translator.lua` | **2026-09-13** |
+| 3 | 时间 | 按 3 · 现在的时间 | `sj` | 同上 | **02:30**（`HH:MM`） |
+| 4 | 星期 | 按 4 · 今天星期几 | `xq` | 同上 | **星期日** |
+| 5 | 日期时间 | 按 5 · ISO 格式 | `dt` | 同上 | **2026-09-13T02:30:14+0800** |
+| 6 | 农历 | 按 6 · 今天的农历 | `N` + 当天 `%Y%m%d` | `lunar.lua`（recognizer `^N[0-9]{1,8}`） | **丙午马年八月初三** |
+| 7 | 数字大写 | 按 7 · 如 R1234 | `R` | `number_translator.lua`（recognizer `^R[0-9]+`） | 输入 `1234` → **一千二百三十四** |
+| 8 | Unicode | 按 8 · 如 U4e2d | `U` | `unicode.lua`（recognizer `^U[a-f0-9]+`，需要 `unicode` tag） | 输入 `4e2d` → **中** |
+| 9 | 部件拆字 | 按 9 · 如 nvzi = 女+子 | `u` | `radical_pinyin` 词典（recognizer `^u[a-z]+$`） | 输入 `nvzi` → **好** |
+| q | 返回 | 按 q | （`ctx:clear()`，清空输入） | — | — |
+
+**三个易踩的点**：
+
+1. **`cC` 单独不出候选**：recognizer 是 `^cC.+`，**必须继续输入至少一个字符**（如 `1+2*3`），
+   候选第一项才是结果。
+2. **农历会把当天日期一起填进去**（`os.date("%Y%m%d")`）：所以按 `6` 立刻就能看到今天的农历；
+   想查别的日子，把后面的数字改成那天的 `YYYYMMDD` 即可。
+3. **`R` / `U` 后面要自己补内容**（`R1234`、`U4e2d`），它们的设计就是这样。
+
+**部件拆字的前缀改动**（0.2.3）：rime-ice 原本的触发键是 `uU`（要打 `uUnvzi`），
+本项目在 `rime_ice.custom.yaml` 里把它改成单字母 `u`（两行配置），
+于是「直接打字」和「`v`→`5`→`9`」两条路都能用：`u`+`nvzi` → **好**，`u`+`riyue` → **明**。
+相关结构（原有，未改）：`affix_segmentor@radical_lookup` + `table_translator@radical_lookup`
+（`dictionary: radical_pinyin`）+ `reverse_lookup_filter@radical_reverse_lookup`。
+
+> 副作用：**旧的 `uU` 写法失效**；以 `u` 开头的英文词也会被当成拆字。
+
+**生效条件**：改完 lua **必须重启 `WeaselServer`**（Lua 模块有缓存），且
+`D:\rime-sandbox\lua\` 与 `%APPDATA%\Rime\lua\` 两处文件要 **MD5 一致**
+（`lua_filter` / `lua_processor` / `lua_translator` 各 require 一份，不一致会出现「菜单有、按键没反应」这类怪现象）。
+
 ## 4. 结构性配置（`build/rime_ice.schema.yaml`）
 
 ```yaml
@@ -242,6 +323,12 @@ engine:
 `src/windows/patch-build-schema.ps1` 会用「解析 YAML → 改这几个键 → 写回」的方式保证幂等；
 **不要**指望 `WeaselDeployer` 重新编译（见 `AGENT-HANDOFF.md` §1 的部署器坑）。
 
+> 另外两组键写在**用户补丁**里（不是结构性配置，改完 `重建部署.bat` / 重启服务即可）：
+> `menu/page_size: 36`（候选方格，见 §3.6）与 `radical_lookup/prefix: u` +
+> `recognizer/patterns/radical_lookup: "^u[a-z]+$"`（部件拆字，见 §3.9）。
+> `radical_lookup` 的 `affix_segmentor` / `table_translator`（`dictionary: radical_pinyin`）/
+> `reverse_lookup_filter` 是 rime-ice **原有**结构，本次只改了前缀与 recognizer。
+
 ## 5. 设计约束与理由
 
 | 约束 | 理由（真实事故） |
@@ -253,8 +340,11 @@ engine:
 | 窗口坐标运行时按客户区现算 | 进程 DPI 不感知，写死坐标会被系统缩放平移，按钮跑到窗口外 |
 | 标记文件而不是 IPC/子进程 | 输入线程里做任何阻塞或创建进程都会拖慢打字 |
 | 状态栏写 `$statusLabel.Text` | `$status` 是 `StatusStrip` 本身，写它什么都不会显示 |
-| **Lua 一律不拦截方向键**（`↓↑←→` 不写进任何分支） | 原版 `navigator` 已经是对的（`↓`/`→` = 下一个候选），自己接管会和 Weasel 的换行/翻页逻辑打架 |
-| 候选框行列数只由「主题 + 方案」两个键决定，**不放进 Lua** | 换行是 Weasel 主题 `style/layout/max_width` 的渲染行为，一页条数是 schema 的 `menu/page_size`，Lua 里没有任何接口能改 |
+| 方向键**只在普通打字时**由 Lua 接管（`grid_key`），v 菜单内一律交回原版 `navigator` | 候选方格需要 `↓` = 展开 / 跳行、`↑` = 收回 / 跳行（原版只有「下一个候选」）；但 v 菜单是横向短列表，保持原版手感更稳（见 §3.6） |
+| 候选框宽度/一页上限只由「主题 + 方案」两个键决定，**不放进 Lua**；「这一屏放几个」才由 Lua 限制 | 换行是 Weasel 主题 `style/layout/max_width` 的渲染行为，一页条数是 schema 的 `menu/page_size`，Lua 里没有任何接口能改；但候选**个数**可以在 filter 里截断（见 §3.6） |
+| 「是否展开」只能放在 **context option**（`vmenu_grid`）里，不能用模块级变量 | `lua_filter` 与 `lua_processor` 各自 `require` 一份模块，变量不共享（`vraw_mode` 同理） |
+| `ctx.selected_candidate_index`（1 基）与 `ctx:select(i)`（0 基）的换算只写在一处（`grid_sel`） | 直接混用会差一位，表现为「跳行跳错一个」（踩过） |
+| 快捷输入**不自己实现**计算 / 日期 / 农历 / 大写 / Unicode，只把前缀填进输入框 | 这些能力 rime-ice 自带且 recognizer 已配好，自己实现等于重造轮子还会丢边界处理（见 §3.9） |
 | 改 `build/*.yaml` 只用 `[IO.File]::ReadAllText/WriteAllText`（UTF-8） | PS 5.1 的 `Get-Content`/`Set-Content` 按 ANSI 解码，写坏 YAML 后候选窗口完全不显示 |
 | 改 `WeaselServer.exe` **必须先停 `WeaselServer`**，且只做 **UTF-16 等长替换** | 运行中的 exe 被系统锁住写不进去；等长替换不动偏移量 / 长度，不会破坏文件结构（详见 §3.8） |
 | 托盘菜单**不去想「新增一项」**，只做「改名 + 顶替 `WeaselDeployer.exe`」 | 菜单项写死在 `WeaselServer.exe` 的资源里，服务端只认 `WeaselDeployer.exe` 这一个入口，新命令号不会被处理（详见 §3.8） |
@@ -263,11 +353,12 @@ engine:
 
 | 状态 | 存在哪 | 谁写 |
 | --- | --- | --- |
-| 当前模式（菜单/剪贴板/常用语/原符号） | **输入码本身**（`v`、`vclip`、`vfav`、`vset…`）+ `vraw_mode` option | `menu_processor` |
+| 当前模式（菜单/剪贴板/常用语/快捷输入/原符号） | **输入码本身**（`v`、`vclip`、`vfav`、`vqi`、`vset…`）+ `vraw_mode` option | `menu_processor` |
 | 剪贴板历史 | `clipboard-cache.txt` | `clipboard-sync.ps1`（也允许设置窗口改） |
 | 常用语 | `cn_dicts/favorites.dict.yaml`（内部沿用旧名） | 设置窗口 / 用户手改 |
 | 列表默认条数 | `vmenu-settings.txt` | 设置窗口 |
-| 候选框行列数 | **不是这里的状态**：主题 `style/layout/max_width` + schema `menu/page_size` | 部署时改配置 + 重启服务 |
+| 候选框是否展开 | **context option `vmenu_grid`**（进程内，随输入上下文销毁，不落盘） | `vmenu_core.grid_key`（`menu_processor` 调用） |
+| 候选框宽度 / 一页上限 | **不是这里的状态**：主题 `style/layout/max_width` + schema `menu/page_size` | 部署时改配置 + 重启服务 |
 | 打开窗口请求 | `open-settings.flag` | Lua 写、常驻窗口读后即删 |
 
 没有任何常驻内存状态需要跨进程同步 —— 所有文件都是「最后写入者胜」，

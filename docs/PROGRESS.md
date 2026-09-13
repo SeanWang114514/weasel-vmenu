@@ -10,12 +10,14 @@
 
 ## 0. 一句话状态
 
-**v 功能菜单已经全部可用并在真机上验证过**：菜单（4 项）、剪贴板、常用语（候选第 2 位 + 回车调用）、
-原符号还原、可视化设置窗口（常驻、秒开、支持双击编辑）、多行候选框全部工作；
+**v 功能菜单已经全部可用并在真机上验证过**：菜单（5 项：设置 / 剪贴板 / 常用语 / 原符号 / 快捷输入）、
+剪贴板、常用语（候选第 2 位 + 回车调用）、快捷输入（计算 / 日期 / 时间 / 星期 / 日期时间 / 农历 /
+数字大写 / Unicode / 部件拆字，选中即启用）、原符号还原、可视化设置窗口（常驻、秒开、支持双击编辑）、
+**候选方格（默认单行 9 个，按 `↓` 展开 4 行 × 9 列）**全部工作；
 **托盘图标右键菜单第一项已是「输入法设置 (S)」**（改名 + 代理顶替 `WeaselDeployer.exe`，可一键撤销）；
 后台服务（剪贴板同步 + 守护 + 常驻窗口）运行中，实测 `v`→`1` 到窗口出现 **84–106 ms**。
 
-未确认 / 待办事项见文末「开放问题」。
+未确认 / 待办事项见文末「开放问题」（含 3 条第五轮遗留：展开行序号、是否可配、`↓↓` 对照复测）。
 
 ---
 
@@ -31,11 +33,14 @@
 
 菜单文案后来按用户要求**精简**过（见 1.5）。
 
-**第二轮改动（本次）**：主菜单**去掉第 5 项**，只剩 4 项
+**第二轮改动**：主菜单**去掉第 5 项**，只剩 4 项
 `1 设置（图形窗口） / 2 剪贴板（历史） / 3 常用语（快捷内容） / 4 原符号（原版 v）`。
 改动位置：`src/lua/menu_processor.lua` 主菜单分支（只处理 1–4，其余 `return 2` 放行）、
 `src/lua/lua_menu.lua` 的 `yield_menu`（只 yield 4 项）。
 `vset` / `vsetc` / `vsetf` / `vsetn` / `vsetx` 的代码**保留但不可再从菜单进入**（只有手打 `vset` 才进得去）。
+
+> **第四轮起主菜单又是 5 项**：第 5 项换成了「快捷输入」（`v`→`5` → `vqi`），
+> 原来的「文字设置」仍然没有回到菜单里（见 1.12）。
 
 ### 1.2 剪贴板历史（`v`→`2`）+ 设置窗口里的剪贴板页
 
@@ -97,6 +102,7 @@
 | 验证 | 截图 `screenshots/ime-01-menu.png` |
 
 > 第二轮把主菜单压到 4 项（去掉 `文字设置`），第 3 项也从 `收藏` 改名为 `常用语`（见 1.8）。
+> （第四轮起第 5 项是**快捷输入**，菜单回到 5 项，见 1.12；`ime-01-menu.png` 仍是 4 项时的截图。）
 
 ### 1.8 「收藏」→「常用语」改名（用户需求，第二轮）
 
@@ -120,6 +126,10 @@
 | 验证 | 截图 `screenshots/ime-06-multirow-candidates.png`：候选 9→18 条、每行约 5 个；按 `↓` 后高亮在**同一行内**移动（窗口内 y 197..257） |
 
 > 这两个键**不在 Lua 里，也不能运行时切换** —— 想让候选框变高/变矮只能改这两处配置再重启服务。
+>
+> **第五轮（0.2.3）已把这套参数与行为换掉**：现在是 `max_width: 530` + `page_size: 36`，
+> 默认只显示**单行 9 个**、按 `↓` 才展开成 4 行 × 9 列，方向键也改由 Lua 的 `grid_key` 接管
+> （见 §1.13）。本节是第二轮的历史记录，参数以 §1.13 / §4 为准。
 
 ### 1.10 设置窗口双击编辑（用户需求，第二轮）
 
@@ -142,10 +152,44 @@
 | 做法 2 | 真 `WeaselDeployer.exe` → `WeaselDeployer.real.exe`，用 `src/windows/vmenu-deployer-wrapper.cs` 编译的代理顶替：无参数 → 开 vmenu 设置窗口；带参数 → 原样转发（**重新部署 / 用户词典管理 / 用户资料同步不受影响**） |
 | 脚本 / 备份 | `tools/vmenu-tray-setup.ps1`（幂等安装 / `-Revert` 撤销）；备份 `C:\Program Files\Rime\weasel-0.17.4\WeaselServer.exe.vmenu-bak`（只在第一次安装时生成） |
 | 顺带 | 设置窗口「设置与缓存」页新增分组 `小狼毫原生设置` + 按钮 `打开小狼毫原生设置`（打开标题为 `【小狼毫】方案选单设定` 的原生对话框）；开始菜单 `【小狼毫】输入法设定.lnk` → `【小狼毫】输入法设置.lnk` |
-| 验证 | 回读 exe：新标签 1 处 / 旧标签 0 处，命令号 = 40008；直接运行 `WeaselDeployer.exe`（无参数）= 该菜单项真正做的事 → 窗口出现 / 已在跑时被亮出来；`WeaselDeployer.exe /deploy` 真的重新部署且 `max_width: 300`、`page_size: 18` 都还在；截图 `screenshots/gui-05-native-settings.png`。详见 `TESTING.md` §7 |
+| 验证 | 回读 exe：新标签 1 处 / 旧标签 0 处，命令号 = 40008；直接运行 `WeaselDeployer.exe`（无参数）= 该菜单项真正做的事 → 窗口出现 / 已在跑时被亮出来；`WeaselDeployer.exe /deploy` 真的重新部署且 `max_width`、`page_size` 都还在（当时是 `300` / `18`，第五轮改成 `530` / `36`）；截图 `screenshots/gui-05-native-settings.png`。详见 `TESTING.md` §7 |
 
 > 托盘那一项是**改名 + 改行为**（菜单仍是 12 项），原生设置对话框的直接入口从托盘挪进了
 > vmenu 设置窗口。`weasel.dll` / `weaselx64.dll` 里同样的语言栏菜单文字**没有改**。
+
+### 1.12 `v`→`5` 快捷输入（用户需求，第四轮）
+
+| 项 | 内容 |
+| --- | --- |
+| 需求 | 把雾凇拼音自带的那批快捷输入（`cC` 计算、`rq` 日期…）做进 v 菜单第 5 项，按分类、按数字选用，**选中后该功能就直接启用**，接着输入即可 |
+| 机制 | 选中后**把触发前缀直接写进输入框**（`replace_input` = `ctx:clear()` + `ctx:push_input()`，与 `vclip` / `vfav` 同一套），之后按键**完全交回原方案**：雾凇自带的 `recognizer/patterns` + `lua_translator` 自然生效，**不自己实现任何功能** |
+| 主菜单 | 第 5 项 `快捷输入`（注释 `计算 · 日期`）→ `vqi` 子模式；原来的「文字设置」保持去掉状态，`vset*` 仍是保留代码 |
+| 子菜单 9 项 | 计算 `cC` / 日期 `rq` / 时间 `sj` / 星期 `xq` / 日期时间 `dt` / 农历 `N`+当天 `%Y%m%d` / 数字大写 `R` / Unicode `U` / 部件拆字 `u`，外加 `q` 返回 |
+| 实现位置 | `vmenu_core.lua`（`mode_of` 加 `vqi`→`quick`；`want_type` 加 `quick`→`vqi`）、`lua_menu.lua`（主菜单第 5 项 + `yield_quick` + 入口分派）、`menu_processor.lua`（主菜单 `5`→`vqi`；`cur == "vqi"` 分支填前缀 / `q` 清空 / 其余放行） |
+| 三个注意点 | ①「计算」按 `1` 后**必须继续输入算式**（recognizer `^cC.+`）；②「农历」按 `6` 时会把**当天 `YYYYMMDD` 一并填进去**，所以立刻能看到今天的农历；③「数字大写 / Unicode / 部件拆字」按完要自己补内容（`R1234`、`U4e2d`、`nvzi`） |
+| 验证 | 全部真按键上屏：`1+2*3`→7、`9*9`→81、日期 `2026-09-13`、时间 `02:30`、星期 `星期日`、`2026-09-13T02:30:14+0800`、农历 `丙午马年八月初三`、`R1234`→一千二百三十四、`U4e2d`→中、`9`+`nvzi`→好。表格与复现命令见 `TESTING.md` §8 |
+| 截图 | **本轮没有截图**：抓屏时机撞上用户正在用电脑（会带上用户桌面内容），两张新图已从 `screenshots/` 删除，文档不引用 |
+
+> 改完 lua **必须重启 `WeaselServer`**（模块有缓存），且 `D:\rime-sandbox\lua\` 与
+> `%APPDATA%\Rime\lua\` 两处 **MD5 一致**（本次已同步、已重启，日志无 lua 报错）。
+>
+> 同一个第四轮里还修了托盘脚本的「代理识别」（升级后重跑不再覆盖新版部署器），见 §3 与 §5 第 8 条。
+
+### 1.13 候选方格「单行 ⇄ 4 行 × 9 列」+ 部件拆字改成单 `u`（用户需求，第五轮）
+
+| 项 | 内容 |
+| --- | --- |
+| 需求 1（原话） | 「默认是直着的显示 然后按向下后才变成 9 乘 4 的竖向方格 然后在最顶端按下向上回到一行 按向下变成 9 乘 4 同时保留左右选择预选词的功能」；补充「下面几行不用序号 只需要第一行有序号」 |
+| 需求 2 | 「将部首输入的快捷方式改为按下 u 后直接输入部首的名称 如要输入好可以输入 unvzi」 |
+| 候选方格 · 机制 | 主题 `max_width: 530`（150% 缩放下**一行正好 9 个**）+ schema `page_size: 36`（9 × 4）；**这一屏放几个**由 `menu_filter` 按 `grid_limit(ctx)` 截断（收起 9 / 展开 36），Weasel 按宽度自动排成 4 行 × 9 列 |
+| 候选方格 · 导航 | `vmenu_core.grid_key`：`↓` 收起时展开、已展开时下跳一行（+9）；`↑` 第一行时收回单行、否则上跳一行（−9）；`←`/`→` 行内移动；**其它任何键自动收回单行**。只对**普通打字**生效，v 菜单内保持原版 `navigator` |
+| 候选方格 · 两个坑 | ① `lua_filter` 与 `lua_processor` **各自 `require` 一份模块、模块级变量不共享** → 展开状态只能放 context option `vmenu_grid`；② `ctx.selected_candidate_index` 是 **1 基**、`ctx:select(i)` 是 **0 基**，已换算 |
+| 部件拆字 · 机制 | rime-ice **本来就有**部件拆字（词典 `radical_pinyin`），触发键原本是 `uU`；本次只改两行配置（`radical_lookup/prefix: u` + `recognizer/patterns/radical_lookup: ^u[a-z]+$`），**没有新造功能** |
+| 验证（候选方格） | 打 `shi` → 候选窗口 **797 × 74**（单行 9 个）；按 `↓` → **797 × 285**（4 行 × 9 列）；第一行按 `↑` → 回到 797 × 74；再打任何字自动收回。`↓↓` 与 `↓`+`→`×9 选中同一个候选（**有 1 轮对照不一致，待复测**） |
+| 验证（部件拆字） | `u`+`nvzi` → **好**；`u`+`riyue` → **明**；`v`→`5`→`9`+`nvzi` → **好**；`v`→`5`→`2`（日期）不受影响 |
+| 已知未完成 | **展开后第 2–4 行仍有序号**（rime 按候选下标发号 → `10`、`11`……），需求是「只第一行有 1–9」。试过 `menu/alternative_select_labels` 填 36 项，结果**整份补丁被 rime 拒绝**（`page_size` 退回 9），需要另想办法 |
+| 副作用 | 旧的 `uU` 写法失效；以 `u` 开头的英文词会被当成拆字 |
+| 截图 | 同第四轮：**没有**新截图可用 |
 
 ---
 
@@ -184,6 +228,29 @@
 | 02:14 | 回读校验通过（新标签 1 处 / 旧标签 0 处、命令号 40008）；直接运行 `WeaselDeployer.exe`（无参数）确认就是打开设置窗口的那条路；`WeaselDeployer.exe /deploy` 透传验证：`build\weasel.yaml` / `build\rime_ice.schema.yaml` 于 02:14:52/53 重新生成，日志只有 INFO，`max_width`/`page_size` 未丢 |
 | — | 设置窗口加「小狼毫原生设置」分组 + 「打开小狼毫原生设置」按钮；点按钮弹出标题 `【小狼毫】方案选单设定`；截图 `gui-05-native-settings.png`（分组与按钮） |
 
+### 2.3 第四轮（2026-09-13，`v`→`5` 快捷输入）
+
+| 时间 | 事件 |
+| --- | --- |
+| — | 定方案：**不自己实现**计算 / 日期 / 农历 / 大写 / Unicode，改用「填前缀 + 完全放行」复用雾凇拼音自带的 recognizer + translator |
+| — | 改三个 lua：`vmenu_core.lua`（`vqi`→`quick`、`want_type`）、`lua_menu.lua`（主菜单第 5 项 + `yield_quick`）、`menu_processor.lua`（`5`→`vqi`、`vqi` 分支填前缀 / `q` 返回） |
+| — | 同步两处 lua（`D:\rime-sandbox\lua\`、`%APPDATA%\Rime\lua\`，MD5 一致）并重启 `WeaselServer`，日志无 lua 报错 |
+| — | 真按键逐项验证 8 项上屏（`1+2*3`→7、`9*9`→81、日期 / 时间 / 星期 / ISO / 农历 / `R1234` / `U4e2d`） |
+| — | 抓屏取证失败（用户正在用电脑，会拍到用户桌面内容），把两张新图从 `screenshots/` 删掉，改为纯按键 + 读窗口标题验证 |
+| — | 同一轮：修 `tools/vmenu-tray-setup.ps1` 的代理识别（原按 `.real.exe` 是否存在判断 → 改成先编译代理、按大小判断），重跑输出符合预期且无参数启动仍打开设置窗口 |
+
+### 2.4 第五轮（2026-09-13，候选方格 + 部件拆字）
+
+| 时间 | 事件 |
+| --- | --- |
+| — | 配置：`weasel.custom.yaml` / `build\weasel.yaml` 的 `max_width` 300 → **530**（150% 缩放下正好一行 9 个）；`rime_ice.custom.yaml` / `build\rime_ice.schema.yaml` 的 `page_size` 18 → **36**（9 × 4） |
+| — | `vmenu_core.lua` 加 `GRID_COLS/GRID_ROWS/GRID_OPTION` + `grid_limit` + `grid_key`；`menu_filter.lua` 按状态截断候选个数；`menu_processor.lua` 非 v 模式方向键先交给 `grid_key` |
+| — | 踩坑：`lua_filter` 与 `lua_processor` 的模块级变量不共享（改用 context option `vmenu_grid`）；`selected_candidate_index` 1 基 vs `select(i)` 0 基（换算后修正） |
+| — | 实测候选窗口：`shi` → 797 × 74；`↓` → 797 × 285；第一行 `↑` → 797 × 74；再打字自动收回 |
+| — | 部件拆字：把 `uU` 前缀改成单 `u`（两行配置），验证 `unvzi`→好、`uriyue`→明；`v`→`5` 子菜单补第 9 项「部件拆字」（填 `u`） |
+| — | 试 `menu/alternative_select_labels` 填 36 项以去掉第 2–4 行序号 → **整份补丁被 rime 拒绝**（`page_size` 退回 9），记为开放问题 |
+| — | 同步两处 lua 并重启服务；`examples/*.yaml` 更新为 `530` / `36` + 部件拆字补丁 |
+
 ---
 
 ## 3. 已修复的坑（重要，别再踩）
@@ -207,6 +274,10 @@
 | 托盘菜单「加一项」怎么都做不到 | 菜单项写死在 `WeaselServer.exe` 的资源里，服务端只认 `WeaselDeployer.exe` 一个入口（`CustomizeMenu` 是空实现） | 改成「就地改菜单文字 + 用代理顶替 `WeaselDeployer.exe`」两件可逆的事（`tools/vmenu-tray-setup.ps1`） |
 | 改 `WeaselServer.exe` 时报文件被占用 / 写不进去 | 正在运行的 exe 被系统锁住 | 先 `Stop-Process WeaselServer`，改完再起回来（脚本自动做） |
 | 脚本里用中文字面量匹配 exe 里的菜单文字不可靠 | 文件编码一变（无 BOM 被按 GBK 解析）字面量就变了 | 用字符码拼标签：`([char]0x8F93)+([char]0x5165)+…`；`.ps1` / `.cs` 一律 UTF-8 **带 BOM** |
+| 升级小狼毫后重跑安装脚本会**丢掉新版部署器** | 脚本用「`.real.exe` 是否存在」判断要不要改名：`.real.exe` 还在 → 跳过改名 → 代理**直接覆盖**新版的 `WeaselDeployer.exe` | 改成**先编译代理**，再用「大小是否等于代理（5632 字节）」判断当前 `WeaselDeployer.exe` 是真身还是代理；不是代理就先改名成 `.real.exe`（覆盖旧真身）再装代理（0.2.2 已修） |
+| 「是否展开」的模块级变量在 filter 里读不到 | `lua_filter` 与 `lua_processor` **各自 `require` 一份** lua 模块，模块级变量不共享 | 状态放 **context option**（`vmenu_grid`），处理器写、过滤器读 —— 与 `vraw_mode` 同一思路 |
+| 展开后按 `↓` 跳行跳错一个候选 | `ctx.selected_candidate_index` 是 **1 基**，`ctx:select(i)` 是 **0 基** | 统一在 `grid_sel()` 里换算成 0 基再运算 |
+| 用 `menu/alternative_select_labels` 去掉第 2–4 行序号 → 整份补丁被拒 | 标签个数与 `page_size` 不匹配时 rime 认为补丁非法，回退成 `page_size: 9` | 暂无解，记为开放问题（§5）。改 `alternative_select_labels` 前先备份 `build\rime_ice.schema.yaml` |
 
 ---
 
@@ -220,8 +291,10 @@
 | `vmenu-settings-gui.ps1` | 1 个实例（常驻，未打开时是隐藏窗口） |
 | `open-settings.flag` | 稳态下**不存在** |
 | Lua 双目录一致性 | `D:\rime-sandbox\lua\` 与 `%APPDATA%\Rime\lua\` 四个文件 MD5 必须一致 |
-| `style/layout/max_width` | 300（`weasel.custom.yaml` + `build/weasel.yaml` + `%APPDATA%\Rime\build\weasel.yaml` 三处一致） |
-| `menu/page_size` | 18（`rime_ice.custom.yaml` + `build/rime_ice.schema.yaml`） |
+| `style/layout/max_width` | 530（`weasel.custom.yaml` + `build/weasel.yaml` + `%APPDATA%\Rime\build\weasel.yaml` 三处一致；150% 缩放下正好一行 9 个） |
+| `menu/page_size` | 36（`rime_ice.custom.yaml` + `build/rime_ice.schema.yaml`；= 9 × 4，按 `↓` 展开后的条数） |
+| `v` 主菜单 | 5 项：设置 / 剪贴板 / 常用语 / 原符号 / **快捷输入**（`vqi` 子模式 9 项 + 返回） |
+| 部件拆字前缀 | `u`（`rime_ice.custom.yaml` 的 `radical_lookup/prefix: u` + `recognizer/patterns/radical_lookup: "^u[a-z]+$"`；`build\rime_ice.schema.yaml` 里已生效） |
 | 托盘菜单项文字 | 已改：`WeaselServer.exe` 里 `输入法设置 (&S)`（新标签 1 处 / 旧标签 0 处），命令号 40008 |
 | `WeaselServer.exe` 备份 | `C:\Program Files\Rime\weasel-0.17.4\WeaselServer.exe.vmenu-bak`（2243072 字节，只在第一次安装时生成） |
 | 部署器代理 | 已装：`WeaselDeployer.exe` = 代理（5632 字节）；真身 `WeaselDeployer.real.exe` = 638976 字节 |
@@ -250,20 +323,33 @@
    `vsetx` 这一整条纯键盘设置路径只有手打 `vset` 才进得去，对普通用户等于不可达。
    删掉可以省掉 `lua_menu.lua` 里一大段文案与 `menu_processor.lua` 的分支；
    留着则保留「窗口挂了也能改设置」的兜底能力。**需要人类拍板**。
-6. **多行候选框的列数 / 每页条数是否再调。** 现在 `max_width=300` + `page_size=18`
-   ≈ 4 行 × 5 列。实测 `max_width=620` 不换行、`300` 才换行，所以想改列数就调这个值
-   （调小 = 每行更少、行更多），想改总条数就调 `page_size`。
-   两者都是**改完要重启服务**的配置，没有运行时开关。是否需要给「想要几列」找个更好看的值，
-   待人类看截图后定。
+6. **候选方格的行列数 / 每页条数是否再调（已在第五轮重调过一次）。**
+   现在 `max_width=530`（一行正好 9 个）+ `page_size=36`（9 × 4），默认单行、按 `↓` 展开。
+   历史上试过 `max_width=620` **不换行**、`300` 换行（`page_size=18`，约 4 行 × 5 列），
+   第五轮按用户要求换成 `530` / `36`。两者都是**改完要重启服务**的配置，没有运行时开关。
+   如果还想改列数（例如 8 列或 10 列），改 `max_width` 与 `page_size` 两个值并同步
+   `vmenu_core.lua` 的 `GRID_COLS`（`↓` 跳行按它算）。
 7. **`weasel.dll` / `weaselx64.dll` 里的语言栏菜单文字是否也要改（未做）。**
    这两个 DLL 里有与 `WeaselServer.exe` 相同的菜单文字（`输入法设定 (&S)`），那是
    **输入法语言栏**那条右键菜单用的。本次**没有改**：它们是注入到所有进程里的 IME 模块，
    改了要重启所有使用输入法的程序才生效，收益很小、风险不值得。
    以后要做的话改动方式一样是 UTF-16 等长替换，但必须先让所有正在用输入法的程序退出。
-8. **升级小狼毫后重跑安装脚本的健壮性（已发现的脚本行为，待拍板）。**
-   `vmenu-tray-setup.ps1` 只在**不存在** `WeaselDeployer.real.exe` 时才把 `WeaselDeployer.exe`
-   改名过去。小狼毫升级会覆盖 `WeaselServer.exe` 与 `WeaselDeployer.exe`，此时 `.real.exe`
-   通常仍在，于是重跑时这次的 `WeaselDeployer.exe` 会被代理**直接覆盖**（`.real.exe` 可能还是
-   升级前的旧版部署器）。可选的修法：把判断改成「当前 `WeaselDeployer.exe` 不是代理就先改名」
-   （例如按文件大小判断）。目前的规避办法写在 `TROUBLESHOOTING.md`：升级后先把 `.real.exe`
-   挪走 / 删掉，再跑安装脚本。
+8. ~~**升级小狼毫后重跑安装脚本的健壮性（已发现的脚本行为，待拍板）。**~~
+   **✅ 已修复（第四轮 / 0.2.2）**：`vmenu-tray-setup.ps1` 已改成**先编译代理**、
+   再用「大小是否等于代理（5632 字节）」判断当前 `WeaselDeployer.exe` 是真身还是代理；
+   不是代理就先 `Move-Item` 改名成 `WeaselDeployer.real.exe`（覆盖旧真身），然后才放代理。
+   升级后重跑一次即可，**不再需要**手动挪走 `.real.exe`。实测重跑输出见 `TESTING.md` §7.1 ②。
+9. **「快捷输入」这 9 项要不要做成可在可视化设置窗口里配置？** 现在顺序与项目都是写死在
+   `lua_menu.lua` 的 `yield_quick` 里（用户要改就得改 lua + 同步两处 + 重启服务）。
+   做成窗口里可勾选/排序的话，需要在 `vmenu-settings.txt` 里加一段结构（例如
+   `quick_items = 1,2,6`）并让 `yield_quick` 读它 —— **需要人类拍板要不要**。
+10. **「快捷输入」是否还要加更多项？** 雾凇拼音还有别的可用前缀（例如各类符号 / 特殊转换）。
+    目前只收了用户举例的这几类。加项的成本很低（`yield_quick` 加一行 + `menu_processor`
+    加一个 `repr` 分支），但会让子菜单超过 9 项（数字键不够用，得引入翻页或字母键）。
+11. **展开后第 2–4 行的序号去不掉（未解决）。** 需求是「下面几行不用序号，只需要第一行有 1-9」，
+    但 rime 是按候选下标发号的，第 10 个之后必然显示 `10`、`11`……
+    试过 `menu/alternative_select_labels` 填 36 项 → **整份补丁被 rime 拒绝**（`page_size` 退回 9）。
+    可能的下一步：研究 rime 1.13 的 `select_labels` 与 `page_size` 的校验规则，
+    或改成「每行重新编号」的自定义 filter（要碰候选渲染，风险较高）。
+12. **「`↓↓` vs `↓` + `→`×9」有一轮对照不一致，需要复测。**
+    4 组对照里 3 组一致，怀疑是测试脚本抢前台 / 会话残留导致，暂未定位。

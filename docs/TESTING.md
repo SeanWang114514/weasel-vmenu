@@ -17,12 +17,19 @@
 | 字母编码 + 回车 | `w,s,l,enter` | 收藏内容上屏 |
 | 字母编码 + 候选第 2 位 | `w,s,l,2` | 收藏内容上屏 |
 | 纯数字编码 | `1,3,8` | 候选直接显示常用语内容 |
-| v 菜单 | `esc,v` | **4 个**短候选（设置 / 剪贴板 / 常用语 / 原符号） |
-| v 菜单第 5 项 | `esc,v,5` | **不再有反应**（第 5 项已去掉；`vset*` 保留但菜单不可达） |
+| v 菜单 | `esc,v` | **5 个**短候选（设置 / 剪贴板 / 常用语 / 原符号 / 快捷输入） |
+| v 菜单第 5 项 | `esc,v,5` | 打开**快捷输入**子菜单（9 项 + 返回；原来的「文字设置」已去掉，`vset*` 保留但菜单不可达） |
+| 快捷输入 · 计算 | `esc,v,5,1` 再敲 `1+2*3`，空格上屏 | 候选第一项 = **7**（`9*9` → **81**） |
+| 快捷输入 · 日期/时间/星期/日期时间 | `esc,v,5,2`（`3` / `4` / `5`） | 今天的日期 / `HH:MM` / `星期日` / ISO 时间戳 |
+| 快捷输入 · 农历 | `esc,v,5,6` | 今天的农历（按 `6` 时已把当天 `YYYYMMDD` 填进去） |
+| 快捷输入 · 数字大写 / Unicode | `esc,v,5,7` 再敲 `1234` / `esc,v,5,8` 再敲 `4e2d` | **一千二百三十四** / **中** |
+| 快捷输入 · 部件拆字 | `esc,v,5,9` 再敲 `nvzi` | **好** |
+| 部件拆字（不经菜单） | `u` 再敲 `nvzi`（或 `riyue`） | **好** / **明**；旧的 `uU` 写法已失效 |
 | 常用语列表 | `esc,v,3` | 常用语快查列表 |
 | 设置窗口 | `esc,v,1` | 窗口出现在屏幕上（< 300 ms） |
-| 多行候选框 | 打一段拼音刷出 ≥ 6 条候选 | 候选超过一行宽度（`max_width=300`）时自动折行，一页最多 18 条 |
-| 候选框方向键 | 候选窗口里按 `↓` / `→` | 选中下一个候选（**不上屏**）；`↑` = 上一个；Lua 不拦截 |
+| 候选方格（默认单行） | 打一段拼音刷出 ≥ 10 条候选 | 只显示**一行 9 个**（候选窗口 797 × 74 物理像素） |
+| 候选方格（展开） | 候选窗口里按 `↓` | 展开成 **36 个 = 4 行 × 9 列**（797 × 285） |
+| 候选方格导航 | 展开后 `↓` / `↑` / `←` / `→`；第一行按 `↑`；再打一个字 | `↓`/`↑` 上下跳一行（±9）、`←`/`→` 行内移动；第一行按 `↑` 收回单行；继续打字自动收回单行 |
 | 托盘「输入法设置」 | 直接运行 `WeaselDeployer.exe`（无参数 —— 这就是那个菜单项真正做的事） | 设置窗口出现；已在跑时被常驻实例亮出来（见 §7） |
 
 ---
@@ -204,8 +211,9 @@ foreach ($f in 'vmenu_core.lua','menu_processor.lua','lua_menu.lua','menu_filter
 }   # 全部期望 True
 
 # 5) 改完候选框配置（build/*.yaml）后的两件必做的事
-#    5a. 用 UTF-8 读回确认中文没被改写（绝不要用 Get-Content/Set-Content 去改）
-[IO.File]::ReadAllText("D:\rime-sandbox\build\weasel.yaml", [Text.Encoding]::UTF8).Contains('max_width: 300')
+#    5a. 用 UTF-8 读回确认中文没被改写、值也对（绝不要用 Get-Content/Set-Content 去改）
+[IO.File]::ReadAllText("D:\rime-sandbox\build\weasel.yaml", [Text.Encoding]::UTF8).Contains('max_width: 530')           # 期望 True
+[IO.File]::ReadAllText("D:\rime-sandbox\build\rime_ice.schema.yaml", [Text.Encoding]::UTF8).Contains('page_size: 36')  # 期望 True
 #    5b. 重启 WeaselServer 后看日志里没有 YAML 解析错误
 Get-ChildItem "$env:TEMP\rime.weasel\*.log" | Sort-Object LastWriteTime -Descending |
   Select-Object -First 1 | Get-Content | Select-String 'Error parsing'   # 必须无输出
@@ -222,7 +230,7 @@ Get-ChildItem "$env:TEMP\rime.weasel\*.log" | Sort-Object LastWriteTime -Descend
 | 后台进程刚启动后的第一次显示 | 106–180 ms（离屏预建前约 348 ms） |
 | 改动前（每次重启 PowerShell + 解析 700 行脚本） | 2000–4000 ms |
 | 打字命中常用语（`wsl`） | 无感（≥ 3 字符才读一次小文件） |
-| 多行候选框 | `max_width=300` 换行、`620` 不换行；`page_size=18` → 约 4 行 × 5 列 |
+| 候选方格（0.2.3 起） | 打 `shi` → 候选窗口 **797 × 74**（单行 9 个）；按 `↓` → **797 × 285**（4 行 × 9 列）；第一行按 `↑` → 回到 797 × 74 |
 
 > 「进程刚启动后的第一次显示」会明显偏大（180 ms）：守护进程拉起窗口进程、WinForms
 > 初始化、首次布局都在这一次里完成。稳态（窗口进程已常驻）是 45–72 ms。
@@ -233,10 +241,10 @@ Get-ChildItem "$env:TEMP\rime.weasel\*.log" | Sort-Object LastWriteTime -Descend
 
 | # | 验收项 | 结论 |
 | --- | --- | --- |
-| 1 | `v` 菜单项数 | 只有 **4 项**（`1 设置 / 2 剪贴板 / 3 常用语 / 4 原符号`）；按 `5` 无反应；手打 `vset` 仍能进设置根菜单 |
+| 1 | `v` 菜单项数 | 只有 **4 项**（`1 设置 / 2 剪贴板 / 3 常用语 / 4 原符号`）；按 `5` 无反应；手打 `vset` 仍能进设置根菜单（**0.2.2 起第 5 项改为「快捷输入」，见 §8**） |
 | 2 | 「收藏」→「常用语」 | 菜单项、`v`→`3` 列表标题/空态/搜索提示、候选第 2 位注释、设置窗口标签页与按钮文案全部显示「常用语」；`favorites.dict.yaml` / `vfav` / `vset*` / `vmenu-settings.txt` 未改 |
-| 3 | 多行候选框 | `max_width: 300` 时一页 18 条候选换行排成每行约 5 个（约 4 行 × 5 列）；按 `↓` 高亮在**同一行内**移动（窗口内 y 197..257）；`620` 实测不换行 |
-| 4 | 方向键行为 | `↓` = 选中下一个候选、`→` = 选中下一个候选、`↑` = 上一个，都**不上屏**（librime 1.13.1，横向候选框） |
+| 3 | 多行候选框 | `max_width: 300` 时一页 18 条候选换行排成每行约 5 个（约 4 行 × 5 列）；按 `↓` 高亮在**同一行内**移动（窗口内 y 197..257）；`620` 实测不换行（**0.2.3 起这套参数已换成 `530` / `36` + 按 `↓` 展开，见 §8**） |
+| 4 | 方向键行为 | `↓` = 选中下一个候选、`→` = 选中下一个候选、`↑` = 上一个，都**不上屏**（librime 1.13.1，横向候选框；**0.2.3 起普通打字时方向键改由 `grid_key` 接管**，见 §8） |
 | 5 | 设置窗口双击编辑（剪贴板页） | 双击第 1 行 → 弹出「编辑第 1 条」→ 输入 `test` + 回车 → `clipboard-cache.txt` **第 1 行确实变成 `test`** → 随后还原真实数据并**校验 sha256 一致** |
 | 6 | 设置窗口双击编辑（常用语页） | 双击某一行 → 弹出 `修改常用语`（与点「修改选中」等价） |
 | 7 | 截图 | `screenshots/` 下 `ime-01`/`ime-05`/`ime-06`、`gui-01`〜`gui-04` 全部为示例数据 |
@@ -268,7 +276,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\gui-dblclick-test.ps
 | 2 | 该菜单项的**命令号** | 从 `IDR_MENU_POPUP`（资源 105）读出 = **40008**，与源码 `include/resource.h` 的 `ID_WEASELTRAY_SETTINGS` 一致 |
 | 3 | 菜单文本片段顺序 | `输入法设置 (&S)` / `用户词典管理 (&D)` / `用户资料同步 (&N)` / … 与用户截图一致 |
 | 4 | 触发方式 = 该菜单项真正做的事（**直接运行 `WeaselDeployer.exe`（无参数）**） | 设置窗口没在跑 → 新实例启动、窗口出现（标题 `小狼毫 v 功能 · 可视化设置`）；已在跑 → 常驻实例把窗口亮出来（走 `open-settings.flag` 那条路） |
-| 5 | 代理透传 `/deploy` | 真的执行了部署：`D:\rime-sandbox\build\weasel.yaml` 与 `build\rime_ice.schema.yaml` 在 02:14:52/53 被重新生成，日志只有 INFO 无 Error；**`max_width: 300`、`page_size: 18` 都还在**（它们在 `weasel.custom.yaml` / `rime_ice.custom.yaml` 的 patch 里）→ **重新部署不会弄丢多行候选框** |
+| 5 | 代理透传 `/deploy` | 真的执行了部署：`D:\rime-sandbox\build\weasel.yaml` 与 `build\rime_ice.schema.yaml` 在 02:14:52/53 被重新生成，日志只有 INFO 无 Error；**`max_width: 300`、`page_size: 18` 都还在**（它们在 `weasel.custom.yaml` / `rime_ice.custom.yaml` 的 patch 里）→ **重新部署不会弄丢多行候选框**（0.2.3 起这两个值是 **`530` / `36`**，见 §8） |
 | 6 | 设置窗口新按钮 | 点「打开小狼毫原生设置」→ 弹出标题 `【小狼毫】方案选单设定`（截图 `screenshots/gui-05-native-settings.png` 是设置窗口里的「小狼毫原生设置」分组与按钮） |
 
 ### 7.1 安装 / 幂等 / 撤销的测试方法与命令
@@ -285,7 +293,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\vmenu-tray-setup.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\vmenu-tray-setup.ps1
 # 期望：「WeaselServer.exe 备份已存在，沿用（不会被覆盖）」
 #       「菜单项文字已经是「输入法设置」，跳过」
-#       `.real.exe` 已存在时不再重复改名；代理每次都会重新编译并覆盖安装
+#       「WeaselDeployer.exe 已经是代理，跳过改名」（0.2.2 起按「大小是否等于代理」判断；
+#         若当前是升级后的真身，会先改名成 .real.exe 再装代理）
 ```
 
 ```powershell
@@ -321,8 +330,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\vmenu-tray-setup.ps1
 # ⑤ 代理透传（验收 5 的复现；会真的重新部署）
 & 'C:\Program Files\Rime\weasel-0.17.4\WeaselDeployer.exe' /deploy
 Get-Item 'D:\rime-sandbox\build\weasel.yaml','D:\rime-sandbox\build\rime_ice.schema.yaml' | Select-Object Name, LastWriteTime
-[IO.File]::ReadAllText('D:\rime-sandbox\build\weasel.yaml', [Text.Encoding]::UTF8).Contains('max_width: 300')          # 期望 True
-[IO.File]::ReadAllText('D:\rime-sandbox\build\rime_ice.schema.yaml', [Text.Encoding]::UTF8).Contains('page_size: 18') # 期望 True
+[IO.File]::ReadAllText('D:\rime-sandbox\build\weasel.yaml', [Text.Encoding]::UTF8).Contains('max_width: 530')          # 期望 True（0.2.3 起；原来是 300）
+[IO.File]::ReadAllText('D:\rime-sandbox\build\rime_ice.schema.yaml', [Text.Encoding]::UTF8).Contains('page_size: 36') # 期望 True（0.2.3 起；原来是 18）
 Get-ChildItem "$env:TEMP\rime.weasel\*.log" | Sort-Object LastWriteTime -Descending |
   Select-Object -First 1 | Get-Content | Select-String 'Error'    # 期望无输出
 
@@ -332,3 +341,82 @@ Get-ChildItem "$env:TEMP\rime.weasel\*.log" | Sort-Object LastWriteTime -Descend
 
 > 托盘项**不用真的去点**：这一项做的事就是「无参数运行 `WeaselDeployer.exe`」（脚本 + 资源回读都已确认
 > 命令号 = 40008 且服务端对它的处理就是启动这个 exe），所以第 4 条用直接运行来验收。
+
+---
+
+## 8. 本次迭代（0.2.2 / 0.2.3）的验收结论：快捷输入 · 候选方格 · 部件拆字
+
+### 8.1 复现方法：怎么「看见」一次上屏
+
+真按键 + 读窗口标题，全程不用人眼（记事本的标题 = 文档第一行内容）：
+
+```powershell
+# 通用形式：esc 归位 → v 开菜单 → 5 进快捷输入 → <数字> 选功能 →（可选）继续输入 → space 上屏
+# `type-and-shot.ps1` 的按键表里没有 + 和 *（它们是 shift 组合），所以示例用减法；
+# 想测 + / * 就手动敲，或先按 shift 再按 equals。
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\type-and-shot.ps1 `
+  -Target notepad -Keys 'esc,v,5,1,8,minus,3,space' -Out .\shots\v5-calc.png
+# 输出：AFTER=<算式结果>   SHOT=…
+
+# 日期 / 时间 / 星期 / 日期时间 / 农历（选完就能上屏）
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\type-and-shot.ps1 -Target notepad -Keys 'esc,v,5,2,space' -Out .\shots\v5-date.png
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\type-and-shot.ps1 -Target notepad -Keys 'esc,v,5,3,space' -Out .\shots\v5-time.png
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\type-and-shot.ps1 -Target notepad -Keys 'esc,v,5,4,space' -Out .\shots\v5-week.png
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\type-and-shot.ps1 -Target notepad -Keys 'esc,v,5,5,space' -Out .\shots\v5-dt.png
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\type-and-shot.ps1 -Target notepad -Keys 'esc,v,5,6,space' -Out .\shots\v5-lunar.png
+
+# 数字大写 / Unicode / 部件拆字（前缀后面自己补内容）
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\type-and-shot.ps1 -Target notepad -Keys 'esc,v,5,7,1,2,3,4,space' -Out .\shots\v5-rmb.png    # AFTER=一千二百三十四
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\type-and-shot.ps1 -Target notepad -Keys 'esc,v,5,8,4,e,2,d,space' -Out .\shots\v5-uni.png    # AFTER=中
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\type-and-shot.ps1 -Target notepad -Keys 'esc,v,5,9,n,v,z,i,space' -Out .\shots\v5-rad.png    # AFTER=好
+
+# 部件拆字「不经菜单」的那条路（0.2.3 把前缀从 uU 改成了 u）
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\type-and-shot.ps1 -Target notepad -Keys 'esc,u,n,v,z,i,space' -Out .\shots\rad-u.png       # AFTER=好
+```
+
+> 注意（个人手动按键版）：`esc` → `v` → `5` → 数字（可选继续输入算式）→ 空格上屏，
+> 然后读记事本窗口标题即可，例如 `v` `5` `1` 再敲 `1+2*3` 得到 `7`。
+
+### 8.2 快捷输入 9 项的实测结果（0.2.2 / 0.2.3）
+
+| # | 菜单文字 | 填入的前缀 | 实测上屏结果 |
+| --- | --- | --- | --- |
+| 1 | 计算 | `cC` | `1+2*3` → **7**；`9*9` → **81**（按 `1` 后必须继续输入算式） |
+| 2 | 日期 | `rq` | **2026-09-13** |
+| 3 | 时间 | `sj` | **02:30**（`HH:MM`） |
+| 4 | 星期 | `xq` | **星期日** |
+| 5 | 日期时间 | `dt` | **2026-09-13T02:30:14+0800** |
+| 6 | 农历 | `N` + 当天 `%Y%m%d` | **丙午马年八月初三** |
+| 7 | 数字大写 | `R` | 输入 `1234` → **一千二百三十四** |
+| 8 | Unicode | `U` | 输入 `4e2d` → **中** |
+| 9 | 部件拆字 | `u` | 输入 `nvzi` → **好** |
+| q | 返回 | （清空输入） | 回到空输入状态 |
+
+部件拆字的另外两条对照（0.2.3）：`u` + `riyue` → **明**；`v`→`5`→`2`（日期）不受影响。
+**旧的 `uU` 前缀已失效**（`uU` 单独不再触发拆字）。
+
+### 8.3 候选方格的实测（0.2.3）
+
+| 操作 | 候选窗口（物理像素） | 结果 |
+| --- | --- | --- |
+| 打 `shi` | 797 × 74 | 单行 9 个（`grid_limit` = 9） |
+| 按 `↓` | 797 × 285 | **4 行 × 9 列**（36 个） |
+| `↓↓`（下跳一行） | — | 与「`↓` + `→`×9」选中的是同一个候选 ✅（**有 1 轮对照不一致**，待复测） |
+| 第一行按 `↑` | 回到 797 × 74 | 收回单行 ✅ |
+| 再打任何字 | — | 自动收回单行 ✅ |
+
+前置条件（缺一不可）：`build\weasel.yaml` 的 `style/layout/max_width: 530`、
+`build\rime_ice.schema.yaml` 的 `menu/page_size: 36`，改完**重启 `WeaselServer`**：
+
+```powershell
+[IO.File]::ReadAllText('D:\rime-sandbox\build\weasel.yaml', [Text.Encoding]::UTF8).Contains('max_width: 530')           # 期望 True
+[IO.File]::ReadAllText('D:\rime-sandbox\build\rime_ice.schema.yaml', [Text.Encoding]::UTF8).Contains('page_size: 36')  # 期望 True
+```
+
+### 8.4 待复测 / 未解决（不要当成已通过）
+
+| 项 | 现状 |
+| --- | --- |
+| **展开后第 2–4 行的序号** | 需求是「只第一行有 1–9」，现在第 10 个之后仍显示 `10`、`11`……。`menu/alternative_select_labels` 填 36 项的方案被 rime 拒绝（`page_size` 退回 9）。**未解决** |
+| **`↓↓` vs `↓` + `→`×9** | 4 组对照里有 1 组不一致，怀疑是测试脚本的焦点 / 会话残留（抓图前前台窗口没抢到），需要复测 |
+| **v5 的截图** | 本轮**没有**截图：抓屏时机撞上用户正在用电脑，已把两张新图从 `screenshots/` 删掉，因此文档不引用 v5 截图 |

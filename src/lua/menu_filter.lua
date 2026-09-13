@@ -31,6 +31,21 @@ local function place(list, pos, fav)
   return out
 end
 
+-- 第一行（前 9 个）的候选在注释里带上 1-9 序号：
+-- 主题里 label_format 已留空（rime 的 alternative_select_labels 在 Weasel 上不生效，
+-- 实测窗口里第 10 个之后的序号是 Weasel 自己画的），所以序号改走注释，
+-- 这样正好只有第一行有数字、下面几行干净。注释只是显示，不会进上屏文字。
+local function number_row1(cand, i)
+  if i < 1 or i > 9 then return end
+  pcall(function()
+    local c0 = cand.comment
+    if c0 == nil or c0 == "" then
+      cand.comment = tostring(i)
+    else
+      cand.comment = tostring(i) .. " " .. c0
+    end
+  end)
+end
 local function filter(input, env)
   local ctx = env.engine.context
   local code = ctx.input
@@ -60,6 +75,7 @@ local function filter(input, env)
     for cand in input:iter() do
       k = k + 1
       if k > lim then break end
+      number_row1(cand, k)
       yield(cand)
     end
     return
@@ -91,6 +107,16 @@ local function filter(input, env)
       return
     end
     for i = 1, n do
+      -- 主题里 label_format 已留空，v 菜单的序号也改写在注释里；
+      -- 注释本来就有数字的（快捷输入那种「按 1 · …」）不再重复加。
+      pcall(function()
+        local c0 = buf[i].comment
+        if c0 == nil or c0 == "" then
+          buf[i].comment = tostring(i)
+        elseif not c0:find("%d") then
+          buf[i].comment = tostring(i) .. " " .. c0
+        end
+      end)
       yield(buf[i])
     end
     return
@@ -103,6 +129,7 @@ local function filter(input, env)
   local lim = core.grid_limit(ctx)
   for i = 1, #out do
     if i > lim then break end
+    number_row1(out[i], i)
     yield(out[i])
   end
 end

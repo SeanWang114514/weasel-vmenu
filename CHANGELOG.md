@@ -3,6 +3,134 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 本项目在真机（Windows 11 + Weasel 0.17.4 + librime 1.13.1 + rime-ice）上验证。
 
+## [0.2.3] — 2026-09-13
+
+候选窗口改成「**默认单行、按 `↓` 展开 4 行 × 9 列**」，部件拆字的前缀从 `uU` 改成单字母 `u`。
+
+### 新增 · 候选窗口「单行 ⇄ 4 行 × 9 列」
+
+* 需求原文：「默认是直着的显示 然后按向下后才变成 9 乘 4 的竖向方格 然后在最顶端按下向上回到一行
+  按向下变成 9 乘 4 同时保留左右选择预选词的功能」。
+* 主题 `style/layout/max_width` 由 `300` 改成 **`530`**（逻辑像素；屏幕 150% 缩放下实测**一行正好 9 个**）；
+  schema `menu/page_size` 由 `18` 改成 **`36`**（= 9 × 4）。
+* `src/lua/vmenu_core.lua`：新增展开状态与方向键二维导航
+  （`M.GRID_COLS = 9`、`M.GRID_ROWS = 4`、`M.GRID_OPTION = "vmenu_grid"`、`grid_limit` / `grid_key`）：
+  * `↓`：收起时**展开**（选中项不动）；已展开时往下跳一行（`ctx:select(sel + 9)`）；
+  * `↑`：选中项在**第一行**（下标 < 9）时**收回单行**；否则往上跳一行（`sel - 9`）；
+  * `←` / `→`：行内左右移动（「按右键选候选」的习惯保留）；
+  * 任何**别的按键**（继续打字、上屏、数字选词）自动收回单行。
+* `src/lua/menu_filter.lua`：正常打字时按状态限制候选个数 —— 单行 **9** 个（正好一行）、
+  展开 **36** 个（Weasel 按 `max_width: 530` 自动排成 4 行 × 9 列）。
+* `src/lua/menu_processor.lua`：非 v 模式下方向键先交给 `grid_key`；v 菜单内部保持原样。
+* **两个坑（都踩过）**：
+  * `lua_filter` 与 `lua_processor` **各自 `require` 一份 lua 模块，模块级变量不共享** ——
+    所以「是否展开」只能放在 **context option**（`vmenu_grid`）里传递，与 `vraw_mode` 同一思路；
+  * `ctx.selected_candidate_index` 是 **1 基**，而 `ctx:select(i)` 是 **0 基**，已换算。
+实测（候选窗口尺寸，物理像素；1 行 ≈ 74 px、4 行 ≈ 285 px）：
+
+| 操作 | 候选窗口 | 结果 |
+| --- | --- | --- |
+| 打 `shi` | 797 × 74 | 单行 9 个 |
+| 按 `↓` | 797 × 285 | **4 行 × 9 列** |
+| `↓↓`（下跳一行） | — | 与「`↓` + `→`×9」选中的是同一个候选（有 1 轮对照不一致，待复测） |
+| 第一行按 `↑` | 回到 797 × 74 | 收回单行 |
+| 再打任何字 | — | 自动收回单行 |
+
+* **已知未完成**：**第 2–4 行的序号**。rime 按候选下标发号，第 10 个之后会显示 `10`、`11`……，
+  而需求是「下面几行不用序号，只需要第一行有 1–9」。试过 `menu/alternative_select_labels` 填 36 项，
+  结果**整份补丁被 rime 拒绝**（`page_size` 退回 9），需要另想办法 —— 见 `docs/PROGRESS.md` §5 开放问题。
+* **待复测**：「`↓↓` 与 `↓` + `→`×9 选中同一个候选」这组对照曾有一轮不一致（其余 3 组对照一致），
+  怀疑是测试脚本的焦点 / 会话残留问题。
+
+### 变更 · 部件拆字触发键 `uU` → `u`
+
+小狼毫自带的 rime-ice **本来就有**部件拆字（词典 `radical_pinyin`），但触发键是 `uU`，要打 `uUnvzi`。
+本次**不新造功能**，只把前缀改成单个 `u`（两行配置，写在 `rime_ice.custom.yaml`）：
+
+```yaml
+radical_lookup/prefix: u
+"recognizer/patterns/radical_lookup": "^u[a-z]+$"
+```
+
+相关结构（原有，未改）：`affix_segmentor@radical_lookup` + `table_translator@radical_lookup`
+（`dictionary: radical_pinyin`）+ `reverse_lookup_filter@radical_reverse_lookup`；
+词典条目形如 `好	nv'zi	3824`。
+
+* 实测：`u` + `nvzi` → **好**；`u` + `riyue` → **明**；`v`→`5`→`9` + `nvzi` → **好**；
+  `v`→`5`→`2`（日期）不受影响。
+* **副作用**：**旧的 `uU` 写法失效**；以 `u` 开头的英文词也会被当成拆字。
+
+### 变更 · `v` → 5 子菜单补第 9 项「部件拆字」
+
+* `lua_menu.lua` 的 `yield_quick` 末尾新增 `部件拆字`（注释 `按 9 · 如 nvzi = 女+子`），
+  选中后填入 `u`（`menu_processor.lua` 加 `if repr == "9" then replace_input(ctx, "u") return 1 end`）。
+
+### 其它
+
+* `examples/weasel.custom.example.yaml` 的 `max_width` 已改成 `530`；
+  `examples/rime_ice.custom.example.yaml` 已改成 `menu/page_size: 36` 并加上部件拆字补丁。
+  （前者文件里那句「实测 300 时…每行约 5 个」的旧注释**还没改**。）
+
+## [0.2.2] — 2026-09-13
+
+`v` 菜单新增第 5 项**快捷输入**（9 项：计算 / 日期 / 时间 / 星期 / 日期时间 / 农历 / 数字大写 /
+Unicode / 部件拆字 —— 最后一项随 0.2.3 的部件拆字改动加入），
+并修掉托盘安装脚本在「小狼毫升级后重跑」时会覆盖新版部署器的问题。
+
+### 新增 · `v` → 5「快捷输入」
+
+* 主菜单第 5 项：`快捷输入`（注释 `计算 · 日期`）→ 子模式 `vqi`，子菜单 8 项 + `返回`。
+* **机制（重要）**：选中一项后**把该功能的触发前缀直接写进输入框**
+  （Lua 的 `ctx:clear()` + `push_input()`，就是原来 `vclip` / `vfav` 那一套 `replace_input`），
+  之后所有按键**完全交回原方案**（我们不再拦截），于是雾凇拼音自带的 `recognizer/patterns` +
+  `lua_translator` 自然生效 —— **不需要自己实现计算 / 日期 / 农历 / 大写 / Unicode**。
+* 实现位置（三个文件，都已同步到仓库 `src/lua/`）：
+  * `src/lua/vmenu_core.lua`：`M.mode_of()` 加 `if code:sub(1,3) == "vqi" then return "quick" end`；
+    `M.want_type()` 加 `if m == "quick" then return "vqi" end`（vqi 菜单里只留菜单候选）。
+  * `src/lua/lua_menu.lua`：主菜单加 `yield(item(seg, "vmenu", "快捷输入", "计算 · 日期"))`；
+    新增 `yield_quick(seg)`；入口分派加 `if mode == "quick" then yield_quick(seg) return end`。
+  * `src/lua/menu_processor.lua`：主菜单 `if repr == "5" then replace_input(ctx, "vqi") return 1 end`；
+    新增 `cur == "vqi"` 分支（数字 1–9 填前缀、`q` 清空返回、其余放行）。
+    原来的「第 5 项已去掉」注释改成「第 5 项：快捷输入」；`vset*` 代码仍然保留但菜单进不去。
+
+9 项与实测上屏结果（第 9 项「部件拆字」是随 0.2.3 的部件拆字改动一起加进子菜单的）：
+
+| 数字 | 菜单文字 | 填入的前缀 | 来源 | 实测上屏 |
+| --- | --- | --- | --- | --- |
+| 1 | 计算 | `cC` | `calc_translator.lua`（recognizer `^cC.+`） | `1+2*3` → **7**；`9*9` → **81** |
+| 2 | 日期 | `rq` | `date_translator.lua` | **2026-09-13** |
+| 3 | 时间 | `sj` | 同上 | **02:30**（`HH:MM`） |
+| 4 | 星期 | `xq` | 同上 | **星期日** |
+| 5 | 日期时间 | `dt` | 同上 | **2026-09-13T02:30:14+0800** |
+| 6 | 农历 | `N` + 当天 `%Y%m%d` | `lunar.lua`（recognizer `^N[0-9]{1,8}`） | **丙午马年八月初三** |
+| 7 | 数字大写 | `R` | `number_translator.lua`（recognizer `^R[0-9]+`） | 输入 `1234` → **一千二百三十四** |
+| 8 | Unicode | `U` | `unicode.lua`（recognizer `^U[a-f0-9]+`，需要 `unicode` tag） | 输入 `4e2d` → **中** |
+| 9 | 部件拆字 | `u` | `radical_pinyin` 词典（recognizer `^u[a-z]+$`） | 输入 `nvzi` → **好** |
+
+* 三个特别注意：「计算」按下 `1` 之后**必须继续输入算式**（recognizer 是 `^cC.+`，光有 `cC` 不出候选）；
+  「农历」按 `6` 时会把**当天的 `YYYYMMDD` 一起填进去**（`os.date("%Y%m%d")`），所以立刻能看到今天的农历；
+  「数字大写」「Unicode」「部件拆字」按完还要自己补内容（`R1234`、`U4e2d`、`nvzi`）。
+* 生效条件：改完 lua **必须重启 `WeaselServer`**（Lua 模块有缓存），并且
+  `D:\rime-sandbox\lua\` 与 `%APPDATA%\Rime\lua\` 两处要保持 **MD5 一致**（本次已同步、已重启，日志无 lua 报错）。
+* 本轮**没有可用的截图**：抓屏时机撞上用户正在用电脑（会带上用户自己的桌面内容），
+  两张新图已从 `screenshots/` 删掉，所以文档里不引用 v5 的截图。
+
+### 修复 · 托盘安装脚本的「代理识别」
+
+* 原逻辑是 `if (-not (Test-Path $realDep)) { Move-Item … }` —— `WeaselDeployer.real.exe` 已存在时
+  不再改名，于是小狼毫升级后重跑会用代理**直接覆盖新版** `WeaselDeployer.exe`（新版真身丢失）。
+* 新逻辑：**先编译代理**，再用「大小是否等于代理（5632 字节）」判断当前 `WeaselDeployer.exe`
+  是真身还是代理；不是代理就先 `Move-Item` 改名成 `WeaselDeployer.real.exe`（**覆盖旧真身**），
+  然后才把代理放进去。
+* 实测重跑输出：`WeaselServer.exe 备份已存在，沿用` / `菜单项文字已经是「输入法设置」，跳过` /
+  `WeaselDeployer.exe 已经是代理，跳过改名` / `已安装代理 WeaselDeployer.exe（5632 字节）`；
+  之后无参数启动仍然打开 vmenu 设置窗口。
+
+### 修正 · 上一版文档里的一处限制说明
+
+* 0.2.1 的文档写着「升级后重跑时新版 `WeaselDeployer.exe` 会被代理直接覆盖、`.real.exe` 可能仍是旧版」——
+  该行为已在本版修掉：现在重跑会**自动把新版真身改名保存**为 `.real.exe`，不需要先手动挪走。
+
 ## [0.2.1] — 2026-09-13
 
 托盘图标右键菜单第一项变成 **「输入法设置 (S)」**，点它打开 vmenu 可视化设置窗口；

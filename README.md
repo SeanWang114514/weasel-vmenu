@@ -1,17 +1,20 @@
 # weasel-vmenu · 小狼毫输入法「v 功能菜单」
 
 给小狼毫（Weasel / librime）加一套 **v 功能菜单**：可视化设置窗口、剪贴板历史、常用语快捷输入、
-多行候选框，以及「原符号输入」还原。全部用 **librime-lua + PowerShell 5.1** 实现，
+快捷输入（计算 / 日期 / 农历 / 部件拆字…）、可展开的候选方格（默认单行 9 个，按 `↓` 展开 4 行 × 9 列），
+以及「原符号输入」还原。全部用 **librime-lua + PowerShell 5.1** 实现，
 不改输入法源码、不重新编译。
 
 > **English TL;DR** — A Lua + PowerShell extension pack for the
 > [Weasel](https://github.com/rime/weasel) IME on Windows (built and verified against
 > Weasel 0.17.4 + librime 1.13.1 + [rime-ice](https://github.com/iDvel/rime-ice)):
-> press `v` for a menu (`1` 设置 / `2` 剪贴板 / `3` 常用语 / `4` 原符号).
+> press `v` for a menu (`1` 设置 / `2` 剪贴板 / `3` 常用语 / `4` 原符号 /
+> `5` 快捷输入 = calculator, date/time, lunar date, number-to-Chinese, Unicode, radical lookup).
 > Includes a **resident WinForms settings GUI** that opens in ~0.1 s, a clipboard-history
 > quick picker, favourite snippets that appear as **candidate #2 while you type their code**
-> (Enter invokes them), a **multi-row candidate window** (theme `max_width` + schema `page_size`),
-> and the isolation/tooling to verify everything with screenshots.
+> (Enter invokes them), a **candidate grid** (a single row of 9 by default; press `↓` to expand
+> to 4 rows × 9 columns, arrows navigate it), and the isolation/tooling to verify everything
+> with screenshots.
 > Source in `src/`, verification harness in `tools/`, docs in `docs/`.
 > See [`docs/AGENT-HANDOFF.md`](docs/AGENT-HANDOFF.md) before changing anything.
 
@@ -19,7 +22,7 @@
 
 ## 1. 它是什么
 
-按 `v` 打开功能菜单（候选栏里只有 4 个短词）：
+按 `v` 打开功能菜单（候选栏里只有 5 个短词）：
 
 | 候选 | 功能 | 说明 |
 | --- | --- | --- |
@@ -27,18 +30,34 @@
 | `2 剪贴板` | 剪贴板快查 | 后台脚本同步系统剪贴板到文本文件，Lua 只读文件 |
 | `3 常用语` | 常用语快查 | 可继续输入编码过滤（注释显示「快捷内容」） |
 | `4 原符号` | 还原原版 `v` 模式 | 之后直接输入符号编码（`2` → 二 贰 ² ₂ Ⅱ …） |
+| `5 快捷输入` | 计算 / 日期 / 时间 / 星期 / 日期时间 / 农历 / 数字大写 / Unicode / 部件拆字 | 按 `5` 进子菜单（9 项 + 返回），**选中一项就直接启用，接着输入即可** |
 
-> 原来的第 5 项「文字设置」（`vset` 纯键盘设置）已从菜单**去掉**：`vset` / `vsetc` / `vsetf` /
-> `vsetn` / `vsetx` 的 Lua 代码**保留但不再能从菜单进入**，只有手打 `vset` 才进得去。
-> 设置一律走第 1 项的可视化窗口。
+> 原来的第 5 项「文字设置」（`vset` 纯键盘设置）已从菜单**去掉**（现在第 5 项是**快捷输入**）：
+> `vset` / `vsetc` / `vsetf` / `vsetn` / `vsetx` 的 Lua 代码**保留但不再能从菜单进入**，
+> 只有手打 `vset` 才进得去。设置一律走第 1 项的可视化窗口。
 
-除菜单外还有四条「不用按 v」的能力：
+**快捷输入（`v`→`5`）是怎么工作的**：选中一项后会**把该功能的触发前缀直接写进输入框**
+（例如「计算」填 `cC`、「日期」填 `rq`、「部件拆字」填 `u`），之后所有按键**完全交回原方案** ——
+计算、日期、农历、数字大写、Unicode、部件拆字这些能力本来就是雾凇拼音自带的
+（`recognizer/patterns` + `lua_translator`），本项目只是把前缀喂进去，所以**选中后接着输入就能用**：
+
+* `v`→`5`→`1`（计算）→ 接着敲 `1+2*3` → 候选第一项就是 **7**，空格 / 回车上屏（`9*9` → **81**）；
+* `v`→`5`→`2`（日期）→ 直接出今天的日期；`3` 时间、`4` 星期、`5` 日期时间同理；
+* `v`→`5`→`6`（农历）→ 会把**当天日期**一起填进去，所以立刻显示今天的农历；
+* `v`→`5`→`7`（数字大写）/ `8`（Unicode）→ 之后自己补数字 / 十六进制（`R1234`、`U4e2d`）；
+* `v`→`5`→`9`（部件拆字）→ 接着敲部件拼音，`nvzi` → **好**（等价于直接打字时的 `u` + `nvzi`）。
+
+机制、实现位置与 9 项的实测结果见 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) §3.9。
+
+除菜单外还有五条「不用按 v」的能力：
 
 * **常用语候选第 2 位**：正常打字时键入常用语编码的**前 3 位**，内容直接出现在候选第 2 位
   （注释显示「常用语」）。
 * **编码打完 + 回车 = 直接调用**：输入与某条编码**完全一致**时，回车把内容上屏
   （字母编码、纯数字编码都支持）。
-* **多行候选框**：候选多了会自动换行排成多栏（见 §4「多行候选框」）。
+* **候选窗口默认单行 9 个，按 `↓` 展开成 4 行 × 9 列**（见 §4「候选框：单行 / 展开」）。
+* **部件拆字**：直接输入 `u` + 部件拼音，如 `unvzi` → **好**、`uriyue` → **明**
+  （见 §4「部件拆字（`u` 前缀）」）。
 * **托盘图标右键菜单里的「输入法设置 (S)」**：右键任务栏托盘的小狼毫图标，菜单第一项就是它，
   点开的是同一个 vmenu 可视化设置窗口（原来这一项叫「输入法设定 (S)」，打开的是小狼毫自带对话框）。
   做法是**改一句菜单文字 + 用一个代理顶替 `WeaselDeployer.exe`**，可一键撤销；
@@ -56,12 +75,12 @@
 
 | 截图 | 说明 |
 | --- | --- |
-| ![v 菜单](screenshots/ime-01-menu.png) | 按 `v`：4 个短候选（设置 / 剪贴板 / 常用语 / 原符号） |
+| ![v 菜单](screenshots/ime-01-menu.png) | 按 `v`：短候选（设置 / 剪贴板 / 常用语 / 原符号；**第 5 项「快捷输入」是后加的，这张图是 4 项时的样子**） |
 | ![常用语候选](screenshots/ime-02-favorite-inline.png) | 打字时输入编码前 3 位 `you`，候选第 2 位就是常用语内容 `alice@example.com`（注释「常用语」） |
 | ![回车调用](screenshots/ime-03-favorite-enter.png) | 编码打完按回车，内容直接上屏 |
 | ![数字编码常用语](screenshots/ime-04-digit-favorite.png) | **纯数字编码**：输入 `138` → 候选直接显示 `13800138000`，回车调用 |
 | ![常用语快查](screenshots/ime-05-favorite-list.png) | `v`→`3` 常用语快查列表 |
-| ![多行候选框](screenshots/ime-06-multirow-candidates.png) | **多行候选框**：一页 18 条候选按 `max_width` 自动换行，排成约 4 行 × 5 列 |
+| ![多行候选框](screenshots/ime-06-multirow-candidates.png) | **多行候选框（0.2.0 时期的图）**：当时 `max_width=300` + `page_size=18`，一页 18 条排成约 4 行 × 5 列。现在的行为已换成「**默认单行 9 个、按 `↓` 展开 4 行 × 9 列**」（见 §4），这张图仅作历史参考 |
 
 ### 可视化设置窗口（三个标签页）
 
@@ -196,8 +215,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\vmenu-tray-setup.ps1
 * 小狼毫自带的设置对话框（配色 / 字体等）没丢：设置窗口「设置与缓存」页底部有
   **小狼毫原生设置**分组和「打开小狼毫原生设置」按钮（等价于直接运行 `WeaselDeployer.real.exe`）。
 * 小狼毫**升级 / 修复安装**会覆盖这两个 exe，托盘项退回原样 —— 重新跑一次安装命令即可。
-  但注意：脚本只在**没有** `WeaselDeployer.real.exe` 时才做改名，升级后重跑时它通常还在，
-  于是本次的 `WeaselDeployer.exe` 会被代理**直接覆盖**（`.real.exe` 可能仍是升级前的旧版）。
+  脚本会先编译代理、再按「大小是不是代理」判断当前 `WeaselDeployer.exe`：**是真身就先改名成
+  `WeaselDeployer.real.exe`（覆盖旧真身），然后才装上代理**，所以新版部署器不会被覆盖丢掉。
 * `weasel.dll` / `weaselx64.dll` 里也有同样的菜单文字（输入法语言栏那条右键菜单用的），
   本项目**没有改**：它们是注入到所有进程里的 IME 模块，改了要重启所有程序才生效，风险不值得。
 
@@ -223,38 +242,71 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\vmenu-tray-setup.ps1
 | 输入 `12345`（不是任何编码） | 完全按原样输入，回车也是原样 |
 | 英文 / ASCII 模式 | v 功能整体关闭，常用语也不会插进候选 |
 
-### 多行候选框（重要）
+### 候选框：单行 / 展开（重要）
 
-候选框**换行**和**一页多少条**分别由两个不同的配置决定，都不在 Lua 里，也**不能运行时切换**：
+候选框**默认是单行**（9 个候选），**按 `↓` 展开成 4 行 × 9 列**的方格；选中项在第一行时按 `↑`
+收回单行。行内用 `←` / `→` 左右移动（原来「按右键选候选」的习惯保留）。
+
+| 按键 | 行为 |
+| --- | --- |
+| `↓`（收起时） | **展开**成 4 行 × 9 列（当前选中项不变） |
+| `↓`（已展开） | 往下跳一行（第 n 个 → 第 n+9 个） |
+| `↑`（选中项在第一行） | **收回单行** |
+| `↑`（选中项在下面几行） | 往上跳一行（第 n 个 → 第 n−9 个） |
+| `←` / `→` | 行内左右移动 |
+| 继续打字 / 上屏 / 数字选词 | 自动收回单行 |
+
+底层还是两个配置键（都不在 Lua 里，也**不能运行时切换**）：
 
 | 键 | 在哪 | 作用 | 现在的值 |
 | --- | --- | --- | --- |
-| `style/layout/max_width` | Weasel 主题（`weasel.custom.yaml` → `build/weasel.yaml`） | 候选窗口宽度上限，超过就换行；`0` = 不换行 | `300` |
-| `menu/page_size` | 方案（`rime_ice.custom.yaml` → `build/rime_ice.schema.yaml`） | 一页候选条数 | `18` |
+| `style/layout/max_width` | Weasel 主题（`weasel.custom.yaml` → `build/weasel.yaml`） | 候选窗口宽度上限，超过就换行；`0` = 不换行 | `530`（逻辑像素；150% 缩放下**一行正好 9 个**） |
+| `menu/page_size` | 方案（`rime_ice.custom.yaml` → `build/rime_ice.schema.yaml`） | 一页候选条数上限 | `36`（= 9 × 4） |
 
-两个键配合的结果：一页最多 18 条，按 `300` 宽度自动折行，约为 **4 行 × 5 列** 的多行候选框。
-实测：`max_width: 0` 时不换行（原行为）；改成 `300` 后 9 条候选排成每行约 5 个的多行网格；
-改成 `620` 时**不换行**（自然宽度还没超），所以只有足够小的宽度才会折行。
+真正决定“这一屏放几个候选”的是 Lua：`menu_filter.lua` 在**正常打字**时按状态限制个数 ——
+收起的单行只放 **9** 个（正好一行），展开后放 **36** 个（Weasel 按 `max_width: 530`
+自动排成 4 行 × 9 列）。v 菜单内部不受影响。
 
-落地要写两个地方（`build/*.yaml` 是实际生效的编译产物，必须一起改）：
+实测（候选窗口物理像素，一行 ≈ 74 px、4 行 ≈ 285 px）：
 
-* `weasel.custom.yaml` 加 `patch: "style/layout/max_width": 300`，
-  并把 `build/weasel.yaml` 的 `max_width` 也改成 `300`（同时镜像到 `%APPDATA%\Rime\build\weasel.yaml`）；
-* `rime_ice.custom.yaml` 加 `patch: menu/page_size: 18`，
-  并把 `build/rime_ice.schema.yaml` 的 `page_size` 改成 `18`。
+| 操作 | 候选窗口 | 结果 |
+| --- | --- | --- |
+| 打 `shi` | 797 × 74 | 单行 9 个 |
+| 按 `↓` | 797 × 285 | **4 行 × 9 列** |
+| `↓↓`（下跳一行） | — | 与「`↓` + `→`×9」选中的是同一个候选（有 1 轮对照不一致，待复测） |
+| 第一行按 `↑` | 回到 797 × 74 | 收回单行 |
+| 再打任何字 | — | 自动收回单行 |
 
-**回退方法**：把 `max_width` 改回 `0`、`page_size` 改回 `9`，然后重启 `WeaselServer`。
+**回退方法**：`max_width` 改回 `0`、`page_size` 改回 `9`，然后重启 `WeaselServer`
+（就是回到「一条长候选栏」的原版行为）。
 
 > ⚠️ 改这两个文件时**必须按 UTF-8 读写**。用 PS 5.1 的 `Get-Content` / `Set-Content`
 > （默认按 ANSI/GBK 解码）会把中文读成乱码再写回，YAML 结构直接被破坏，
 > **候选窗口会完全不显示**。正确写法与判别方法见
 > [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md) 的「改了候选框参数后一个候选都不显示」。
 
-### 候选框里的方向键
+> 已知未完成：**第 2–4 行没有按需求去掉序号**。rime 是按候选下标发号的，所以第 10 个之后会显示
+> `10`、`11`……；试过用 `menu/alternative_select_labels` 填 36 项，结果整份补丁被 rime 拒绝
+> （`page_size` 退回 9）。这条仍是**开放问题**（见 [`docs/PROGRESS.md`](docs/PROGRESS.md) §5）。
 
-`↓` / `↑` / `←` / `→` **一律不被 Lua 拦截**，全部交回 librime 原版 `navigator`。
-实测（librime 1.13.1，横向候选框）：`↓` = 选中下一个候选，`→` = 选中下一个候选，
-`↑` = 上一个，都不上屏。所以「按向右键选候选」这个习惯天然保留。
+### 部件拆字（`u` 前缀）
+
+小狼毫自带的 rime-ice **本来就有**部件拆字（词典 `radical_pinyin`），本项目只把它的触发前缀
+从 `uU` 改成了单字母 **`u`**（两行配置，写在 `rime_ice.custom.yaml`）：
+
+```yaml
+radical_lookup/prefix: u
+"recognizer/patterns/radical_lookup": "^u[a-z]+$"
+```
+
+| 你输入 | 结果 |
+| --- | --- |
+| `unvzi` | **好**（词典条目就是 `好` / `nv'zi`） |
+| `uriyue` | **明** |
+| `v`→`5`→`9` + `nvzi` | **好**（快捷输入第 9 项填的就是 `u`） |
+
+> 副作用：**旧的 `uU` 写法失效**（要打 `uUnvzi` 才行的那套没有了）；以 `u` 开头的英文词
+> 也会被当成拆字。想回退就把 `prefix` 改回 `uU`、recognizer 改回 `^uU[a-z]+$`，重启服务。
 
 ## 5. 目录结构
 
@@ -293,6 +345,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\v1-latency-test.ps1 
 
 # 4) 设置窗口「双击某一行 → 弹框编辑」（截图找行 + 真实鼠标双击）
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\gui-dblclick-test.ps1 -Row 1 -Out .\shots\dblclick.png
+
+# 5) v→5 快捷输入（真按键 → 读记事本标题=文档内容）
+#    `esc,v,5,1` = 选「计算」，再敲算式后空格上屏；工具的按键表里没有 + 和 *，所以示例用减法
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\type-and-shot.ps1 `
+  -Target notepad -Keys 'esc,v,5,1,8,minus,3,space' -Out .\shots\v5-calc.png
+# 输出：FOCUSED=<窗口标题>  AFTER=<算式结果>  SHOT=<文件>
 ```
 
 实测（本机 2560×1440 / 150%）：
@@ -311,10 +369,19 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\gui-dblclick-test.ps
 * **候选栏里的操作行点不动**：小狼毫的鼠标点击 = 「提交这一条候选文字」，不经过按键处理链，
   所以「显示更多」这类操作行必须用键盘（`m` / `+`）。这是 Weasel 的机制，不是本项目的 bug。
 * 常用语的「打字命中」需要编码 **≥ 3 位**（不足 3 位的编码请用 `v`→`3`）；纯数字编码需要把编码打完。
-* **多行候选框是要改配置的**：行数/列数由 Weasel 主题的 `style/layout/max_width` 和方案的
-  `menu/page_size` 共同决定，改完必须重启 `WeaselServer`，**输入法里没有运行时开关**
-  （见 §4「多行候选框」的开关方法与回退方法）。
+* **候选框的「单行 / 4 行 × 9 列」是要改配置的**：宽度上限由 Weasel 主题的
+  `style/layout/max_width`（现在 `530`）、一页条数由方案的 `menu/page_size`（现在 `36`）决定，
+  改完必须重启 `WeaselServer`，**输入法里没有运行时开关**
+  （见 §4「候选框：单行 / 展开」的开关方法与回退方法）。
+* **展开后的第 2–4 行现在仍带序号**（`10`、`11`……）：需求是「只第一行有 1–9」，
+  目前还没做到（试过的 `menu/alternative_select_labels` 方案被 rime 拒绝），属开放问题。
+* **部件拆字把 `u` 变成了前缀**：以 `u` 开头的英文词会被当成拆字；旧的 `uU` 写法失效
+  （见 §4「部件拆字（`u` 前缀）」的回退方法）。
 * 常驻设置窗口是一个 PowerShell + WinForms 进程，约占 150 MB 内存 —— 这是「秒开」的代价。
+* **快捷输入（`v`→`5`）的三个注意点**：「计算」按下 `1` 之后**必须继续输入算式**才出候选
+  （雾凇的 recognizer 是 `^cC.+`，光有 `cC` 不出结果）；「数字大写」「Unicode」按完还要自己补
+  数字 / 十六进制（`R1234`、`U4e2d`）；「农历」按 `6` 时会把**当天日期**一起填进去
+  （想查别的日子就把后面的数字改成那天的 `YYYYMMDD`）。
 * **托盘那一项是「改名 + 改行为」，不是新增第 13 项**：小狼毫托盘右键菜单写死在
   `WeaselServer.exe` 的资源里，没有配置文件能新增项，服务端也只认
   `WeaselDeployer.exe` 这一个入口。所以原生设置对话框的直接入口从托盘挪到了 vmenu 设置窗口里

@@ -65,7 +65,7 @@ E ... config_data.cc Error parsing YAML "…\build\weasel.yaml" :
 ```powershell
 $p = 'D:\rime-sandbox\build\weasel.yaml'
 $t = [IO.File]::ReadAllText($p, [Text.Encoding]::UTF8)
-$t = $t -replace '(?m)^(\s*max_width:)\s*\d+', '$1 300'
+$t = $t -replace '(?m)^(\s*max_width:)\s*\d+', '$1 530'
 [IO.File]::WriteAllText($p, $t, (New-Object Text.UTF8Encoding($false)))   # false = 不写 BOM
 
 # 立刻验证：中文没被改写、键值对上了
@@ -82,7 +82,24 @@ Get-ChildItem "$env:TEMP\rime.weasel\*.log" | Sort-Object LastWriteTime -Descend
 > 同一份配置要一起改的地方：`weasel.custom.yaml`（`patch`）+ `build/weasel.yaml`
 > + `%APPDATA%\Rime\build\weasel.yaml`（镜像）。`page_size` 对应
 > `rime_ice.custom.yaml` + `build/rime_ice.schema.yaml`。
-> 回退 = `max_width` 回 `0`、`page_size` 回 `9`，重启服务。
+> 现在的值是 **`max_width: 530` + `page_size: 36`**（默认单行 9 个、按 `↓` 展开 4 行 × 9 列，
+> 见 `ARCHITECTURE.md` §3.6）；回退 = `max_width` 回 `0`、`page_size` 回 `9`，重启服务。
+
+### 按 `↓` 不展开成 4 行 × 9 列
+
+按顺序查这四条：
+
+1. **配置生效了吗**：`build\weasel.yaml` 要是 `max_width: 530`、`build\rime_ice.schema.yaml`
+   要是 `menu/page_size: 36`（改完**必须重启 `WeaselServer`**，见上一节）。
+2. **lua 是不是两份不一样**：`D:\rime-sandbox\lua\` 与 `%APPDATA%\Rime\lua\` 的
+   `vmenu_core.lua` / `menu_filter.lua` / `menu_processor.lua` 必须 **MD5 一致**
+   （`TESTING.md` §4 第 4 条）。
+3. **是不是在 v 菜单里**：v 菜单内部方向键保持原版行为（不接管），只有**普通打字**时 `↓` 才展开。
+4. **候选是不是只有一两条**：候选本来就少时「展开」看起来没变化（展开只是把上限从 9 提到 36）。
+
+> 已知未解决：展开后**第 2–4 行仍带序号**（`10`、`11`……）。需求是「只第一行有 1–9」，
+> 目前做不到（`menu/alternative_select_labels` 填 36 项会被 rime 拒绝、`page_size` 退回 9），
+> 属开放问题，不是配置错。
 
 ### 改了 Lua 却不生效
 
@@ -90,6 +107,48 @@ Get-ChildItem "$env:TEMP\rime.weasel\*.log" | Sort-Object LastWriteTime -Descend
    （`TESTING.md` §4 第 4 条）；只改一份就会出现「改了没生效」。
 2. 改完 lua **必须重启 `WeaselServer`**（librime-lua 是启动时加载模块），并等 ≥ 6 秒
    再打字，否则方案还没加载完会丢按键。
+
+### 按了 `v`→`5` 再按数字没反应
+
+说明「快捷输入」没有生效，按顺序查：
+
+1. **重启过 `WeaselServer` 没有**：lua 模块是启动时加载的，改完必须重启（见上一节第 2 条）。
+2. **两处 lua 是不是 MD5 一致**：`D:\rime-sandbox\lua\` 与 `%APPDATA%\Rime\lua\` 的
+   `vmenu_core.lua`（`mode_of` 里的 `vqi` → `quick`）、`lua_menu.lua`（`yield_quick`）、
+   `menu_processor.lua`（`cur == "vqi"` 分支）三份都要在、都要一致。
+   `lua_filter` / `lua_processor` / `lua_translator` **各自 require 一份模块**，
+   缺一份就会出现「菜单显示出来了，但按数字没反应」。
+3. **日志里有没有 lua 报错**：
+
+   ```powershell
+   Get-ChildItem "$env:TEMP\rime.weasel\*.log" | Sort-Object LastWriteTime -Descending |
+     Select-Object -First 1 | Get-Content | Select-String 'lua|error'    # 期望无 lua 报错
+   ```
+4. **是不是输错层了**：`v` → `5` 之后候选应变成 9 项（计算 / 日期 / … / 部件拆字 / 返回），
+   如果看到的还是主菜单 5 项，那是 `5` 没进去（`menu_processor` 的主菜单分支没生效）。
+
+### 计算器选了「计算」之后没有候选
+
+**正常现象**：雾凇的计算器 recognizer 是 `^cC.+` —— **`cC` 后面必须至少有一个字符**才出候选。
+所以 `v`→`5`→`1` 之后要接着敲算式（如 `1+2*3`），候选第一项才是结果。
+
+同理：「数字大写」填的是 `R`、「Unicode」填的是 `U`、「部件拆字」填的是 `u`，
+按完都要自己补内容（`R1234`、`U4e2d`、`nvzi`）—— 它们的设计就是这样。
+
+### 农历出来的不是我要的那一天
+
+按 `v`→`5`→`6` 时会**把当天的 `YYYYMMDD` 一起填进输入框**（`os.date("%Y%m%d")`），
+所以立刻显示的是**今天**的农历。想查别的日子，把后面那串数字改成那天的日期即可（如 `N20260101`）。
+
+### 输入 `u` 之后不出部件拆字候选
+
+部件拆字（0.2.3 起）用的是单字母前缀 `u`，recognizer 是 `^u[a-z]+$`：
+
+| 现象 | 原因 / 办法 |
+| --- | --- |
+| 打 `u` 后不出现拆字候选 | **`u` 后面必须继续输入字母**（如 `unvzi`），只有 `u` 本身不触发 |
+| 以前打 `uU` 能用，现在不行了 | 0.2.3 把前缀从 `uU` 改成了 `u`，**旧的 `uU` 写法已失效**（回退：`rime_ice.custom.yaml` 里把 `radical_lookup/prefix` 改回 `uU`、recognizer 改回 `^uU[a-z]+$`，重启服务） |
+| 想打以 `u` 开头的英文词却出了拆字候选 | 这是单字母前缀的副作用，回车/直接上屏或切成英文模式即可 |
 
 ---
 
@@ -193,11 +252,11 @@ Get-Item "$d\WeaselDeployer.exe", "$d\WeaselDeployer.real.exe" -ErrorAction Sile
 | 两个文件都在、大小也对，点了却没窗口 | 代理会去启动 `vmenu-settings-gui.ps1`（默认路径 `D:\VibeCoding\输入法\vmenu-settings-gui.ps1`）；**脚本不在那儿时代理会退回原生设置对话框**，所以「完全没反应」通常是设置窗口进程起不来 → 按上面的「`v`→`1` 按了没反应」查常驻窗口与守护进程 |
 | 想分清是「菜单文字没改」还是「行为没改」 | 回读 exe 里的菜单文字，期望 `旧标签 0 处 / 新标签 1 处`（命令见 `TESTING.md` §7.1 ③） |
 
-### 重新部署会不会弄丢多行候选框
+### 重新部署会不会弄丢候选方格（单行 9 / 展开 4 行 × 9 列）
 
 **不会。** 实测：经代理转发的 `WeaselDeployer.exe /deploy`（= 托盘菜单里的「重新部署 (R)」）
 会重新生成 `D:\rime-sandbox\build\weasel.yaml` 与 `build\rime_ice.schema.yaml`，
-日志只有 INFO 没有 Error，而 **`max_width: 300`、`page_size: 18` 都还在** —— 因为它们写在
+日志只有 INFO 没有 Error，而 **`max_width: 530`、`page_size: 36` 都还在** —— 因为它们写在
 `weasel.custom.yaml` / `rime_ice.custom.yaml` 的 `patch` 里，重新部署会重新应用。
 
 ### 升级 / 修复安装小狼毫之后，托盘项变回「输入法设定」了
@@ -210,12 +269,26 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\vmenu-tray-setup.ps1
 ```
 
 脚本是幂等的：备份已存在就沿用（**不会**用新 exe 覆盖第一份备份）、菜单文字已是新标签就跳过、
-快捷方式已改名就跳过；代理每次都会重新编译并覆盖安装。
+快捷方式已改名就跳过、当前 `WeaselDeployer.exe` 已经是代理就跳过改名；代理每次都会重新编译
+并覆盖安装。
 
-> ⚠️ 注意脚本只在**没有** `WeaselDeployer.real.exe` 时才做改名。升级后再重跑时 `.real.exe`
-> 通常还在，于是**不会**把这次的 `WeaselDeployer.exe` 改名过去，而是让代理**直接覆盖**它 ——
-> 也就是说 `WeaselDeployer.real.exe` 可能仍是升级前的旧版部署器。
-> 想稳妥一点：升级后先把 `.real.exe` 挪走 / 删掉，再跑安装脚本。
+> ✅ **升级后重跑会自动处理新版部署器**（0.2.2 起）：脚本**先编译代理**，再用
+> 「大小是否等于代理（5632 字节）」判断当前 `WeaselDeployer.exe` 是真身还是代理；
+> 是真身就**先改名保存为 `WeaselDeployer.real.exe`（覆盖旧真身）**，然后才放入代理。
+> 所以**不需要**再手动挪走 `.real.exe`。
+> 重跑时的实际输出形如：
+>
+> ```
+> WeaselServer.exe 备份已存在，沿用（不会被覆盖）
+> 菜单项文字已经是「输入法设置」，跳过
+> WeaselDeployer.exe 已经是代理，跳过改名
+> 已安装代理 WeaselDeployer.exe（5632 字节）
+> ```
+>
+> （若升级后跑，第三行会变成 `WeaselDeployer.exe（638976 字节，真身）→ WeaselDeployer.real.exe`。）
+>
+> 早期版本（0.2.1 及以前）用的是「`.real.exe` 是否存在」来判断，升级后重跑会**直接用代理覆盖
+> 新版部署器**；该行为已修复，见 `CHANGELOG.md` 的 0.2.2「修复 · 托盘安装脚本的代理识别」。
 
 ### 已知限制 / 注意事项
 
@@ -224,7 +297,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\vmenu-tray-setup.ps1
    所以无法凭空加一个全新命令号。原生设置对话框的直接入口因此从托盘挪到了 vmenu 设置窗口里
    （「小狼毫原生设置」分组 → 「打开小狼毫原生设置」）。
 2. **小狼毫升级 / 修复安装会覆盖** `WeaselServer.exe` 与 `WeaselDeployer.exe`，
-   托盘项退回原样（`输入法设置` 变回 `输入法设定` 且指向原生对话框）；重跑一次安装脚本即可。
+   托盘项退回原样（`输入法设置` 变回 `输入法设定` 且指向原生对话框）；重跑一次安装脚本即可
+   （新版部署器会被自动改名保存，见上一节）。
 3. **`weasel.dll` / `weaselx64.dll` 里也有同样的菜单文字**（那是输入法**语言栏**那条右键菜单用的），
    本项目**没有改**：它们是注入到所有进程里的 IME 模块，改了要重启所有程序才生效，风险不值得。
    也就是说语言栏那条右键菜单仍是「输入法设定」，点它走的是原生对话框。
@@ -322,6 +396,8 @@ Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" |
 | Rime / lua 日志 | `%TEMP%\rime.weasel\rime.weasel.<host>.<user>.log.INFO.*.log` |
 | 输入法文件 | `<RimeUserDir>`（本机 `D:\rime-sandbox`） |
 | 编译后的方案 | `<RimeUserDir>\build\rime_ice.schema.yaml`（`menu/page_size` 在这里生效） |
+| 用户补丁（改这里，不要改 `build`） | `<RimeUserDir>\rime_ice.custom.yaml`（`menu/page_size`、部件拆字前缀 `radical_lookup/prefix`）、`<RimeUserDir>\weasel.custom.yaml`（`style/layout/max_width`） |
+| 两份 Lua 模块（必须 MD5 一致） | `<RimeUserDir>\lua\` 与 `%APPDATA%\Rime\lua\`（快捷输入 / 候选方格都在 `vmenu_core.lua` / `lua_menu.lua` / `menu_processor.lua` / `menu_filter.lua` 里） |
 | Weasel 主题（编译后） | `<RimeUserDir>\build\weasel.yaml`（`style/layout/max_width` 在这里生效），镜像在 `%APPDATA%\Rime\build\weasel.yaml` |
 | 托盘入口的三个 exe（都在 `C:\Program Files\Rime\weasel-0.17.4\`） | `WeaselServer.exe.vmenu-bak`（原始 exe 的备份，只在第一次安装时生成）、`WeaselDeployer.real.exe`（真正的部署器）、`WeaselDeployer.exe`（代理，本机 5632 字节） |
 | 截好的验证图 | 项目目录下 `shots\`（发布用的图在仓库 `screenshots\`） |

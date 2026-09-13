@@ -29,8 +29,8 @@ patch:
   engine/filters/+:
     - lua_filter@*menu_filter
 
-  # 4) 候选框：一页 18 个候选（配合 weasel 主题的 style/layout/max_width 换行，
-  #    就得到「多行候选框」；实测每行约 5 个、最多约 4 行）。
+  # 4) 候选框：一页 36 个候选（9 列 × 4 行，配合 weasel 主题的 style/layout/max_width 换行）。
+  #    默认只放 9 个（正好一行），按 ↓ 展开才放到 36 个，由 src/lua/menu_filter.lua 控制。
   #    想回到原来的一行 9 个：把这里改成 9，并把 max_width 改回 0。
   menu/page_size: 36        # 9 列 × 4 行（配合 weasel 的 max_width，按 ↓ 展开九宫格）
   # 部件拆字：前缀 uU 改成单个 u —— 按 u 后直接输入部首的拼音名

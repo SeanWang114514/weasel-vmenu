@@ -52,9 +52,8 @@ local function handle(key, env)
     end
   end
 
-  -- 注意：↓ / ↑ / ← / → 一律不拦截，交给原版 navigator 处理
-  --   （横向候选框里 ↓ 就是「选下一个候选」，→ 也是；用户要求保留 → 的选词方式）
-  --   多行候选框由 weasel 主题的 style/layout/max_width 换行实现，见 docs/TROUBLESHOOTING.md
+  -- 注意：v 菜单里不拦截方向键；普通打字时上面的 grid_key 会接管方向键做网格导航
+  --   （默认单行 9 个，按 ↓ 展开成 4 行 × 9 列，见 src/lua/vmenu_core.lua 与 docs/ARCHITECTURE.md §3.6）
 
   -- 纯数字收藏编码（如 131）：数字本来是选字键，进不了编码，
   -- 只有当输入为空或全是数字、且它仍是某条数字编码的开头时才接管。
