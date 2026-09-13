@@ -79,11 +79,16 @@ Get-ChildItem "$env:TEMP\rime.weasel\*.log" | Sort-Object LastWriteTime -Descend
   Select-Object -First 1 | Get-Content | Select-String 'Error parsing'   # 必须无输出
 ```
 
-> 同一份配置要一起改的地方：`weasel.custom.yaml`（`patch`）+ `build/weasel.yaml`
-> + `%APPDATA%\Rime\build\weasel.yaml`（镜像）。`page_size` 对应
-> `rime_ice.custom.yaml` + `build/rime_ice.schema.yaml`。
-> 现在的值是 **`max_width: 530` + `page_size: 36`**（默认单行 9 个、按 `↓` 展开 4 行 × 9 列，
-> 见 `ARCHITECTURE.md` §3.6）；回退 = `max_width` 回 `0`、`page_size` 回 `9`，重启服务。
+> 同一份配置要一起改的地方：`weasel.custom.yaml`（`patch`）+ `build/weasel.yaml`。
+> `page_size` 对应 `rime_ice.custom.yaml` + `build/rime_ice.schema.yaml`；
+> 序号对应主题的 `style/label_format`（见「候选框里第 2–4 行也有序号」那节）。
+> 现在的值是 **`max_width: 530` + `label_format` 留空 + `page_size: 36`**
+> （默认单行 9 个、按 `↓` 展开 4 行 × 9 列、只有第一行有 1–9 序号，见 `ARCHITECTURE.md` §3.6）；
+> 回退 = `max_width` 回 `0`、`page_size` 回 `9`、`label_format` 回 `"%s"`，重启服务。
+>
+> ⚠️ 本机 `%APPDATA%\Rime\build\weasel.yaml` 是**旧副本，不生效**（实测那里还是
+> `max_width: 300` + `label_format: "%s"`）—— 当前生效目录是 `D:\rime-sandbox`，
+> 改 `D:\rime-sandbox\build\weasel.yaml` 就够了。
 
 ### 按 `↓` 不展开成 4 行 × 9 列
 
@@ -97,9 +102,80 @@ Get-ChildItem "$env:TEMP\rime.weasel\*.log" | Sort-Object LastWriteTime -Descend
 3. **是不是在 v 菜单里**：v 菜单内部方向键保持原版行为（不接管），只有**普通打字**时 `↓` 才展开。
 4. **候选是不是只有一两条**：候选本来就少时「展开」看起来没变化（展开只是把上限从 9 提到 36）。
 
-> 已知未解决：展开后**第 2–4 行仍带序号**（`10`、`11`……）。需求是「只第一行有 1–9」，
-> 目前做不到（`menu/alternative_select_labels` 填 36 项会被 rime 拒绝、`page_size` 退回 9），
-> 属开放问题，不是配置错。
+> 行为提醒（0.2.4 起）：`↓` 是**开关** —— 收起时按一次展开，**已展开时再按一次是收回**（不是往下跳一行）；
+> `↑` 也是收回。**方向键不会移动选中项**（本机没有这个 API），要选第几个请直接用数字键（只覆盖前 10 个）。
+
+### 展开后按 `↓` 把候选打出去了（**0.2.4 已修复**）
+
+**0.2.3 的现象**：`shi` → `↓` 展开 → 再按 `↓` → 候选窗口消失，并且**把当前候选上屏了**
+（3/3 复现；三次分别上屏「实」「💩」「使」，顺序不同是因为雾凇拼音的用户词库会学习）。
+
+**根因**：`vmenu_core.lua` 的 `grid_key` 当时用 `ctx:select(sel + 9)` 想「往下跳一行」，
+而 **`ctx.select` 不是「移动高亮」，而是「选中并上屏」** —— 展开后调它就等于提交第 10 个候选。
+日志里 **`ok=true`、`err=nil`**，没有任何异常，所以被 `pcall` 伪装成了「静默生效」。
+
+**0.2.4 的修法**：`grid_key` 重写，**只做展开 / 收起，彻底不再调用 `ctx.select`**
+（`↓` 收起时展开、已展开时收回；`↑` 收回；`←` / `→` 直接放行给原生导航器）。
+实测 144 → 287 → 144 → 287 → 144，**标题始终是 `*shi`，没有任何候选被上屏** ✅。
+
+**还在报这个错时怎么查**：
+
+1. 两处 lua 的 `vmenu_core.lua` 是不是 **MD5 一致**、且**重启过** `WeaselServer`（lua 是启动时加载）。
+2. 文件里搜 **`ctx:select`**：新版不该再有它的**调用**（注释里会提到它，属正常）。
+3. 挂探针看字段类型（`type(ctx.select)` 等，见 `TESTING.md` §8.3 的探针脚本）：
+   `ctx.select` = function（= 上屏）；`ctx.select_candidate` / `highlight` / `move_selection` /
+   `get_menu` / `selected_candidate_index` 等**全部 `nil`**。
+4. ⚠️ **注意**：老文档里「`selected_candidate_index` 1 基 / `select(i)` 0 基换算」那条**是错的**，
+   别再照它写代码（那个字段根本不存在，读到的永远是 `nil`）。
+
+### 展开后用方向键选不了词（移动不了选中项）
+
+**这是「做不到」，不是配置错**：本机 librime-lua **没有**「只移动高亮」的 API。
+对照实测：数字键正常（`1` → 是、`2` → 师），但 `→` 按 1 次或 3 次再按空格，上屏的仍是第 1 个「是」；
+展开后 `↓↓` + `→` 也一样。**四个方向键都不会移动选中项。**
+
+现状：方向键只负责**展开 / 收起**。**选词请用数字键**（只覆盖前 10 个候选）或空格（第 1 个）。
+要做成「方向键移动」只能改小狼毫的 C++ 源码，正在与用户确认是否放宽这条限制。
+
+### 候选框里第 2–4 行也有序号（想只留第一行 1–9）
+
+**这是预期吗**：不是 —— 需求是「下面几行不用序号，只需要第一行有序号」。现在的做法是
+**主题 `style/label_format` 留空 + `menu_filter.lua` 把序号写进候选注释**，
+所以只要有一处没生效，就会退回「第 2–4 行也显示 `10`、`11`……」。
+
+按顺序查：
+
+1. **主题留空了吗**：`weasel.custom.yaml` 里要有 `"style/label_format": " "`（或 `""`），
+   且 `build\weasel.yaml` 里同样是空/空格 —— 若还是 `label_format: "%s"`，那是原生序号列还在画。
+2. **lua 是新版吗**：`src\lua\menu_filter.lua` 里要有 `number_row1`，并且正常打字分支与
+   常用语插位分支都调用了它；v 菜单分支也要写注释。改完同步两处 lua 目录 + 重启 `WeaselServer`。
+3. **重启了吗**：lua 是启动时加载，不重启看不到效果。
+4. **日志有没有 YAML 报错**：`Error parsing` → schema 整个失效，先修缩进（见下一节）。
+
+> ❌ **不要**用 rime 的 `menu/alternative_select_labels` 去改序号 —— 实测对 Weasel **无效**：
+> 写进 `rime_ice.custom.yaml` 的 patch 会被**整份拒绝**（`page_size` 掉回 9、lua 挂载点消失），
+> 写进 `build\rime_ice.schema.yaml` 虽然 YAML 能过，但序号列像素分布逐段完全相同。
+> 第 10 个之后的数字是面板按索引画的，跟 rime 的标签无关。
+> 另外：v 菜单的序号是逐条写的，「快捷输入」子菜单的「返回」那条会显示 `10`（按键其实是 `q`），
+> 只影响观感。
+
+### 改了 `build` 产物之后**打不出字**（一个候选都不出、直接出字母）
+
+**现象**：手动往 `build\rime_ice.schema.yaml` / `build\weasel.yaml` 插了一行配置后，
+重启服务发现**打字直接出字母**、完全没有候选。
+
+**根因**：插入行的**缩进**错了（YAML 层级不对）。实测：`menu:` 下面的子键在这个文件里是
+**2 个空格**，一度写成 4 个空格 → 日志立刻报：
+
+```
+E ... config_data.cc:78 Error parsing YAML "…\build\rime_ice.schema.yaml" : illegal map value
+```
+
+schema 整个失效，所有 translator / filter 都不挂载。
+
+**修法**：把那一行的缩进改成与被插入的键**同级**（`menu:` 的子键 = 2 个空格），
+然后重启 `WeaselServer`，再按上一节的命令确认日志**没有** `Error parsing`。
+改 `build` 产物一律用 UTF-8 读写（见「改了候选框参数后一个候选都不显示」）。
 
 ### 改了 Lua 却不生效
 
@@ -256,8 +332,9 @@ Get-Item "$d\WeaselDeployer.exe", "$d\WeaselDeployer.real.exe" -ErrorAction Sile
 
 **不会。** 实测：经代理转发的 `WeaselDeployer.exe /deploy`（= 托盘菜单里的「重新部署 (R)」）
 会重新生成 `D:\rime-sandbox\build\weasel.yaml` 与 `build\rime_ice.schema.yaml`，
-日志只有 INFO 没有 Error，而 **`max_width: 530`、`page_size: 36` 都还在** —— 因为它们写在
-`weasel.custom.yaml` / `rime_ice.custom.yaml` 的 `patch` 里，重新部署会重新应用。
+日志只有 INFO 没有 Error，而 **`max_width: 530`、`label_format`（留空）、`page_size: 36` 都还在** ——
+因为它们写在 `weasel.custom.yaml` / `rime_ice.custom.yaml` 的 `patch` 里，重新部署会重新应用。
+（序号文字在 lua 里，跟部署无关；重新部署**不会**把第一行的 1–9 弄丢。）
 
 ### 升级 / 修复安装小狼毫之后，托盘项变回「输入法设定」了
 
@@ -395,9 +472,9 @@ Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" |
 | --- | --- |
 | Rime / lua 日志 | `%TEMP%\rime.weasel\rime.weasel.<host>.<user>.log.INFO.*.log` |
 | 输入法文件 | `<RimeUserDir>`（本机 `D:\rime-sandbox`） |
-| 编译后的方案 | `<RimeUserDir>\build\rime_ice.schema.yaml`（`menu/page_size` 在这里生效） |
-| 用户补丁（改这里，不要改 `build`） | `<RimeUserDir>\rime_ice.custom.yaml`（`menu/page_size`、部件拆字前缀 `radical_lookup/prefix`）、`<RimeUserDir>\weasel.custom.yaml`（`style/layout/max_width`） |
-| 两份 Lua 模块（必须 MD5 一致） | `<RimeUserDir>\lua\` 与 `%APPDATA%\Rime\lua\`（快捷输入 / 候选方格都在 `vmenu_core.lua` / `lua_menu.lua` / `menu_processor.lua` / `menu_filter.lua` 里） |
-| Weasel 主题（编译后） | `<RimeUserDir>\build\weasel.yaml`（`style/layout/max_width` 在这里生效），镜像在 `%APPDATA%\Rime\build\weasel.yaml` |
+| 编译后的方案 | `<RimeUserDir>\build\rime_ice.schema.yaml`（`menu/page_size` 在这里生效；**手改这里时缩进别写错**，见上一节） |
+| 用户补丁（改这里，不要改 `build`） | `<RimeUserDir>\rime_ice.custom.yaml`（`menu/page_size`、部件拆字前缀 `radical_lookup/prefix`）、`<RimeUserDir>\weasel.custom.yaml`（`style/layout/max_width`、`style/label_format`） |
+| 两份 Lua 模块（必须 MD5 一致） | `<RimeUserDir>\lua\` 与 `%APPDATA%\Rime\lua\`（快捷输入 / 候选方格 / 序号注释都在 `vmenu_core.lua` / `lua_menu.lua` / `menu_processor.lua` / `menu_filter.lua` 里） |
+| Weasel 主题（编译后） | `<RimeUserDir>\build\weasel.yaml`（`style/layout/max_width`、`style/label_format` 在这里生效；`%APPDATA%\Rime\build\weasel.yaml` 是**不生效的旧副本**，本机实测还停在 `300` / `"%s"`） |
 | 托盘入口的三个 exe（都在 `C:\Program Files\Rime\weasel-0.17.4\`） | `WeaselServer.exe.vmenu-bak`（原始 exe 的备份，只在第一次安装时生成）、`WeaselDeployer.real.exe`（真正的部署器）、`WeaselDeployer.exe`（代理，本机 5632 字节） |
 | 截好的验证图 | 项目目录下 `shots\`（发布用的图在仓库 `screenshots\`） |

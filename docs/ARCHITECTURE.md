@@ -35,9 +35,9 @@
 | 组件 | 类型 | 职责 | 关键约束 |
 | --- | --- | --- | --- |
 | `vmenu_core.lua` | 共享模块 | 路径解析（`rime_api.get_user_data_dir()`）、设置读写、剪贴板/常用语读写、`fav_hit` / `fav_exact` / `digit_prefix`、原符号标记、**候选方格状态与二维导航**（`grid_limit` / `grid_key`，见 §3.6） | 所有对外函数可被 `pcall` 包裹；不启动进程；**模块级变量在 processor/filter 之间不共享**，状态只能走 context option |
-| `menu_processor.lua` | `lua_processor@*` | 按键总管。**必须排在 `speller` / `selector` 之前**，否则数字会被当成选字键、`v` 会被当普通字母。主菜单 `1`–`5`、`vqi` 子模式（§3.9）、非 v 模式的方向键 → `grid_key`（§3.6） | 只拦自己认识的键，其余一律 `return 2` |
+| `menu_processor.lua` | `lua_processor@*` | 按键总管。**必须排在 `speller` / `selector` 之前**，否则数字会被当成选字键、`v` 会被当普通字母。主菜单 `1`–`5`、`vqi` 子模式（§3.9）、非 v 模式的方向键 → `grid_key`（§3.6；`↓` / `↑` 只做展开 / 收起，**不会上屏**，0.2.4 起） | 只拦自己认识的键，其余一律 `return 2` |
 | `lua_menu.lua` | `lua_translator@*` | 所有菜单/列表候选的文案与数据（菜单文案要改就改这里），含主菜单第 5 项「快捷输入」与 `yield_quick` 的 9 项 | 候选 `type` 用于 filter 分流：`vmenu`/`vclip`/`vfav`/`vqi`/`vset`/`vact`（`vset` 自第二轮起已不可从菜单进入，属保留代码） |
-| `menu_filter.lua` | `lua_filter@*` | ① v 模式：只保留当前模式需要的候选类型；② 普通打字：命中常用语时插入候选第 2 位；③ 普通打字时按方格状态限制候选个数（单行 9 / 展开 36） | 插位后必须重排 `quality`（严格递减） |
+| `menu_filter.lua` | `lua_filter@*` | ① v 模式：只保留当前模式需要的候选类型；② 普通打字：命中常用语时插入候选第 2 位；③ 普通打字时按方格状态限制候选个数（收起 9 / 展开 36）；④ **把序号写进候选注释**（`number_row1` 给前 9 个候选编号；v 菜单逐条写），配合主题 `label_format` 留空，做到「展开后只有第一行有 1–9」（见 §3.6） | 插位后必须重排 `quality`（严格递减）；注释只用于显示，绝不能当成上屏内容 |
 | `vmenu-settings-gui.ps1` | 常驻 WinForms | 三个标签页的可视化设置；轮询标记文件；改动即时写文件；列表支持**双击编辑**；「设置与缓存」页底部还有 **`小狼毫原生设置`** 分组 + `打开小狼毫原生设置` 按钮（打开小狼毫自带的设置对话框） | DPI 不感知 → 所有坐标在 `Layout-Tabs` 里按「实际客户区」现算，不能用 Dock/Anchor/写死坐标 |
 | `vmenu-deployer-wrapper.cs` | 代理（C#） | 顶替安装目录下的 `WeaselDeployer.exe`：**无参数** → 打开 vmenu 设置窗口（`vmenu-settings-gui.ps1 -ShowNow`）；**带参数** → 原样转发给 `WeaselDeployer.real.exe`（见 §3.8） | 用 `csc.exe /target:winexe /r:System.Windows.Forms.dll` 编译；源文件必须 UTF-8 **带 BOM**；找不到窗口脚本时退回原生对话框 |
 | `vmenu-tray-setup.ps1` | 部署工具 | 托盘菜单入口的**安装 / 撤销**：改 `WeaselServer.exe` 里的菜单文字、安装代理、开始菜单快捷方式改名 | 幂等；`-Revert` 可还原；`WeaselServer.exe.vmenu-bak` 只在第一次安装时生成 |
@@ -109,47 +109,83 @@ request_gui()  ──写──► open-settings.flag ──轮询 60 ms──►
 * `vmenu-watcher.ps1` 每 500 ms 数一次「命令行含 `vmenu-settings-gui.ps1` 的 powershell 进程」，
   为 0 就拉起来（若标记文件已存在则带 `-ShowNow`）。
 
-### 3.6 候选框渲染（单行 ⇄ 4 行 × 9 列 + 网格导航）
+### 3.6 候选框渲染（收起 ⇄ 4 行 × 9 列 + 网格导航）
 
 **候选框的宽度与一页上限由「主题 + 方案」决定**，不能运行时切换；
-**但要「这一屏放几个候选」由 Lua 决定** —— 两者配合才是「默认单行 9 个、按 `↓` 展开 4 行 × 9 列」。
+**但要「这一屏放几个候选」由 Lua 决定** —— 两者配合才是「默认收起 9 个、按 `↓` 展开 4 行 × 9 列」。
 
 | 决定什么 | 键 / 代码 | 文件 | 现在的值 |
 | --- | --- | --- | --- |
 | 一行放几个 / 是否换行 | `style/layout/max_width` | Weasel 主题：`weasel.custom.yaml` →（编译产物）`build/weasel.yaml` | `530`（逻辑像素；150% 缩放下**一行正好 9 个**，`0` = 不换行） |
 | 一页最多几条 | `menu/page_size` | 方案：`rime_ice.custom.yaml` →（编译产物）`build/rime_ice.schema.yaml` | `36`（= 9 × 4，原来 `18`） |
+| 原生序号列画不画 | `style/label_format` | Weasel 主题：同一个 `weasel.custom.yaml` | `" "`（留空 = 不画；原值 `"%s"`） |
 | 这一屏实际放几个 | `grid_limit(ctx)` | `src/lua/menu_filter.lua`（正常打字分支） | 收起 **9**、展开 **36** |
-| 展开状态 | context option `vmenu_grid` | `src/lua/vmenu_core.lua` | 由 `↓` / `↑` 切换 |
+| 序号数字 | `number_row1(cand, i)` | `src/lua/menu_filter.lua` | 只给前 9 个候选的 **comment** 写 `1`–`9` |
+| 展开状态 | context option `vmenu_grid` | `src/lua/vmenu_core.lua` | 由 `↓` / `↑` 切换（含「已展开时再按 `↓` = 收回」） |
 
-* 组合效果：收起时 9 个正好一行（候选窗口 797 × 74 物理像素）；展开后 36 个，
-  Weasel 按 `max_width: 530` 自动排成 **4 行 × 9 列**（797 × 285）。
-* 两个键都是 `build/*.yaml` 里的值真正生效，改完**必须重启 `WeaselServer`**；
-  回退 = `max_width` 回 `0`、`page_size` 回 `9`（回到原版一条长候选栏）。
+* 组合效果：收起时 9 个候选**排成 2 行**（候选窗口实测高 **144**；加序号注释前是 74 的单行）；
+  展开后 36 个，Weasel 按 `max_width: 530` 自动排成 **4 行 × 9 列**（高 **287**）。
+* 三个键都是 `build/*.yaml` 里的值真正生效，改完**必须重启 `WeaselServer`**；
+  回退 = `max_width` 回 `0`、`page_size` 回 `9`、`label_format` 回 `"%s"`
+  （回到原版一条长候选栏 + 原生序号）。
 * ⚠️ 改这两个文件必须用 UTF-8 读写（`[IO.File]::ReadAllText/WriteAllText`）。
   PS 5.1 的 `Get-Content`/`Set-Content` 默认按 ANSI 解码，会把 YAML 写坏，
   表现为**候选窗口完全不显示**（见 `TROUBLESHOOTING.md`）。
 
-**方向键（二维网格导航）**：`menu_processor.lua` 在**非 v 模式、且输入非空**时
-先把方向键交给 `core.grid_key(ctx, repr)`（见 §3.9 后面那张表是快捷输入，这里是候选方格）：
+**方向键（展开 / 收起，0.2.4 起）**：`menu_processor.lua` 在**非 v 模式、且输入非空**时
+先把方向键交给 `core.grid_key(ctx, repr)`（见 §3.9 后面那张表是快捷输入，这里是候选方格）。
+`grid_key` **只做展开 / 收起，不碰选中项**：
 
-| 按键 | 收起状态 | 展开状态 |
+| 按键 | 实际行为 | 实测 |
 | --- | --- | --- |
-| `↓` | **展开**成 36 个（选中项不动） | 往下跳一行（`ctx:select(sel + 9)`） |
-| `↑` | 交回原版 `navigator` | 选中项在第一行（下标 < 9）时**收回单行**；否则往上跳一行（`sel - 9`） |
-| `←` / `→` | 左右移动一个候选（`sel ∓ 1`） | 同上，行内左右移动 |
-| 其它任何键 | 自动收回单行，按键原样放行 | 同左 |
+| `↓`（收起时） | **展开**成 36 个（4 行 × 9 列），选中项不动 | ✅ 窗口高 144 → 287 |
+| `↓`（已展开） | **收回**成 9 个 | ✅ 287 → 144（0.2.3 这里曾**上屏**，0.2.4 已修） |
+| `↑`（已展开） | **收回**成 9 个 | ✅ 287 → 144 |
+| `←` / `→` | 直接 `return false`，**放行给原生导航器**（我们不再碰） | 原生导航器在这条处理链里**没有移动选中项**，见下 |
+| 其它任何键 | 自动收回，按键原样放行 | ✅ 自动收回 |
 
-**两个必须知道的实现约束**（都踩过）：
+> ⚠️ **做不到的事（不是没写，是没有 API）**：「展开后用 `↑` / `↓` / `←` / `→` 移动选中项」。
+> 用数字键做基准对照实测：`1` → **是**、`2` → **师**（数字键选词正常 ✅）；
+> 但 `→` 按 1 次或 3 次再按空格，**上屏的仍是「是」（第 1 个）**，展开后 `↓↓` + `→` 也一样 ——
+> **四个方向键都不会移动选中项**。在**不改小狼毫 C++ 源码**的前提下做不到。
+> 现状：方向键只负责展开 / 收起，**选词请用数字键**（只覆盖前 10 个候选）。
+
+**三个必须知道的实现约束**（前两个踩过，第三个是 0.2.4 的实测结论）：
 
 1. **`lua_filter` 与 `lua_processor` 各自 `require` 一份 lua 模块，模块级变量不共享** ——
    「是否展开」必须放在 **context option**（`vmenu_grid`）里传递，和 `vraw_mode` 一个思路。
-2. **`ctx.selected_candidate_index` 是 1 基，而 `ctx:select(i)` 是 0 基**，`grid_sel()` 里做了换算。
+2. ⚠️ **绝不能调用 `ctx.select`**：它不是「移动高亮」，而是**「选中并上屏」**。
+   0.2.3 用它做「往下跳一行」（`ctx:select(sel + 9)`），结果展开后第二次按 `↓` 就把候选打出去了
+   （日志里 `ok=true err=nil`，没有异常 —— 所以 `pcall` 根本挡不住，会伪装成「静默生效」）。
+3. **本机 librime-lua 没有「移动高亮」的 API**（探针实测）：
+   `ctx.select_candidate` / `set_selected_candidate_index` / `highlight` / `move_selection` /
+   `menu` / `get_menu` / `selected_candidate_index` / `menu.*` / `composition.select` **全是 `nil`**。
+   ~~早期文档里「`selected_candidate_index` 是 1 基、`ctx:select(i)` 是 0 基，在 `grid_sel()` 里换算」
+   是**错的**~~ —— 那个字段不存在，换算读到的永远是 `nil`（当成 0 用），这也是当时
+   误判「跳行只是差一位」的原因。
 
 **v 菜单内部不接管方向键**（`cur` 命中 `mode_of()` 时跳过 `grid_key`），保持原菜单手感。
 
-> **未完成**：展开后第 2–4 行仍带序号（rime 按候选下标发号 → `10`、`11`……），
-> 需求是「只第一行有 1–9」。`menu/alternative_select_labels` 填 36 项的尝试被 rime 拒绝
-> （`page_size` 退回 9），属开放问题（见 `PROGRESS.md` §5）。
+**序号：展开后只有第一行有 1–9**（已实现，三段配合，缺一不可）：
+
+1. **主题 `style/label_format` 留空** → Weasel **不再画原生序号列**。这一步是「去掉第 2–4 行
+   `10`、`11`……」的唯一有效手段：rime 的 `menu/alternative_select_labels` 对 Weasel **无效**
+   （实测：写进 patch 会被整份拒绝、`page_size` 掉回 9；写进 `build` 产物 YAML 能过但序号列
+   的像素分布逐段完全相同），因为第 10 个之后的数字是 Weasel 面板按索引画的，不是 rime 给的标签。
+2. **`number_row1(cand, i)` 给前 9 个候选的 comment 写 `1`–`9`**
+   （`menu_filter.lua`，正常打字的两条出口都调用）。**为什么必须走注释**：
+   原生序号已关掉，注释是唯一能「逐条自定义显示、又不影响上屏文字」的字段 ——
+   实测 `shi`+空格 → 是、`shi`+3 → 师。
+   ⚠️ 序号是**按候选下标**写的，不是「按行」：**收起状态**下 9 个候选被序号撑宽、排成 **2 行**，
+   第 2 行那两个（第 8、9 个）**仍带数字**；「下面几行不用序号」只对**展开后的 4 行**成立
+   （第 2–4 行 = 第 10–36 个候选，没有注释）。
+3. **v 菜单也把序号写进注释**（同一个 filter 的 `want ~= nil` 分支，逐条写；
+   注释里本来就有数字的，如快捷输入的「按 1 · …」，不重复加）。否则关掉原生序号后
+   v 菜单就看不出按几 —— 实测 `v`→`5`→`2` → 2026-09-13、`v`→`3` → 常用语。
+
+> 取证：`D:\VibeCoding\输入法\shots\show-2-grid.png`（展开后第一行左侧是 1 位数字、
+> 第 2–4 行没有序号）等四张图，只截候选窗口区域；按惯例**不入库** `screenshots/`。
+> 小瑕疵：v 菜单逐条编号，快捷输入子菜单有 10 条（9 项 + 返回），所以「返回」前面会显示 `10`。
 
 ### 3.7 设置窗口里的双击编辑
 
@@ -340,10 +376,12 @@ engine:
 | 窗口坐标运行时按客户区现算 | 进程 DPI 不感知，写死坐标会被系统缩放平移，按钮跑到窗口外 |
 | 标记文件而不是 IPC/子进程 | 输入线程里做任何阻塞或创建进程都会拖慢打字 |
 | 状态栏写 `$statusLabel.Text` | `$status` 是 `StatusStrip` 本身，写它什么都不会显示 |
-| 方向键**只在普通打字时**由 Lua 接管（`grid_key`），v 菜单内一律交回原版 `navigator` | 候选方格需要 `↓` = 展开 / 跳行、`↑` = 收回 / 跳行（原版只有「下一个候选」）；但 v 菜单是横向短列表，保持原版手感更稳（见 §3.6） |
-| 候选框宽度/一页上限只由「主题 + 方案」两个键决定，**不放进 Lua**；「这一屏放几个」才由 Lua 限制 | 换行是 Weasel 主题 `style/layout/max_width` 的渲染行为，一页条数是 schema 的 `menu/page_size`，Lua 里没有任何接口能改；但候选**个数**可以在 filter 里截断（见 §3.6） |
+| 方向键**只在普通打字时**由 Lua 接管（`grid_key`），v 菜单内一律交回原版 `navigator` | `↓` / `↑` 只做「展开 / 收起」（展开需要 `max_width` 换行配合）；`←` / `→` 直接放行。**不能移动选中项**：本机没有「移动高亮」的 API，且 `ctx.select` 是**上屏**不是移动（见 §3.6 约束 2、3） |
+| **绝不调用 `ctx.select`**（以及任何想「移动高亮」的字段） | 它是「选中并上屏」：0.2.3 用它跳行，结果展开后按 `↓` 直接把候选打出去；而且 `ok=true err=nil`，`pcall` 挡不住、也不报错（0.2.4 已删掉这处调用） |
+| 候选框宽度 / 一页上限 / 原生序号列只由「主题 + 方案」**三个键**决定（`style/layout/max_width`、`menu/page_size`、`style/label_format`），**不放进 Lua**；「这一屏放几个」与「序号文字」才由 Lua 负责 | 换行与序号列是 Weasel 主题的渲染行为，一页条数是 schema 的 `menu/page_size`，Lua 里没有任何接口能改；但候选**个数**可以在 filter 里截断、序号可以写进候选注释（见 §3.6） |
+| **不要**用 rime 的 `menu/alternative_select_labels` 去改展开后的行序号 | 实测对 Weasel **完全无效**：写进 patch 会被整份拒绝（`page_size` 掉回 9、lua 挂载点消失），写进 `build` 产物 YAML 能过但序号列像素分布逐段不变（第 10 个之后的数字是面板按索引画的）。正确做法 = `label_format` 留空 + 注释写序号，见 §3.6 |
 | 「是否展开」只能放在 **context option**（`vmenu_grid`）里，不能用模块级变量 | `lua_filter` 与 `lua_processor` 各自 `require` 一份模块，变量不共享（`vraw_mode` 同理） |
-| `ctx.selected_candidate_index`（1 基）与 `ctx:select(i)`（0 基）的换算只写在一处（`grid_sel`） | 直接混用会差一位，表现为「跳行跳错一个」（踩过） |
+| ~~`ctx.selected_candidate_index`（1 基）与 `ctx:select(i)`（0 基）的换算只写在一处（`grid_sel`）~~ **这条约束是错的** | 实测那个字段**根本不存在**（探针 `nil`，旧代码一直把 `nil` 当 0 用）；`ctx.select` 则是「选中并上屏」。正确约束见上面两条：**别用 `ctx.select`**、**本机没有移动高亮的 API** |
 | 快捷输入**不自己实现**计算 / 日期 / 农历 / 大写 / Unicode，只把前缀填进输入框 | 这些能力 rime-ice 自带且 recognizer 已配好，自己实现等于重造轮子还会丢边界处理（见 §3.9） |
 | 改 `build/*.yaml` 只用 `[IO.File]::ReadAllText/WriteAllText`（UTF-8） | PS 5.1 的 `Get-Content`/`Set-Content` 按 ANSI 解码，写坏 YAML 后候选窗口完全不显示 |
 | 改 `WeaselServer.exe` **必须先停 `WeaselServer`**，且只做 **UTF-16 等长替换** | 运行中的 exe 被系统锁住写不进去；等长替换不动偏移量 / 长度，不会破坏文件结构（详见 §3.8） |
@@ -358,7 +396,7 @@ engine:
 | 常用语 | `cn_dicts/favorites.dict.yaml`（内部沿用旧名） | 设置窗口 / 用户手改 |
 | 列表默认条数 | `vmenu-settings.txt` | 设置窗口 |
 | 候选框是否展开 | **context option `vmenu_grid`**（进程内，随输入上下文销毁，不落盘） | `vmenu_core.grid_key`（`menu_processor` 调用） |
-| 候选框宽度 / 一页上限 | **不是这里的状态**：主题 `style/layout/max_width` + schema `menu/page_size` | 部署时改配置 + 重启服务 |
+| 候选框宽度 / 一页上限 / 原生序号 | **不是这里的状态**：主题 `style/layout/max_width` + `style/label_format` + schema `menu/page_size` | 部署时改配置 + 重启服务（序号文字另由 `menu_filter.number_row1` 写进注释） |
 | 打开窗口请求 | `open-settings.flag` | Lua 写、常驻窗口读后即删 |
 
 没有任何常驻内存状态需要跨进程同步 —— 所有文件都是「最后写入者胜」，

@@ -17,7 +17,9 @@
 **托盘图标右键菜单第一项已是「输入法设置 (S)」**（改名 + 代理顶替 `WeaselDeployer.exe`，可一键撤销）；
 后台服务（剪贴板同步 + 守护 + 常驻窗口）运行中，实测 `v`→`1` 到窗口出现 **84–106 ms**。
 
-未确认 / 待办事项见文末「开放问题」（含 3 条第五轮遗留：展开行序号、是否可配、`↓↓` 对照复测）。
+未确认 / 待办事项见文末「开放问题」（第五轮的序号问题已解决，见 §1.14；
+第六轮修好了「展开后按 `↓` 会上屏」的 bug 并把旧的 `↓↓` 对照结论更正为误判，见 §1.15；
+「方向键移动选中项」确认做不到，等用户拍板，见 §5 第 14 条）。
 
 ---
 
@@ -121,15 +123,16 @@
 | 结论 2 | 一页候选数由 schema 的 `menu/page_size` 控制：原来 `9`，现在 `18` → 候选框最多约 **4 行 × 5 列** |
 | 落地 1 | `weasel.custom.yaml` 加 `patch: "style/layout/max_width": 300`，并把 `build/weasel.yaml` 的 `max_width` 改成 `300`（同时镜像到 `%APPDATA%\Rime\build\weasel.yaml`） |
 | 落地 2 | `rime_ice.custom.yaml` 加 `patch: menu/page_size: 18`，并把 `build/rime_ice.schema.yaml` 的 `page_size` 改成 `18` |
-| 方向键 | **一律不拦截**：`↓`/`↑`/`←`/`→` 全部交回 librime 原版 `navigator`。实测（librime 1.13.1，横向候选框）：`↓` = 选中下一个、`→` = 选中下一个、`↑` = 上一个，都不上屏 —— 用户要求的「保留按向右选候选」天然满足 |
+| 方向键 | **一律不拦截**：`↓`/`↑`/`←`/`→` 全部交回 librime 原版 `navigator`。实测（librime 1.13.1，横向候选框）：`↓` = 选中下一个、`→` = 选中下一个、`↑` = 上一个，都不上屏 —— 用户要求的「保留按向右选候选」天然满足。⚠️ **0.2.3 起普通打字时改由 `grid_key` 接管**，且 0.2.4 确认没有「移动高亮」的 API → 现在方向键不能移动选中项（见 §1.13 / §1.15） |
 | 回退 | `max_width` 改回 `0`、`page_size` 改回 `9`，重启 `WeaselServer` |
 | 验证 | 截图 `screenshots/ime-06-multirow-candidates.png`：候选 9→18 条、每行约 5 个；按 `↓` 后高亮在**同一行内**移动（窗口内 y 197..257） |
 
 > 这两个键**不在 Lua 里，也不能运行时切换** —— 想让候选框变高/变矮只能改这两处配置再重启服务。
 >
-> **第五轮（0.2.3）已把这套参数与行为换掉**：现在是 `max_width: 530` + `page_size: 36`，
+> **第五轮（0.2.3）已把这套参数与行为换掉**：现在是 `max_width: 530` + `page_size: 36`
+> （另加主题 `label_format` 留空来关掉原生序号、序号改由候选注释提供），
 > 默认只显示**单行 9 个**、按 `↓` 才展开成 4 行 × 9 列，方向键也改由 Lua 的 `grid_key` 接管
-> （见 §1.13）。本节是第二轮的历史记录，参数以 §1.13 / §4 为准。
+> （见 §1.13）。本节是第二轮的历史记录，参数以 §1.13 / §1.14 / §4 为准。
 
 ### 1.10 设置窗口双击编辑（用户需求，第二轮）
 
@@ -175,25 +178,54 @@
 >
 > 同一个第四轮里还修了托盘脚本的「代理识别」（升级后重跑不再覆盖新版部署器），见 §3 与 §5 第 8 条。
 
-### 1.13 候选方格「单行 ⇄ 4 行 × 9 列」+ 部件拆字改成单 `u`（用户需求，第五轮）
+### 1.13 候选方格「收起 ⇄ 4 行 × 9 列」+ 部件拆字改成单 `u`（用户需求，第五轮）
 
 | 项 | 内容 |
 | --- | --- |
 | 需求 1（原话） | 「默认是直着的显示 然后按向下后才变成 9 乘 4 的竖向方格 然后在最顶端按下向上回到一行 按向下变成 9 乘 4 同时保留左右选择预选词的功能」；补充「下面几行不用序号 只需要第一行有序号」 |
 | 需求 2 | 「将部首输入的快捷方式改为按下 u 后直接输入部首的名称 如要输入好可以输入 unvzi」 |
 | 候选方格 · 机制 | 主题 `max_width: 530`（150% 缩放下**一行正好 9 个**）+ schema `page_size: 36`（9 × 4）；**这一屏放几个**由 `menu_filter` 按 `grid_limit(ctx)` 截断（收起 9 / 展开 36），Weasel 按宽度自动排成 4 行 × 9 列 |
-| 候选方格 · 导航 | `vmenu_core.grid_key`：`↓` 收起时展开、已展开时下跳一行（+9）；`↑` 第一行时收回单行、否则上跳一行（−9）；`←`/`→` 行内移动；**其它任何键自动收回单行**。只对**普通打字**生效，v 菜单内保持原版 `navigator` |
-| 候选方格 · 两个坑 | ① `lua_filter` 与 `lua_processor` **各自 `require` 一份模块、模块级变量不共享** → 展开状态只能放 context option `vmenu_grid`；② `ctx.selected_candidate_index` 是 **1 基**、`ctx:select(i)` 是 **0 基**，已换算 |
+| 候选方格 · 导航（**0.2.4 已改**） | `vmenu_core.grid_key`：`↓` 收起时展开、**已展开时收回**；`↑` 收回；`←`/`→` 直接放行给原生导航器。只对**普通打字**生效，v 菜单内保持原版 `navigator`。⚠️ 0.2.3 原本用 `ctx:select(sel + 9)` 做「往下跳一行」，那是**上屏**不是移动高亮 → 展开后按 `↓` 会把候选打出去（0.2.4 修） |
+| 候选方格 · 做不到的事 | **方向键不能移动选中项**：本机 librime-lua 没有「移动高亮」的 API（`ctx.select_candidate` / `highlight` / `move_selection` / `get_menu` / `selected_candidate_index` 全是 `nil`；`ctx.select` 是上屏）。对照实测：数字键 `1`→是、`2`→师，而 `→`×1 或 ×3 再空格仍上屏「是」。不改小狼毫 C++ 源码就做不到，选词只能用数字键（前 10 个） |
+| 候选方格 · 两个坑 | ① `lua_filter` 与 `lua_processor` **各自 `require` 一份模块、模块级变量不共享** → 展开状态只能放 context option `vmenu_grid`；② ~~`ctx.selected_candidate_index` 是 1 基、`ctx:select(i)` 是 0 基，已换算~~ **错的**：那个字段不存在（探针 `nil`），换算一直把 `nil` 当 0 用；正确约束是「别用 `ctx.select`（上屏）、本机没有移动高亮的 API」 |
 | 部件拆字 · 机制 | rime-ice **本来就有**部件拆字（词典 `radical_pinyin`），触发键原本是 `uU`；本次只改两行配置（`radical_lookup/prefix: u` + `recognizer/patterns/radical_lookup: ^u[a-z]+$`），**没有新造功能** |
-| 验证（候选方格） | 打 `shi` → 候选窗口 **797 × 74**（单行 9 个）；按 `↓` → **797 × 285**（4 行 × 9 列）；第一行按 `↑` → 回到 797 × 74；再打任何字自动收回。`↓↓` 与 `↓`+`→`×9 选中同一个候选（**有 1 轮对照不一致，待复测**） |
+| 验证（候选方格 · 0.2.4 复测） | 窗口高 **144** → `↓` **287** → `↓` **144** → `↓` **287** → `↑` **144**，**标题全程 `*shi`、没有任何候选被上屏** ✅ |
 | 验证（部件拆字） | `u`+`nvzi` → **好**；`u`+`riyue` → **明**；`v`→`5`→`9`+`nvzi` → **好**；`v`→`5`→`2`（日期）不受影响 |
-| 已知未完成 | **展开后第 2–4 行仍有序号**（rime 按候选下标发号 → `10`、`11`……），需求是「只第一行有 1–9」。试过 `menu/alternative_select_labels` 填 36 项，结果**整份补丁被 rime 拒绝**（`page_size` 退回 9），需要另想办法 |
+| 序号（第一行 1–9） | 需求补充「下面几行不用序号 只需要第一行有序号」→ **已解决**，见 §1.14 |
 | 副作用 | 旧的 `uU` 写法失效；以 `u` 开头的英文词会被当成拆字 |
-| 截图 | 同第四轮：**没有**新截图可用 |
+| 截图 | 方格/序号证据在本地 `shots\`（`show-1-single.png`、`show-2-grid.png`…，只截候选窗口）；**没有**放进仓库 `screenshots/` |
+
+### 1.14 候选框序号只留第一行（用户需求，第五轮续）
+
+| 项 | 内容 |
+| --- | --- |
+| 需求 | 「下面几行不用序号，只需要第一行有序号」（§1.13 遗留） |
+| 试错（无效方案） | `menu/alternative_select_labels`：写进 `rime_ice.custom.yaml` 的 patch（36 项 / 10 项两种长度）→ **整份补丁被 rime 拒绝**（`page_size` 掉回 9、lua 挂载点消失）；写进 `build\rime_ice.schema.yaml`（前 9 项 `1`–`9`、后面 27 项分别试空串与零宽空格 U+200B）→ YAML 能过、窗口正常，但**序号列像素分布逐段完全相同**（1013 px）。结论：**第 10 个之后的数字是面板按索引画的，不是 rime 的标签** |
+| 做法 1 | 主题加 `"style/label_format"` 并留空（本机写 `" "`，实测部署产物里原样保留、未被 trim；仓库示例写 `""`）→ 关掉**全部**原生序号 |
+| 做法 2 | `src/lua/menu_filter.lua` 新增 `number_row1(cand, i)`：给**前 9 个**候选的 **comment** 写 `1`–`9`（正常打字的两条出口都调用）。注释只用于显示、不进上屏文字 —— 实测 `shi`+空格 → 是、`shi`+`3` → 师 |
+| 做法 3 | 同一个 filter 的 **v 菜单分支**也逐条写序号注释（注释里已有数字的「按 1 · …」不重复加），否则关掉原生序号后 v 菜单看不出按几 —— 实测 `v`→`5`→`2` → 2026-09-13、`v`→`3` → 常用语 |
+| 验证（读图） | 截候选窗口后用视觉 API 读图：4 行里**第一行最左边是 1 位数字序号，第 2/3/4 行没有序号**；`v` 菜单仍显示 1–5。图在 `D:\VibeCoding\输入法\shots\show-2-grid.png` 等 4 张（不入库） |
+| 副作用（已确认） | 序号注释占宽度 → **收起状态下 9 个候选排成 2 行**（窗口高 74 → 145，实测 144），第 2 行那两个（第 8、9 个）**也带数字**；需求里「下面几行不用序号」只对**展开后的 4 行**成立 |
+| 新坑 | 直接改 `build\rime_ice.schema.yaml` 插行时缩进必须与 `page_size` **同级（2 个空格）**；写成 4 个空格 → 日志 `config_data.cc:78 Error parsing YAML ... illegal map value`，**schema 整个失效：一个候选都不出、打字直接出字母** |
+| 遗留小瑕疵 | v 菜单逐条编号，而「快捷输入」子菜单有 10 条（9 项 + 返回）→ 「返回」前面会显示 `10`（实际按键 `q`），只影响观感（见 §5 第 13 条） |
+| 遗留 | `build\rime_ice.schema.yaml` 第 142 行那行 36 项的 `alternative_select_labels` 还留着，对显示无影响（可清可不清） |
+
+### 1.15 修复「展开后再按 ↓ 会把候选上屏」（第六轮，0.2.4）
+
+| 项 | 内容 |
+| --- | --- |
+| 现象 | 0.2.3 里 `shi` → `↓` 展开 → **再按 `↓`** → 候选窗口消失并**上屏当前候选**（3/3 复现，三次分别上屏「实」「💩」「使」，顺序不同是因为雾凇拼音的用户词库会学习） |
+| 根因（探针实测） | `grid_key` 里用 `ctx:select(sel + 9)` 想「往下跳一行」，而 **`ctx.select` 是「选中并上屏」，不是「移动高亮」**。日志 `ok=true err=nil` —— 没有任何异常，所以 `pcall` 挡不住、还被误判成「静默失败」 |
+| 探针清单 | `ctx.select` = **function（= 上屏）**；`ctx.select_candidate` / `ctx.set_selected_candidate_index` / `ctx.highlight` / `ctx.move_selection` / `ctx.menu` / `ctx.get_menu` / `ctx.selected_candidate_index` / `menu.*` / `composition.select` **全部 `nil`** |
+| 修法 | `vmenu_core.grid_key` 重写：**绝不再调用 `ctx.select`**；`↓` 收起时展开 / 已展开时**收回**；`↑` 收回；`←`/`→` 放行给原生导航器 |
+| 实测 | 窗口高 **144 → 287 → 144 → 287 → 144**，**标题全程 `*shi`、无候选被上屏** ✅（对照：数字键 `1` → 是、`2` → 师 ✅） |
+| 文档更正 | 旧文档的「`selected_candidate_index` 1 基 / `select(i)` 0 基换算」**是一条错误约束**（字段不存在，读到 `nil` 当 0 用）；已在 8 个文件里改掉，正确说法是「别用 `ctx.select`（上屏）、本机没有移动高亮的 API」 |
+| 仍未达成 | 「展开后用 `↑`/`↓`/`←`/`→` 移动选中项」**做不到**（没有 API，不是没写）：`→`×1 或 ×3 再空格仍上屏第 1 个。要做得改小狼毫 C++ 源码 → 见 §5 第 14 条 |
+| 遗留死代码 | `vmenu_core.lua` 的 `grid_sel()` 已无人调用（重写后），可删；它的注释还留着那条错误的「1 基 / 0 基」说明 |
 
 ---
 
-## 2. 时间线（本轮，2026-09-13 凌晨）
+## 2. 时间线（2026-09-13）
 
 | 时间 | 事件 |
 | --- | --- |
@@ -245,11 +277,23 @@
 | --- | --- |
 | — | 配置：`weasel.custom.yaml` / `build\weasel.yaml` 的 `max_width` 300 → **530**（150% 缩放下正好一行 9 个）；`rime_ice.custom.yaml` / `build\rime_ice.schema.yaml` 的 `page_size` 18 → **36**（9 × 4） |
 | — | `vmenu_core.lua` 加 `GRID_COLS/GRID_ROWS/GRID_OPTION` + `grid_limit` + `grid_key`；`menu_filter.lua` 按状态截断候选个数；`menu_processor.lua` 非 v 模式方向键先交给 `grid_key` |
-| — | 踩坑：`lua_filter` 与 `lua_processor` 的模块级变量不共享（改用 context option `vmenu_grid`）；`selected_candidate_index` 1 基 vs `select(i)` 0 基（换算后修正） |
-| — | 实测候选窗口：`shi` → 797 × 74；`↓` → 797 × 285；第一行 `↑` → 797 × 74；再打字自动收回 |
+| — | 踩坑：`lua_filter` 与 `lua_processor` 的模块级变量不共享（改用 context option `vmenu_grid`）；~~`selected_candidate_index` 1 基 vs `select(i)` 0 基（换算后修正）~~ **后来实测推翻：那个字段不存在，见 §1.15** |
+| — | 实测候选窗口（当时）：`shi` → 797 × 74；`↓` → 797 × 285；`↑` → 797 × 74（加序号注释后收起变成 2 行 = 145） |
 | — | 部件拆字：把 `uU` 前缀改成单 `u`（两行配置），验证 `unvzi`→好、`uriyue`→明；`v`→`5` 子菜单补第 9 项「部件拆字」（填 `u`） |
-| — | 试 `menu/alternative_select_labels` 填 36 项以去掉第 2–4 行序号 → **整份补丁被 rime 拒绝**（`page_size` 退回 9），记为开放问题 |
-| — | 同步两处 lua 并重启服务；`examples/*.yaml` 更新为 `530` / `36` + 部件拆字补丁 |
+| — | 试 `menu/alternative_select_labels` 填 36 项以去掉第 2–4 行序号 → **整份补丁被 rime 拒绝**（`page_size` 退回 9）；改直接写进 `build` 产物后 YAML 能过，但序号列像素分布逐段不变 → 确认这条路走不通 |
+| — | 序号改走「主题 `label_format` 留空 + `menu_filter.number_row1` 给前 9 个候选写注释 + v 菜单逐条写注释」三段配合；截候选窗口图后**读图确认第 2–4 行已无序号**（图在本地 `shots\`，不入库） |
+| — | 踩坑：往 `build\rime_ice.schema.yaml` 插行时缩进写成 4 个空格（应为与 `page_size` 同级的 2 个）→ 日志 `config_data.cc:78 Error parsing YAML ... illegal map value`，**schema 失效、打字直接出字母**，改回缩进后恢复 |
+| — | 同步两处 lua 并重启服务；`examples/*.yaml` 更新为 `530` / `36` + `label_format` + 部件拆字补丁 |
+
+### 2.5 第六轮（2026-09-13 上午，修方向键 bug）
+
+| 时间 | 事件 |
+| --- | --- |
+| 09:0x | 更细的复测发现真 bug：**展开后按 `↓` 会把当前候选上屏**（3/3 复现，用窗口标题看真实上屏结果）；同时确认旧的「`↓↓` == `↓`+`→`×9」记录是**误判** |
+| 09:0x | 挂探针（`io.open` 写日志 + 打印 `type(ctx.xxx)`）：`ctx.select` 是 function 但**语义是上屏**；`select_candidate` / `highlight` / `move_selection` / `get_menu` / `selected_candidate_index` 等**全是 `nil`** |
+| 09:11 | 重写 `vmenu_core.grid_key`：彻底不调 `ctx.select`，`↓` = 展开 / 收起开关、`↑` = 收起、`←`/`→` 放行；同步两处 lua 并重启服务 |
+| 09:1x | 实测 144 → 287 → 144 → 287 → 144，**标题全程 `*shi`、无候选被上屏** ✅；数字键基准 `1`→是、`2`→师 ✅ |
+| 09:1x | 结论：**方向键移动选中项做不到**（没有 API，需改小狼毫 C++ 源码）→ 记入 §5 第 14 条；文档里那条错误的「1 基 / 0 基」约束同步更正 |
 
 ---
 
@@ -276,8 +320,10 @@
 | 脚本里用中文字面量匹配 exe 里的菜单文字不可靠 | 文件编码一变（无 BOM 被按 GBK 解析）字面量就变了 | 用字符码拼标签：`([char]0x8F93)+([char]0x5165)+…`；`.ps1` / `.cs` 一律 UTF-8 **带 BOM** |
 | 升级小狼毫后重跑安装脚本会**丢掉新版部署器** | 脚本用「`.real.exe` 是否存在」判断要不要改名：`.real.exe` 还在 → 跳过改名 → 代理**直接覆盖**新版的 `WeaselDeployer.exe` | 改成**先编译代理**，再用「大小是否等于代理（5632 字节）」判断当前 `WeaselDeployer.exe` 是真身还是代理；不是代理就先改名成 `.real.exe`（覆盖旧真身）再装代理（0.2.2 已修） |
 | 「是否展开」的模块级变量在 filter 里读不到 | `lua_filter` 与 `lua_processor` **各自 `require` 一份** lua 模块，模块级变量不共享 | 状态放 **context option**（`vmenu_grid`），处理器写、过滤器读 —— 与 `vraw_mode` 同一思路 |
-| 展开后按 `↓` 跳行跳错一个候选 | `ctx.selected_candidate_index` 是 **1 基**，`ctx:select(i)` 是 **0 基** | 统一在 `grid_sel()` 里换算成 0 基再运算 |
-| 用 `menu/alternative_select_labels` 去掉第 2–4 行序号 → 整份补丁被拒 | 标签个数与 `page_size` 不匹配时 rime 认为补丁非法，回退成 `page_size: 9` | 暂无解，记为开放问题（§5）。改 `alternative_select_labels` 前先备份 `build\rime_ice.schema.yaml` |
+| 展开后按 `↓` 直接**把候选上屏**（0.2.3 的 bug） | `grid_key` 用 `ctx:select(sel + 9)` 做「往下跳一行」，而 **`ctx.select` 是「选中并上屏」不是「移动高亮」**；日志 `ok=true err=nil`，`pcall` 挡不住 | `grid_key` 重写为**只做展开 / 收起**，**绝不调用 `ctx.select`**（0.2.4 / 提交 `13c572c`）。实测 144→287→144→287→144，标题始终 `*shi` |
+| 「方向键移动选中项」一直不生效，还以为是差一位 | 本机 librime-lua **没有**「移动高亮」的 API：`ctx.select_candidate` / `set_selected_candidate_index` / `highlight` / `move_selection` / `get_menu` / `selected_candidate_index` **全是 `nil`**；旧代码读到的永远是 `nil`，被当成 0 用 | 承认做不到（见 §5 第 14 条），方向键只负责展开 / 收起，**选词用数字键**；探针脚本见 `TESTING.md` §8.3 |
+| 用 `menu/alternative_select_labels` 想去掉第 2–4 行序号：写进 patch → 整份补丁被拒（`page_size` 掉回 9、lua 挂载点消失）；写进 `build` 产物 → YAML 能过但序号列像素分布**逐段完全相同** | ① 标签个数与 `page_size` 不匹配时 rime 认为补丁非法；② 更根本的原因：第 10 个之后的数字是 **Weasel 面板按索引画的**，不是 rime 给的标签，所以这个键对 Weasel 显示无效 | **改掉思路**：主题 `style/label_format` 留空（关掉全部原生序号）+ `menu_filter.number_row1` 只给前 9 个候选的注释写 `1`–`9` + v 菜单逐条写注释。见 §1.14 |
+| 直接改 `build\rime_ice.schema.yaml` 插了一行后**一个候选都不出、打字直接出字母** | 插入行缩进写错（写了 4 个空格，该文件里 `menu:` 的子键是 **2 个空格**）→ 日志 `config_data.cc:78 Error parsing YAML ... illegal map value`，schema 整个失效、translator/filter 全不挂载 | 缩进改成与 `page_size` 同级再重启服务；改完先看 `%TEMP%\rime.weasel\*.log` 有没有 `Error parsing` |
 
 ---
 
@@ -285,14 +331,17 @@
 
 | 组件 | 状态 |
 | --- | --- |
-| `WeaselServer.exe` | 运行中（改 Lua 后重启过） |
+| `WeaselServer.exe` | 运行中（改 Lua 后重启过；本轮 lua 修改 **09:11:42**、服务 **09:11:44** 启动，确认已加载 0.2.4 的 `grid_key`） |
 | `clipboard-sync.ps1` | 1 个实例 |
 | `vmenu-watcher.ps1` | 1 个实例（监督常驻窗口） |
 | `vmenu-settings-gui.ps1` | 1 个实例（常驻，未打开时是隐藏窗口） |
 | `open-settings.flag` | 稳态下**不存在** |
-| Lua 双目录一致性 | `D:\rime-sandbox\lua\` 与 `%APPDATA%\Rime\lua\` 四个文件 MD5 必须一致 |
-| `style/layout/max_width` | 530（`weasel.custom.yaml` + `build/weasel.yaml` + `%APPDATA%\Rime\build\weasel.yaml` 三处一致；150% 缩放下正好一行 9 个） |
+| Lua 双目录一致性 | `D:\rime-sandbox\lua\` 与 `%APPDATA%\Rime\lua\` 四个文件 MD5 必须一致（本轮 `vmenu_core.lua` = `F863A8AB609EA1FC6B2C16FDA83B1877`、`menu_filter.lua` = `6798F8D1B7AAAA562B377E2910CFC617`，三处一致） |
+| `style/layout/max_width` | 530（`weasel.custom.yaml` + `build/weasel.yaml` 两处一致；150% 缩放下正好一行 9 个。**注意**：`%APPDATA%\Rime\build\weasel.yaml` 是旧副本、不生效，实测那里还停在 `300`） |
+| `style/label_format` | 留空（`weasel.custom.yaml` 写 `" "`、`build/weasel.yaml` 实测原样是 `" "`）→ 不画原生序号；序号由 `menu_filter.number_row1` 写进注释 |
 | `menu/page_size` | 36（`rime_ice.custom.yaml` + `build/rime_ice.schema.yaml`；= 9 × 4，按 `↓` 展开后的条数） |
+| 候选框序号 | **展开后第一行 1–9、第 2–4 行无序号**（读图确认）；**收起时 9 个候选排 2 行、第 2 行也带 8/9**（序号按候选下标写）；v 菜单仍显示 1–5（「快捷输入」子菜单的「返回」显示 `10`，按键是 `q`） |
+| 候选方格方向键 | `↓` = 收起时展开 / 已展开时收回；`↑` = 收回；`←`/`→` 放行原版。**不能移动选中项**（无 API）；实测 144 ↔ 287 且不上屏 |
 | `v` 主菜单 | 5 项：设置 / 剪贴板 / 常用语 / 原符号 / **快捷输入**（`vqi` 子模式 9 项 + 返回） |
 | 部件拆字前缀 | `u`（`rime_ice.custom.yaml` 的 `radical_lookup/prefix: u` + `recognizer/patterns/radical_lookup: "^u[a-z]+$"`；`build\rime_ice.schema.yaml` 里已生效） |
 | 托盘菜单项文字 | 已改：`WeaselServer.exe` 里 `输入法设置 (&S)`（新标签 1 处 / 旧标签 0 处），命令号 40008 |
@@ -346,10 +395,29 @@
 10. **「快捷输入」是否还要加更多项？** 雾凇拼音还有别的可用前缀（例如各类符号 / 特殊转换）。
     目前只收了用户举例的这几类。加项的成本很低（`yield_quick` 加一行 + `menu_processor`
     加一个 `repr` 分支），但会让子菜单超过 9 项（数字键不够用，得引入翻页或字母键）。
-11. **展开后第 2–4 行的序号去不掉（未解决）。** 需求是「下面几行不用序号，只需要第一行有 1-9」，
-    但 rime 是按候选下标发号的，第 10 个之后必然显示 `10`、`11`……
-    试过 `menu/alternative_select_labels` 填 36 项 → **整份补丁被 rime 拒绝**（`page_size` 退回 9）。
-    可能的下一步：研究 rime 1.13 的 `select_labels` 与 `page_size` 的校验规则，
-    或改成「每行重新编号」的自定义 filter（要碰候选渲染，风险较高）。
-12. **「`↓↓` vs `↓` + `→`×9」有一轮对照不一致，需要复测。**
-    4 组对照里 3 组一致，怀疑是测试脚本抢前台 / 会话残留导致，暂未定位。
+11. ~~**展开后第 2–4 行的序号去不掉（未解决）。**~~ **✅ 已解决（第五轮续 / 见 §1.14）。**
+    原判断「rime 按候选下标发号、必须显示 `10`、`11`……」被推翻：那些数字是 **Weasel 面板
+    自己按索引画的**，`menu/alternative_select_labels` 对它**完全无效**（写进 patch 会被整份拒绝、
+    `page_size` 掉回 9；写进 `build` 产物 YAML 能过但序号列像素分布逐段不变）。
+    正确做法 = 主题 `style/label_format` 留空（关掉全部原生序号）+
+    `menu_filter.number_row1` 只给前 9 个候选的注释写 `1`–`9` + v 菜单逐条写序号注释；
+    已读图确认第 2/3/4 行没有序号，且注释不影响上屏（`shi`+空格 → 是、`shi`+3 → 师）。
+12. ~~**「`↓↓` vs `↓` + `→`×9」有一轮对照不一致，需要复测。**~~ **✅ 已复测（第六轮）：这条旧结论是误判。**
+    0.2.3 时第二次 `↓` 会**直接把候选上屏**，所以两次「比较」比的其实是被意外上屏的那个字。
+    0.2.4 把 `↓` 改成展开 / 收起开关后，这一对照已经没有意义。
+13. **（小瑕疵）v 菜单「快捷输入」里的「返回」前面显示 `10`。** v 菜单的序号是逐条写进注释的，
+    而快捷输入子菜单有 10 条（9 项 + 返回），于是第 10 条被编成 `10`（实际按键是 `q`）。
+    要改的话在 `menu_filter.lua` 的 v 菜单编号循环里把「操作行/返回」排除（例如 `type == "vact"` 不编号），
+    属可选清理 —— **需要人类拍板要不要动**。
+14. **「展开后用方向键移动选中项」做不到，需要决定要不要为它改小狼毫本体。**
+    需求原文包含「按向下变成 9 乘 4 **同时保留左右选择预选词的功能**」，但实测：
+    本机 librime-lua **没有**「只移动高亮」的 API（`ctx.select_candidate` / `set_selected_candidate_index` /
+    `highlight` / `move_selection` / `ctx.menu` / `ctx.get_menu` / `ctx.selected_candidate_index` /
+    `menu.*` / `composition.select` **全是 `nil`**），而 `ctx.select` 是**上屏**。
+    对照实测：数字键 `1` → 是、`2` → 师（✅），但 `→` 按 1 次或 3 次再空格仍上屏第 1 个「是」；
+    展开后 `↓↓` + `→` 也一样 —— **四个方向键都不会移动选中项**。
+    可选出路：① 接受现状（方向键只做展开 / 收起，选词用数字键，**当前选择**）；
+    ② 放宽需求（例如「展开后用数字键选」）；③ 改小狼毫 C++ 源码或自己写一个带高亮移动的候选渲染
+    （成本高、违背本项目「不改输入法源码」的前提）。**正在等用户拍板。**
+15. **`vmenu_core.lua` 里的 `grid_sel()` 是死代码。** `grid_key` 重写后已无人调用它，
+    而它的注释还留着那条**错误**的「1 基 / 0 基」说明（会误导后来者）。建议删掉整个函数 —— 属清理项。

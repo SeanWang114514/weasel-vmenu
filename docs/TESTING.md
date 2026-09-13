@@ -27,9 +27,12 @@
 | 部件拆字（不经菜单） | `u` 再敲 `nvzi`（或 `riyue`） | **好** / **明**；旧的 `uU` 写法已失效 |
 | 常用语列表 | `esc,v,3` | 常用语快查列表 |
 | 设置窗口 | `esc,v,1` | 窗口出现在屏幕上（< 300 ms） |
-| 候选方格（默认单行） | 打一段拼音刷出 ≥ 10 条候选 | 只显示**一行 9 个**（候选窗口 797 × 74 物理像素） |
-| 候选方格（展开） | 候选窗口里按 `↓` | 展开成 **36 个 = 4 行 × 9 列**（797 × 285） |
-| 候选方格导航 | 展开后 `↓` / `↑` / `←` / `→`；第一行按 `↑`；再打一个字 | `↓`/`↑` 上下跳一行（±9）、`←`/`→` 行内移动；第一行按 `↑` 收回单行；继续打字自动收回单行 |
+| 候选方格（收起） | 打一段拼音刷出 ≥ 10 条候选 | 收起时只有 **9** 个（因序号注释排成 **2 行**，窗口高 144），带 1–9 序号 |
+| 候选方格（展开） | 候选窗口里按 1 次 `↓` | 展开成 **36 个 = 4 行 × 9 列**（高 287）✅，只有第一行有 1–9 |
+| 候选方格（再按 `↓`） | 展开后再按 1 次 `↓` | **收回**成 9 个（高 287 → 144）✅，**不上屏**（0.2.4 修的 bug） |
+| 候选方格（收回） | 展开后按 `↑` | 收回（高 287 → 144）✅ |
+| 方向键移动选中项 | 展开后 `↓` / `↑` / `←` / `→` 再按空格 | ✗ **做不到**：四个方向键都不移动选中项，空格总是上屏第 1 个（对照：数字键 `1`→是、`2`→师 ✅）。原因是没有 API，见 §8.3 |
+| 序号不影响上屏 | `shi`+空格 / `shi`+`3` | 分别上屏 是 / 师（序号只是注释，不进上屏文字） |
 | 托盘「输入法设置」 | 直接运行 `WeaselDeployer.exe`（无参数 —— 这就是那个菜单项真正做的事） | 设置窗口出现；已在跑时被常驻实例亮出来（见 §7） |
 
 ---
@@ -212,9 +215,14 @@ foreach ($f in 'vmenu_core.lua','menu_processor.lua','lua_menu.lua','menu_filter
 
 # 5) 改完候选框配置（build/*.yaml）后的两件必做的事
 #    5a. 用 UTF-8 读回确认中文没被改写、值也对（绝不要用 Get-Content/Set-Content 去改）
-[IO.File]::ReadAllText("D:\rime-sandbox\build\weasel.yaml", [Text.Encoding]::UTF8).Contains('max_width: 530')           # 期望 True
+$t = [IO.File]::ReadAllText("D:\rime-sandbox\build\weasel.yaml", [Text.Encoding]::UTF8)
+$t.Contains('max_width: 530')                        # 期望 True
+[regex]::IsMatch($t, 'label_format:\s*"\s*"')        # 期望 True（留空 = 不画原生序号，序号改由注释提供）
 [IO.File]::ReadAllText("D:\rime-sandbox\build\rime_ice.schema.yaml", [Text.Encoding]::UTF8).Contains('page_size: 36')  # 期望 True
 #    5b. 重启 WeaselServer 后看日志里没有 YAML 解析错误
+#        （在 build 产物里手插一行时最容易踩：缩进必须与被插入的键同级 —— 本文件里是 2 个空格；
+#         写成 4 个空格会报 config_data.cc Error parsing YAML ... illegal map value，
+#         症状是 schema 整个失效：一个候选都不出、打字直接出字母）
 Get-ChildItem "$env:TEMP\rime.weasel\*.log" | Sort-Object LastWriteTime -Descending |
   Select-Object -First 1 | Get-Content | Select-String 'Error parsing'   # 必须无输出
 ```
@@ -244,7 +252,7 @@ Get-ChildItem "$env:TEMP\rime.weasel\*.log" | Sort-Object LastWriteTime -Descend
 | 1 | `v` 菜单项数 | 只有 **4 项**（`1 设置 / 2 剪贴板 / 3 常用语 / 4 原符号`）；按 `5` 无反应；手打 `vset` 仍能进设置根菜单（**0.2.2 起第 5 项改为「快捷输入」，见 §8**） |
 | 2 | 「收藏」→「常用语」 | 菜单项、`v`→`3` 列表标题/空态/搜索提示、候选第 2 位注释、设置窗口标签页与按钮文案全部显示「常用语」；`favorites.dict.yaml` / `vfav` / `vset*` / `vmenu-settings.txt` 未改 |
 | 3 | 多行候选框 | `max_width: 300` 时一页 18 条候选换行排成每行约 5 个（约 4 行 × 5 列）；按 `↓` 高亮在**同一行内**移动（窗口内 y 197..257）；`620` 实测不换行（**0.2.3 起这套参数已换成 `530` / `36` + 按 `↓` 展开，见 §8**） |
-| 4 | 方向键行为 | `↓` = 选中下一个候选、`→` = 选中下一个候选、`↑` = 上一个，都**不上屏**（librime 1.13.1，横向候选框；**0.2.3 起普通打字时方向键改由 `grid_key` 接管**，见 §8） |
+| 4 | 方向键行为 | **第二轮（横向单行候选框时期）**：`↓` = 选中下一个候选、`→` = 选中下一个候选、`↑` = 上一个，都**不上屏**（librime 1.13.1）。**0.2.3 起普通打字时方向键改由 `grid_key` 接管**（`↓` / `↑` = 展开 / 收回），**0.2.4 起不再尝试移动选中项**（没有 API），见 §8 |
 | 5 | 设置窗口双击编辑（剪贴板页） | 双击第 1 行 → 弹出「编辑第 1 条」→ 输入 `test` + 回车 → `clipboard-cache.txt` **第 1 行确实变成 `test`** → 随后还原真实数据并**校验 sha256 一致** |
 | 6 | 设置窗口双击编辑（常用语页） | 双击某一行 → 弹出 `修改常用语`（与点「修改选中」等价） |
 | 7 | 截图 | `screenshots/` 下 `ime-01`/`ime-05`/`ime-06`、`gui-01`〜`gui-04` 全部为示例数据 |
@@ -344,7 +352,7 @@ Get-ChildItem "$env:TEMP\rime.weasel\*.log" | Sort-Object LastWriteTime -Descend
 
 ---
 
-## 8. 本次迭代（0.2.2 / 0.2.3）的验收结论：快捷输入 · 候选方格 · 部件拆字
+## 8. 本次迭代（0.2.2 / 0.2.3 / 0.2.4）的验收结论：快捷输入 · 候选方格 · 部件拆字 · 序号
 
 ### 8.1 复现方法：怎么「看见」一次上屏
 
@@ -395,28 +403,80 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\type-and-shot.ps1 -T
 部件拆字的另外两条对照（0.2.3）：`u` + `riyue` → **明**；`v`→`5`→`2`（日期）不受影响。
 **旧的 `uU` 前缀已失效**（`uU` 单独不再触发拆字）。
 
-### 8.3 候选方格的实测（0.2.3）
+### 8.3 候选方格 + 方向键的实测（0.2.3 → 0.2.4 修复后）
 
-| 操作 | 候选窗口（物理像素） | 结果 |
+| 操作 | 候选窗口（高度，物理像素） | 结果 |
 | --- | --- | --- |
-| 打 `shi` | 797 × 74 | 单行 9 个（`grid_limit` = 9） |
-| 按 `↓` | 797 × 285 | **4 行 × 9 列**（36 个） |
-| `↓↓`（下跳一行） | — | 与「`↓` + `→`×9」选中的是同一个候选 ✅（**有 1 轮对照不一致**，待复测） |
-| 第一行按 `↑` | 回到 797 × 74 | 收回单行 ✅ |
-| 再打任何字 | — | 自动收回单行 ✅ |
+| 打 `shi` | 144 | 收起：9 个候选排成 **2 行**（序号注释撑宽所致），带序号 1–7 + 8、9 |
+| 按 1 次 `↓` | 287 | **4 行 × 9 列** ✅ |
+| 序号（读图） | — | **只有第一行有 1–9，第 2–4 行没有序号**（截候选窗口图后用视觉 API 读图确认；四行最左边都是候选文字本身） |
+| 再按 1 次 `↓` | 144 | ✅ **收回**（0.2.3 这里会**上屏**，见下） |
+| 再按 `↓` 又按 `↑` | 287 → 144 | ✅ 展开 / 收回往复正常 |
+| 全程上屏状态 | — | **标题一直是 `*shi`**，没有任何候选被上屏 ✅ |
+| 方向键移动选中项 | — | ✗ 不移动：`→` ×1 或 ×3 再空格，上屏的仍是**「是」（第 1 个）**；展开后 `↓↓` + `→` 亦然 |
+| 数字键基准对照 | — | ✅ `1` → **是**、`2` → **师**（证明「候选顺序」本身没问题，是方向键不动） |
+| 注释不影响上屏 | — | `shi`+空格 → 是、`shi`+`3` → 师；`v`→`5`→`2` → 2026-09-13、`v`→`3` → 常用语 |
+
+> **0.2.3 的 bug（0.2.4 已修）**：展开后按 `↓` 会**把当前候选上屏**。
+> 原因是 `grid_key` 用了 `ctx:select(sel + 9)`，而 `ctx.select` **是「选中并上屏」不是「移动高亮」**；
+> 日志里 `ok=true err=nil`，没有任何异常（`pcall` 挡不住，会伪装成「静默生效」）。
+> 修法：`grid_key` 重写为**只做展开 / 收起**，彻底不再调用 `ctx.select`。
+> **「用方向键移动选中项」仍然做不到**（不是没写，是没有 API）：探针实测
+> `ctx.select_candidate` / `set_selected_candidate_index` / `highlight` / `move_selection` /
+> `menu` / `get_menu` / `selected_candidate_index` / `menu.*` / `composition.select` **全是 `nil`**。
+> 在「不改小狼毫 C++ 源码」的前提下无法实现；**选词请用数字键**（只覆盖前 10 个候选）。
+
+**探针怎么复现**（改 `grid_key` 前后都建议跑一次）：在 `src\lua\vmenu_core.lua` 的方向键分支里
+挂一个日志文件，把「字段类型」和「调用结果」都写下来，然后重启 `WeaselServer`、打字并按方向键，
+再读日志：
+
+```lua
+-- 临时探针（用完删掉）：写 type(ctx.xxx) 与调用结果
+local function probe(ctx)
+  local f = io.open("D:\\rime-sandbox\\probe.log", "a")
+  if not f then return end
+  for _, k in ipairs({"select", "select_candidate", "set_selected_candidate_index",
+                      "highlight", "move_selection", "menu", "get_menu",
+                      "selected_candidate_index"}) do
+    f:write(k, " = ", tostring(type(ctx[k])), "\n")
+  end
+  local ok, err = pcall(function() ctx:select(9) end)
+  f:write("ctx:select(9) -> ok=", tostring(ok), " err=", tostring(err), "\n")
+  f:close()
+end
+```
+
+实测输出：只有 `select = function`，其余**全部 `nil`**；`ctx:select(9)` 返回 **`ok=true err=nil`**
+但候选被上屏了（这就是当年误判「静默失败」的原因）。
+也说明：**`pcall` 不能用来判断「API 是否真的做了我们以为的事」**，只能挡异常。
+
+**另一条实测更正**：早期文档写的「`ctx.selected_candidate_index` 是 1 基、`ctx:select(i)` 是 0 基」**是错的** ——
+该字段在本机不存在（`nil`），旧代码的换算一直把 `nil` 当 0 用。
 
 前置条件（缺一不可）：`build\weasel.yaml` 的 `style/layout/max_width: 530`、
+`style/label_format` **留空**（本机 `" "`、示例 `""`，两者都表示不画原生序号）、
 `build\rime_ice.schema.yaml` 的 `menu/page_size: 36`，改完**重启 `WeaselServer`**：
 
 ```powershell
-[IO.File]::ReadAllText('D:\rime-sandbox\build\weasel.yaml', [Text.Encoding]::UTF8).Contains('max_width: 530')           # 期望 True
+# max_width 与 label_format 都在同一个文件里
+$t = [IO.File]::ReadAllText('D:\rime-sandbox\build\weasel.yaml', [Text.Encoding]::UTF8)
+$t.Contains('max_width: 530')                      # 期望 True
+[regex]::IsMatch($t, 'label_format:\s*"\s*"')      # 期望 True（等于空或一个空格：不画原生序号）
 [IO.File]::ReadAllText('D:\rime-sandbox\build\rime_ice.schema.yaml', [Text.Encoding]::UTF8).Contains('page_size: 36')  # 期望 True
 ```
+
+序号机制的三处配套（缺任一处都会退回「第 2–4 行也有 10、11……」）：
+主题 `label_format` 留空 → `src\lua\menu_filter.lua` 的 `number_row1` 给前 9 个候选写注释 →
+v 菜单分支逐条写注释。改完 lua 记得同步两处 lua 目录（MD5 一致）再重启。
 
 ### 8.4 待复测 / 未解决（不要当成已通过）
 
 | 项 | 现状 |
 | --- | --- |
-| **展开后第 2–4 行的序号** | 需求是「只第一行有 1–9」，现在第 10 个之后仍显示 `10`、`11`……。`menu/alternative_select_labels` 填 36 项的方案被 rime 拒绝（`page_size` 退回 9）。**未解决** |
-| **`↓↓` vs `↓` + `→`×9** | 4 组对照里有 1 组不一致，怀疑是测试脚本的焦点 / 会话残留（抓图前前台窗口没抢到），需要复测 |
+| ~~**`↓↓` vs `↓` + `→`×9**~~ | **✅ 已复测：旧结论是误判。** 第二次 `↓` 当时会直接上屏，两次「比较」比的其实是被意外上屏的那个字。0.2.4 修好后这一对照已无意义（现在 `↓` 是展开 / 收起开关） |
+| **用方向键移动选中项** | **做不到（不是没写）**：本机 librime-lua 没有「移动高亮」的 API，`ctx.select` 是上屏不是移动。要做只能改小狼毫 C++ 源码 —— 用户正在决定是否放宽这条限制。**选词请用数字键**（只覆盖前 10 个候选） |
 | **v5 的截图** | 本轮**没有**截图：抓屏时机撞上用户正在用电脑，已把两张新图从 `screenshots/` 删掉，因此文档不引用 v5 截图 |
+| **v 菜单「返回」显示 `10`** | v 菜单的序号是逐条写的，快捷输入子菜单有 10 条（9 项 + 返回），所以「返回」前面显示 `10`（实际按键 `q`）。只影响观感，未处理 |
+| ~~展开后第 2–4 行的序号~~ | **✅ 已解决**（`label_format` 留空 + 注释写序号），验收见 §8.3；`menu/alternative_select_labels` 已确认对 Weasel 无效，不要再试 |
+| ~~展开后再按 `↓` 会上屏~~ | **✅ 已修复（0.2.4）**：`grid_key` 重写为只做展开 / 收起，不再调用 `ctx.select`；实测 144 → 287 → 144 → 287 → 144 且全程没有候选被上屏 |
+| **`grid_sel()` 死代码** | `vmenu_core.lua` 里的 `grid_sel()` 已无人调用（`grid_key` 重写后），可删；它的注释还留着那条**错误**的「1 基 / 0 基」说法 |
