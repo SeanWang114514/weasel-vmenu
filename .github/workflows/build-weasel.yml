@@ -31,6 +31,29 @@ jobs:
           Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\Include" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name | Out-File $log -Append -Encoding utf8
           "cmake: $(cmake --version | Select-Object -First 1)" | Out-File $log -Append -Encoding utf8
 
+          # ATL 装在 14.51 工具集里，但 weasel.props 把 PlatformToolset 固定为 v142，而 v142 没装 ATL
+          # → 直接把装了 ATL 的那套工具集的 include/lib 注入环境（cl.exe / rc.exe 都读 INCLUDE/LIB）
+          $atlRoot = Get-ChildItem "C:\Program Files\Microsoft Visual Studio" -Recurse -Directory -Filter 'atlmfc' -ErrorAction SilentlyContinue |
+                     Where-Object { Test-Path (Join-Path $_.FullName 'include\atlbase.h') } |
+                     ForEach-Object { Split-Path $_.FullName -Parent } | Sort-Object -Descending | Select-Object -First 1
+          "ATL 工具集根目录: $atlRoot" | Out-File $log -Append -Encoding utf8
+          if ($atlRoot) {
+            $atlInc = Join-Path $atlRoot 'atlmfc\include'
+            $atlLib = Join-Path $atlRoot 'atlmfc\lib\x64'
+            "INCLUDE=$atlInc;$env:INCLUDE" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+            "LIB=$atlLib;$env:LIB" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+            "已注入 INCLUDE=$atlInc" | Out-File $log -Append -Encoding utf8
+            "已注入 LIB=$atlLib" | Out-File $log -Append -Encoding utf8
+          } else { "WARN 没找到带 ATL 的工具集" | Out-File $log -Append -Encoding utf8 }
+
+          # 诊断：都有哪些工具集、工程里写的是哪个 PlatformToolset
+          "--- MSVC 工具集目录 ---" | Out-File $log -Append -Encoding utf8
+          Get-ChildItem "C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC" -Directory -ErrorAction SilentlyContinue |
+            ForEach-Object { "  $($_.Name)  ATL=$(Test-Path (Join-Path $_.FullName 'atlmfc\include\atlbase.h'))" } | Out-File $log -Append -Encoding utf8
+          "--- 工程里的 PlatformToolset 设置 ---" | Out-File $log -Append -Encoding utf8
+          Get-ChildItem -Recurse -Include *.props,*.vcxproj -File -ErrorAction SilentlyContinue |
+            Select-String -Pattern 'PlatformToolset' -ErrorAction SilentlyContinue |
+            Select-Object -First 12 | ForEach-Object { "  $($_.Filename):$($_.LineNumber)  $($_.Line.Trim())" } | Out-File $log -Append -Encoding utf8
           # msbuild 必须上 PATH：build.bat 里是裸调 msbuild.exe
           $mb = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -find "MSBuild\**\Bin\MSBuild.exe" | Select-Object -First 1
           "msbuild 路径: $mb" | Out-File $log -Append -Encoding utf8
