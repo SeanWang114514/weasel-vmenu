@@ -165,3 +165,37 @@ if (rime_api->get_option(session_id, "vmenu_grid")) {          // 展开状态�
 
 1. **先按现状交付**（已经能用、已验证、不碰二进制），把本文件作为"要完整实现时怎么做"的施工依据。
 2. 真要动手时，按 §3.1 → §3.2 → §3.3 的顺序走，并且**第一步只装 SDK + 编出一个未修改的 Weasel**，确认能编出与现有版本行为一致的东西，再动代码 —— 把"能不能编"和"改得对不对"分成两次验证。
+
+## 6. 工具链验证实测结果（第 6 轮，已完成）
+
+用户选择"先只验证工具链"，于是把源码和依赖都准备好了，并用**真实编译**验证到底缺什么。
+
+### 6.1 已经准备好的东西
+
+| 项目 | 状态 |
+| --- | --- |
+| weasel 源码 | ✅ 官方 tag **0.17.4**（HEAD `9cc96e2`）浅克隆到 `D:\weasel-build\weasel` |
+| 子模块 | ✅ 递归拉齐（`librime`、`plum`，以及 librime 自己的 `deps/`：leveldb、marisa-trie、opencc、yaml-cpp…） |
+| 自带 librime 版本 | ✅ **1.13.1**（HEAD `1c233581`）—— 与当前安装的 `rime.dll` 同一代；其 `src/rime_api.h` 里 **`highlight_candidate` 确实存在（2 处）**，与 §1.2 的结论互相印证 |
+| Boost 1.84.0 | ✅ 已下载并解压到 `D:\weasel-build\weasel\deps\boost_1_84_0`（234 MB） |
+| 构建脚本 | ✅ 仓库自带 `build.bat`、`env.bat.template`、`install_boost.bat`、`xbuild.bat`；`INSTALL.md` 说明完整 |
+
+### 6.2 缺什么（这是唯一的拦路石）
+
+| 缺失 | 证据 |
+| --- | --- |
+| **Windows SDK** | 用 `vcvars64.bat` 起 MSVC 环境后编译一个含 `#include <windows.h>` 的最小文件：<br>`t.cpp(1): fatal error C1083: 无法打开包括文件: "windows.h": No such file or directory`<br>`vcvars64` 环境变量里也**没有** `WindowsSDK*` 任何一项；`Windows Kits\10` 下只有 `Catalogs / Redist / UnionMetadata`，**没有 `Include`、没有 `Lib`** |
+| **ATL / MFC** | `INSTALL.md` 要求 VS 装 *ATL*、*MFC* 组件（小狼毫的候选窗口本身就是 ATL —— 我们能枚举到类名 `ATL:` 的候选窗口就是证据）。实测 MSVC 14.51.36231 目录下 `atlmfc\include\atlbase.h`、`afxwin.h` **都不存在** |
+
+### 6.3 两个已经绕过/需要留意的坑
+
+- `install_boost.bat` 依赖 **`aria2c` + `7z`**，本机两者都没有 ✗。
+  **已绕过**：改用 `Invoke-WebRequest` 下 `boost_1_84_0.tar.gz` + Windows 自带的 `tar -xzf` 解压，成功得到 234 MB 的 Boost（所以 Boost 这一步**不需要**再装 aria2c/7z）。
+- 本机 VS 是 **2026（18.x）BuildTools**，而脚本只提供 `env.vs2019.bat` / `env.vs2022.bat`，`env.bat.template` 里默认 `BJAM_TOOLSET=msvc-14.2`、`PLATFORM_TOOLSET=v142`（对应 VS2019/2022）。**编译器本身可用**（`cl.exe` 能跑），但工具集版本号可能要按实际情况调整 —— 这一步要等 SDK 装好、真正跑 `build.bat` 时才能确认。
+
+### 6.4 结论
+
+> **只差用户装两个组件（Windows SDK + ATL/MFC），其余全部就绪。**
+> 装完就能跑 `install_boost`（已备好）→ `build.bat` 编出一个未修改的 Weasel，
+> 然后再按 §3.2 打上那 20–40 行改动、按 §3.3 验证、按 §3.4 回滚。
+> 全程**不需要改 librime**：`highlight_candidate` 在 0.17.4 自带的 librime 1.13.1 里就有。
