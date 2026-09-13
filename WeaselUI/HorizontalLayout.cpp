@@ -125,11 +125,16 @@ void HorizontalLayout::DoLayout(CDCHandle dc, PDWR pDWR) {
 
       int base_left = (i == id) ? _candidateLabelRects[i].left - base_offset
                                 : _candidateLabelRects[i].left;
-      // if not the first candidate of current row, and current candidate's
-      // right > _style.max_width
-      if (_style.max_width > 0 && (base_left > real_margin_x + offsetX) &&
-          (_candidateCommentRects[i].right - offsetX + real_margin_x >
-           _style.max_width)) {
+      // [vmenu-grid] 折行策略改为「按个数」，不再按宽度：
+      //   * 候选数 <= 9：**无论如何都排成一行**（长词也不折行，窗口宽度随之变宽）。
+      //     用户明确要求「无论如何都在一行显示」——按宽度折行时只要有一个词偏宽
+      //     就会被挤到第二行，调 max_width 只能推后临界点，治不了本。
+      //   * 候选数 >  9：每 9 个强制换行，即展开后的「每行严格 9 个」网格。
+      const int kGridCols = 9;
+      const bool grid_multi_row = (candidates_count > kGridCols);
+      const bool vmenu_line_break =
+          grid_multi_row && i > 0 && (i % kGridCols) == 0;
+      if (vmenu_line_break) {
         // max_width_of_rows current row
         max_width_of_rows =
             max(max_width_of_rows, _candidateCommentRects[i - 1].right);
