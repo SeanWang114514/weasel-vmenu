@@ -73,6 +73,9 @@ if ($target) {
   Say "ATL include=$inc lib=$lib"
   if (Test-Path $inc) { "INCLUDE=$inc" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8 }
   # ATL 链接库不再走 _LINK_（x64/x86 的库目录不同，写死会出错），改由仓库根的 Directory.Build.props
-  # 按 $(PlatformShortName) 给 Weasel* 工程加 atls.lib + atlthunk.lib（见该文件注释）。
+  # 按 $(PlatformShortName) 给 Weasel* 工程加 atls.lib（见该文件注释）。
+  # 诊断：把 ATL 库里到底有哪些 .lib 打出来，便于日后排错。
+  Say 'ATL lib 目录内容：'
+  if (Test-Path $lib) { Get-ChildItem $lib -Filter '*.lib' -ErrorAction SilentlyContinue | ForEach-Object { Say "  $($_.Name)" } } else { Say "  （$lib 不存在）" }
 }
 exit 0

@@ -77,7 +77,10 @@ jobs:
           path: |
             deps/boost_1_84_0/stage
             deps/boost_1_84_0/bin.v2
-          key: boost-184-stage-b2-v1-${{ runner.os }}
+            deps/boost-cmake-src
+            deps/boost-cmake-x64
+            deps/boost-cmake-x86
+          key: boost-184-all-b2-v2-${{ runner.os }}
 
       - name: 按需把工程切到带 ATL 的工具集（v142 自带 ATL 时保持原样）
         run: pwsh -NoProfile -File ci/select-toolset.ps1

@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  让带 ATL 的 14.5x 工具集链接时真的把 atls.lib / atlthunk.lib 传进去。
+  让带 ATL 的 14.5x 工具集链接时真的把 atls.lib 传进去。
   [vmenu-grid] 只在项目名含 Weasel 的工程生效（librime 的 CMake 工程不会拿到）。
 
   背景：仓库原本把 PlatformToolset 写成 v142；这台 CI runner（VS2026/v18.9.2）的
@@ -8,12 +8,14 @@
   都没了，但我们没给链接器点 ATL 库的名 → 一堆 LNK2001（ATL::_AtlBaseModule / _AtlThunk_*）。
   这里用 $(VCToolsInstallDir)atlmfc\lib\$(PlatformShortName) 定位 ATL 库目录，
   $(PlatformShortName) 是 x64 / x86，两块平台都正确。
+  run#20 实测：同一目录里有 atls.lib 但**没有 atlthunk.lib**（VS2026 的 ATL 已把 thunk
+  实现并进 atls.lib），所以只链 atls.lib。
 -->
 <Project>
   <ItemDefinitionGroup Condition="$(MSBuildProjectName.Contains('Weasel'))">
     <Link>
       <AdditionalLibraryDirectories>$(VCToolsInstallDir)atlmfc\lib\$(PlatformShortName);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>atls.lib;atlthunk.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>atls.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
 </Project>
