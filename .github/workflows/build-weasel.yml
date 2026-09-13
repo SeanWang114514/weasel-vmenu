@@ -1,0 +1,234 @@
+name: build-weasel-grid
+
+on:
+  push:
+    branches: [weasel-grid-build]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: 准备工具链（把 msbuild 放上 PATH、修 CMake 4.x 兼容、探测 ATL）
+        run: |
+          $log = 'prepare.log'
+          "===== 工具链探测 =====" | Out-File $log -Encoding utf8
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vsPath = & $vswhere -latest -products * -property installationPath
+          "VS: $vsPath" | Out-File $log -Append -Encoding utf8
+          $atl = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.ATL -property installationPath
+          "装了 ATL 的 VS: $(if ($atl) { $atl } else { '（空 —— 没有 ATL！）' })" | Out-File $log -Append -Encoding utf8
+          Get-ChildItem "C:\Program Files\Microsoft Visual Studio" -Recurse -Filter atlbase.h -ErrorAction SilentlyContinue | Select-Object -First 3 -ExpandProperty FullName | Out-File $log -Append -Encoding utf8
+          "SDK Include 版本:" | Out-File $log -Append -Encoding utf8
+          Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\Include" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name | Out-File $log -Append -Encoding utf8
+          "cmake: $(cmake --version | Select-Object -First 1)" | Out-File $log -Append -Encoding utf8
+
+          # ATL 装在 14.51 工具集里，但 weasel.props 把 PlatformToolset 固定为 v142，而 v142 没装 ATL
+          # → 直接把装了 ATL 的那套工具集的 include/lib 注入环境（cl.exe / rc.exe 都读 INCLUDE/LIB）
+          $atlRoot = Get-ChildItem "C:\Program Files\Microsoft Visual Studio" -Recurse -Directory -Filter 'atlmfc' -ErrorAction SilentlyContinue |
+                     Where-Object { Test-Path (Join-Path $_.FullName 'include\atlbase.h') } |
+                     ForEach-Object { Split-Path $_.FullName -Parent } | Sort-Object -Descending | Select-Object -First 1
+          "ATL 工具集根目录: $atlRoot" | Out-File $log -Append -Encoding utf8
+          if ($atlRoot) {
+            $atlInc = Join-Path $atlRoot 'atlmfc\include'
+            $atlLib = Join-Path $atlRoot 'atlmfc\lib\x64'
+            "INCLUDE=$atlInc;$env:INCLUDE" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+            "LIB=$atlLib;$env:LIB" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+            "已注入 INCLUDE=$atlInc" | Out-File $log -Append -Encoding utf8
+            "已注入 LIB=$atlLib" | Out-File $log -Append -Encoding utf8
+          } else { "WARN 没找到带 ATL 的工具集" | Out-File $log -Append -Encoding utf8 }
+
+          # 诊断：都有哪些工具集、工程里写的是哪个 PlatformToolset
+          "--- MSVC 工具集目录 ---" | Out-File $log -Append -Encoding utf8
+          Get-ChildItem "C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC" -Directory -ErrorAction SilentlyContinue |
+            ForEach-Object { "  $($_.Name)  ATL=$(Test-Path (Join-Path $_.FullName 'atlmfc\include\atlbase.h'))" } | Out-File $log -Append -Encoding utf8
+          "--- 工程里的 PlatformToolset 设置 ---" | Out-File $log -Append -Encoding utf8
+          Get-ChildItem -Recurse -Include *.props,*.vcxproj -File -ErrorAction SilentlyContinue |
+            Select-String -Pattern 'PlatformToolset' -ErrorAction SilentlyContinue |
+            Select-Object -First 12 | ForEach-Object { "  $($_.Filename):$($_.LineNumber)  $($_.Line.Trim())" } | Out-File $log -Append -Encoding utf8
+          # msbuild 必须上 PATH：build.bat 里是裸调 msbuild.exe
+          $mb = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -find "MSBuild\**\Bin\MSBuild.exe" | Select-Object -First 1
+          "msbuild 路径: $mb" | Out-File $log -Append -Encoding utf8
+          if (-not $mb) { throw "找不到 MSBuild.exe" }
+          Split-Path $mb | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+
+          # runner 的 CMake 4.x 会拒绝 yaml-cpp/leveldb 等旧依赖里的 cmake_minimum_required(<3.5)
+          $fixed = 0
+          Get-ChildItem librime\deps -Recurse -Filter CMakeLists.txt -File -ErrorAction SilentlyContinue | ForEach-Object {
+            $raw = Get-Content $_.FullName -Raw
+            $new = $raw -replace 'cmake_minimum_required\s*\(\s*VERSION\s+[0-9]+(\.[0-9]+)*', 'cmake_minimum_required(VERSION 3.5'
+            if ($new -ne $raw) { Set-Content -Path $_.FullName -Value $new -Encoding utf8 -NoNewline; $fixed++ }
+          }
+          "已修正 cmake_minimum_required 的文件数: $fixed" | Out-File $log -Append -Encoding utf8
+          "CMAKE_POLICY_VERSION_MINIMUM=3.5" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Get-Content $log
+
+      - name: 缓存 Boost 构建产物（把每次 40 分钟的 Boost 编译压到几秒）
+        uses: actions/cache@v4
+        with:
+          path: |
+            deps/boost_1_84_0/stage
+            deps/boost_1_84_0/bin.v2
+          key: boost-184-stage-v145-${{ runner.os }}
+
+      - name: 让构建改用带 ATL 的工具集 v145（MSB8052 提示 v142 与 14.51 不兼容）
+        run: |
+          # 依据：runner 上只有工具集 14.51.36231 装了 ATL（14.29/14.44 均 ATL=False），
+          # 而 MSBuild 的 MSB8052 明确指出该版本对应的 PlatformToolset 是 v145。
+          # 光改 INCLUDE/LIB 无效（MSBuild 会按工具集重算），必须改 PlatformToolset 本身。
+          "PLATFORM_TOOLSET=v145" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "PlatformToolset=v145"  | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+          # cmake 生成的工程靠 -T 参数，写死在仓库里的工程要直接改文件（排除 Boost 源码树，那里文件上万）
+          $n = 0
+          Get-ChildItem $env:GITHUB_WORKSPACE -Recurse -Include *.vcxproj,*.props -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -notmatch '\\deps\\boost_' } |
+            ForEach-Object {
+              $raw = Get-Content $_.FullName -Raw
+              if ($raw -match 'v142') {
+                Set-Content -Path $_.FullName -Value ($raw -replace 'v142', 'v145') -Encoding utf8 -NoNewline
+                $n++
+              }
+            }
+          "已把 $n 个工程文件里的 v142 改为 v145" | Out-File prepare.log -Append -Encoding utf8
+          "PLATFORM_TOOLSET=v145, PlatformToolset=v145" | Out-File prepare.log -Append -Encoding utf8
+
+          # ATL 头/库路径兜底（防止某些工程不走工具集默认路径）
+          $atlRoot = Get-ChildItem "C:\Program Files\Microsoft Visual Studio" -Recurse -Directory -Filter 'atlmfc' -ErrorAction SilentlyContinue |
+                     Where-Object { Test-Path (Join-Path $_.FullName 'include\atlbase.h') } |
+                     ForEach-Object { Split-Path $_.FullName -Parent } | Sort-Object -Descending | Select-Object -First 1
+          if ($atlRoot) {
+            $inc = Join-Path $atlRoot 'atlmfc\include'
+            $lib = Join-Path $atlRoot 'atlmfc\lib\x64'
+            "INCLUDE=$inc" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+            "CL=/I`"$inc`"" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+            "_LINK_=/LIBPATH:`"$lib`"" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+            "ATL 兜底: $inc" | Out-File prepare.log -Append -Encoding utf8
+          }
+          Get-Content prepare.log
+      - name: 安装 Boost
+        run: |
+          $bv = '1.84.0'
+          $dst = Join-Path $env:GITHUB_WORKSPACE 'deps\boost_1_84_0'
+          if (-not (Test-Path (Join-Path $dst 'boost\version.hpp'))) {
+            New-Item -ItemType Directory -Force -Path (Join-Path $env:GITHUB_WORKSPACE 'deps') | Out-Null
+            Invoke-WebRequest "https://archives.boost.io/release/$bv/source/boost_1_84_0.tar.gz" -OutFile boost.tar.gz
+            tar -xzf boost.tar.gz -C (Join-Path $env:GITHUB_WORKSPACE 'deps')
+            Remove-Item boost.tar.gz -Force
+          }
+          if (-not (Test-Path (Join-Path $dst 'boost\version.hpp'))) { throw "Boost 没解压成功" }
+          echo "BOOST_ROOT=$dst" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: 编译 Boost 依赖库（只编 Weasel 用到的几个，几分钟）
+        run: |
+          # 不用 build.bat 的 boost 关键字（它会 b2 全量编译，40 分钟）。Weasel 链接只需要
+          # thread / serialization / wserialization（自动链接头请求 mt-s = 静态库 + 静态运行库）。
+          $br = Join-Path $env:GITHUB_WORKSPACE 'deps\boost_1_84_0'
+          Set-Location $br
+          if (-not (Test-Path 'b2.exe')) { cmd /c "bootstrap.bat > bootstrap.log 2>&1" ; "bootstrap 完成" }
+          $args1 = '--with-thread --with-serialization --with-wserialization --with-system --with-filesystem --with-date_time --with-chrono --with-atomic --with-regex link=static runtime-link=static threading=multi address-model=64 variant=release stage'
+          cmd /c "b2.exe -j4 $args1 > b2.log 2>&1"
+          "b2 退出码: $LASTEXITCODE"
+          $libdir = Join-Path $br 'stage\lib'
+          "库目录: $libdir"
+          if (Test-Path $libdir) { Get-ChildItem $libdir -Filter '*.lib' | Select-Object -First 12 -ExpandProperty Name | Out-File prepare.log -Append -Encoding utf8 }
+          $n = 0
+          if (Test-Path $libdir) { $n = (Get-ChildItem $libdir -Filter '*.lib').Count }
+          "$libdir 下共 $n 个 .lib（期望 >= 10）" | Out-File prepare.log -Append -Encoding utf8
+          if ($n -lt 4) { Get-Content (Join-Path $br 'b2.log') -Tail 30 | Out-File prepare.log -Append -Encoding utf8 }
+      - name: 修正 Boost 库的工具集标记（vc142 -> vc143）
+        run: |
+          # 换成 v145 工具集后，Boost 的自动链接头按编译器版本请求 -vc143- 名字，
+          # 而缓存里的库是 v142 工具集编出来的 -vc142-，于是 LNK1104 找不到
+          # libboost_thread-vc143-mt-s-x64-1_84.lib 之类。这里把已有库复制成被请求的名字。
+          # （先走这条快路：不用重编 Boost，几分钟就能出 DLL；若之后出现运行库不匹配再考虑重编。）
+          $cands = @(
+            (Join-Path $env:GITHUB_WORKSPACE 'deps\boost_1_84_0\stage\lib'),
+            (Join-Path $env:GITHUB_WORKSPACE 'deps\boost_1_84_0\lib'),
+            (Join-Path $env:GITHUB_WORKSPACE 'lib64'),
+            (Join-Path $env:GITHUB_WORKSPACE 'lib')
+          )
+          $made = 0
+          foreach ($d in $cands) {
+            if (-not (Test-Path $d)) { continue }
+            "  扫描 $d" | Out-File prepare.log -Append -Encoding utf8
+            Get-ChildItem $d -Filter 'libboost_*.lib' -ErrorAction SilentlyContinue | ForEach-Object {
+              if ($_.Name -notmatch 'vc143') {
+                $new = $_.Name -replace '-vc14\d-', '-vc143-'
+                if ($new -ne $_.Name) {
+                  $dst = Join-Path $d $new
+                  if (-not (Test-Path $dst)) { Copy-Item $_.FullName $dst -Force; $made++ }
+                }
+              }
+            }
+          }
+          "已生成 $made 个 -vc143- 别名的 Boost 库" | Out-File prepare.log -Append -Encoding utf8
+          $found = @()
+          foreach ($d in $cands) { if (Test-Path $d) { $found += (Get-ChildItem $d -Filter 'libboost_*vc143*.lib' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name) } }
+          "vc143 库共 $($found.Count) 个" | Out-File prepare.log -Append -Encoding utf8
+          $found | Select-Object -First 10 | Out-File prepare.log -Append -Encoding utf8
+      - name: 编译 librime + Weasel
+        run: |
+          Copy-Item prepare.log build-output.log -Force -ErrorAction SilentlyContinue
+          cmd /c ".\build.bat data opencc rime weasel >> build-output.log 2>&1"
+          Write-Host "===== build.bat 退出码: $LASTEXITCODE ====="
+          Get-Content build-output.log -Tail 120
+          if (-not (Test-Path build-output.log)) { 'no log' | Out-File build-output.log }
+
+      - name: 全树列出产物
+        if: always()
+        run: |
+          foreach ($d in 'output','x64\Release','lib64','lib') {
+            if (Test-Path $d) { echo "===== $d ====="; Get-ChildItem $d -Recurse -Include *.dll,*.exe,*.lib -ErrorAction SilentlyContinue | Select-Object FullName,Length,LastWriteTime | Format-Table -AutoSize | Out-String | Write-Host }
+          }
+
+      - name: 打包 DLL 与日志
+        if: always()
+        run: |
+          if (-not (Test-Path build-output.log)) { 'no log' | Out-File build-output.log }
+          $cut = (Get-Date).AddMinutes(-240)
+          $cand = @(Get-ChildItem $env:GITHUB_WORKSPACE -Recurse -File -ErrorAction SilentlyContinue -Include weasel.dll,weaselx64.dll |
+                    Where-Object { $_.LastWriteTime -gt $cut -and $_.FullName -notmatch '\\test\\' })
+          Write-Host "== 新生成的小狼毫 DLL =="
+          $cand | Select-Object FullName,Length,LastWriteTime | Format-Table -AutoSize | Out-String | Write-Host
+          if ($cand.Count -ge 2) {
+            foreach ($f in $cand) { Copy-Item $f.FullName -Destination (Join-Path $env:GITHUB_WORKSPACE $f.Name) -Force }
+            $names = @($cand.Name | Sort-Object -Unique)
+            Compress-Archive -Path $names -DestinationPath weasel-grid-dlls.zip -Force
+            Get-Item weasel-grid-dlls.zip | Select-Object Name,Length
+          } else {
+            Write-Host "::warning::没编出 weasel*.dll，只发布构建日志供诊断"
+          }
+
+      - name: 把构建日志提交回分支（固定 URL，便于直接下载；[skip ci] 防止循环触发）
+        if: always()
+        run: |
+          if (Test-Path build-output.log) { Copy-Item build-output.log ci-last-build.log -Force }
+          else { 'build-output.log 不存在' | Out-File ci-last-build.log -Encoding utf8 }
+          "===== run #${{ github.run_number }} / ${{ github.sha }} =====" | Out-File ci-last-build.log -Append -Encoding utf8
+          git config user.name "ci-bot"
+          git config user.email "ci-bot@users.noreply.github.com"
+          git add -f ci-last-build.log
+          git commit -m "CI build log [skip ci]" 2>$null
+          git push origin HEAD:weasel-grid-build
+      - name: 发布（日志始终发布）
+        if: always()
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: weasel-grid-${{ github.run_number }}
+          name: weasel-grid build ${{ github.run_number }}
+          body: |
+            小狼毫 0.17.4 + vmenu-grid 方向键补丁（GitHub Actions 编译）。
+            build-output.log：工具链探测 + build.bat 完整输出。
+          files: |
+            build-output.log
+            weasel-grid-dlls.zip
+          fail_on_unmatched_files: false
