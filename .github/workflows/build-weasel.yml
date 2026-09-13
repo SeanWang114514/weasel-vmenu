@@ -1,6 +1,5 @@
 name: build-weasel-grid
 
-# 在 GitHub 的 Windows runner 上编译带 vmenu-grid 方向键补丁的小狼毫 0.17.4 x64。
 on:
   push:
     branches: [weasel-grid-build]
@@ -18,18 +17,36 @@ jobs:
           submodules: recursive
           fetch-depth: 0
 
-      - name: 工具链探测
+      - name: 准备工具链（把 msbuild 放上 PATH、修 CMake 4.x 兼容、探测 ATL）
         run: |
-          echo "--- vswhere ---"
-          & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -property installationPath
-          echo "--- msbuild / cl ---"
-          Get-Command msbuild -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source
-          Get-ChildItem "C:\Program Files (x86)\Microsoft Visual Studio" -Recurse -Filter atlbase.h -ErrorAction SilentlyContinue | Select-Object -First 2 -ExpandProperty FullName
-          echo "--- SDK ---"
-          Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\Include" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name
-          echo "--- cmake / ninja ---"
-          cmake --version | Select-Object -First 1
-          ninja --version
+          $log = 'prepare.log'
+          "===== 工具链探测 =====" | Out-File $log -Encoding utf8
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vsPath = & $vswhere -latest -products * -property installationPath
+          "VS: $vsPath" | Out-File $log -Append -Encoding utf8
+          $atl = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.ATL -property installationPath
+          "装了 ATL 的 VS: $(if ($atl) { $atl } else { '（空 —— 没有 ATL！）' })" | Out-File $log -Append -Encoding utf8
+          Get-ChildItem "C:\Program Files\Microsoft Visual Studio" -Recurse -Filter atlbase.h -ErrorAction SilentlyContinue | Select-Object -First 3 -ExpandProperty FullName | Out-File $log -Append -Encoding utf8
+          "SDK Include 版本:" | Out-File $log -Append -Encoding utf8
+          Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\Include" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name | Out-File $log -Append -Encoding utf8
+          "cmake: $(cmake --version | Select-Object -First 1)" | Out-File $log -Append -Encoding utf8
+
+          # msbuild 必须上 PATH：build.bat 里是裸调 msbuild.exe
+          $mb = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -find "MSBuild\**\Bin\MSBuild.exe" | Select-Object -First 1
+          "msbuild 路径: $mb" | Out-File $log -Append -Encoding utf8
+          if (-not $mb) { throw "找不到 MSBuild.exe" }
+          Split-Path $mb | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+
+          # runner 的 CMake 4.x 会拒绝 yaml-cpp/leveldb 等旧依赖里的 cmake_minimum_required(<3.5)
+          $fixed = 0
+          Get-ChildItem librime\deps -Recurse -Filter CMakeLists.txt -File -ErrorAction SilentlyContinue | ForEach-Object {
+            $raw = Get-Content $_.FullName -Raw
+            $new = $raw -replace 'cmake_minimum_required\s*\(\s*VERSION\s+[0-9]+(\.[0-9]+)*', 'cmake_minimum_required(VERSION 3.5'
+            if ($new -ne $raw) { Set-Content -Path $_.FullName -Value $new -Encoding utf8 -NoNewline; $fixed++ }
+          }
+          "已修正 cmake_minimum_required 的文件数: $fixed" | Out-File $log -Append -Encoding utf8
+          "CMAKE_POLICY_VERSION_MINIMUM=3.5" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Get-Content $log
 
       - name: 安装 Boost
         run: |
@@ -45,13 +62,12 @@ jobs:
           echo "BOOST_ROOT=$dst" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       - name: 编译 librime + Weasel
-        # 只点名需要的步骤：不含 installer（runner 没 NSIS）、不含 arm64（arm64EC 工具链）
         run: |
-          cmd /c ".\build.bat boost data opencc rime weasel > build-output.log 2>&1"
-          $code = $LASTEXITCODE
-          Write-Host "===== build.bat 退出码: $code ====="
+          Copy-Item prepare.log build-output.log -Force -ErrorAction SilentlyContinue
+          cmd /c ".\build.bat boost data opencc rime weasel >> build-output.log 2>&1"
+          Write-Host "===== build.bat 退出码: $LASTEXITCODE ====="
           Get-Content build-output.log -Tail 120
-          if (-not (Test-Path build-output.log)) { 'build.bat 没有产生日志' | Out-File build-output.log }
+          if (-not (Test-Path build-output.log)) { 'no log' | Out-File build-output.log }
 
       - name: 全树列出产物
         if: always()
@@ -64,7 +80,7 @@ jobs:
         if: always()
         run: |
           if (-not (Test-Path build-output.log)) { 'no log' | Out-File build-output.log }
-          $cut = (Get-Date).AddMinutes(-150)
+          $cut = (Get-Date).AddMinutes(-240)
           $cand = @(Get-ChildItem $env:GITHUB_WORKSPACE -Recurse -File -ErrorAction SilentlyContinue -Include weasel.dll,weaselx64.dll |
                     Where-Object { $_.LastWriteTime -gt $cut -and $_.FullName -notmatch '\\test\\' })
           Write-Host "== 新生成的小狼毫 DLL =="
@@ -78,7 +94,7 @@ jobs:
             Write-Host "::warning::没编出 weasel*.dll，只发布构建日志供诊断"
           }
 
-      - name: 发布（DLL 若存在则一并发布，日志始终发布）
+      - name: 发布（日志始终发布）
         if: always()
         uses: softprops/action-gh-release@v2
         with:
@@ -86,7 +102,7 @@ jobs:
           name: weasel-grid build ${{ github.run_number }}
           body: |
             小狼毫 0.17.4 + vmenu-grid 方向键补丁（GitHub Actions 编译）。
-            build-output.log 是 build.bat 的完整输出，用于诊断。
+            build-output.log：工具链探测 + build.bat 完整输出。
           files: |
             build-output.log
             weasel-grid-dlls.zip
