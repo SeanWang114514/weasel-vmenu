@@ -53,7 +53,15 @@ local function filter(input, env)
   end
 
   if want == nil and fav == nil then
-    passthrough(input)
+    -- 正常打字、没命中收藏：只放出当前状态允许的个数
+    --   单行（默认）= 9 个，正好一行；按 ↓ 展开后 = 36 个，自动换成 4 行 × 9 列
+    local lim = core.grid_limit(ctx)
+    local k = 0
+    for cand in input:iter() do
+      k = k + 1
+      if k > lim then break end
+      yield(cand)
+    end
     return
   end
 
@@ -92,7 +100,9 @@ local function filter(input, env)
   local c = Candidate("vfav", 0, #code, fav.word, "常用语")
   c.quality = 500000
   local out = place(buf, 2, c)
+  local lim = core.grid_limit(ctx)
   for i = 1, #out do
+    if i > lim then break end
     yield(out[i])
   end
 end

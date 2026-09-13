@@ -35,6 +35,12 @@ local function handle(key, env)
   -- 纯数字编码（如 131）本来靠「整屏只有一个候选时回车上屏」这个巧合生效，
   -- 这里显式接管：数字编码、字母编码一律支持，行为统一，也不再依赖巧合。
   -- 只有输入和某条编码完全一致时才接管，其余回车行为原样放行。
+  -- 候选窗口展开/收起 + 二维选择（只在正常打字时生效；v 菜单里保持原样）
+  if cur ~= "" and not core.mode_of(cur) then
+    local ok_grid, handled = pcall(core.grid_key, ctx, repr)
+    if ok_grid and handled then return 1 end
+  end
+
   if repr == "Return" and cur ~= "" and not core.mode_of(cur) then
     local ok_hit, hit = pcall(core.fav_exact, cur)
     if ok_hit and hit then

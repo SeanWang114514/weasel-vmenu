@@ -61,6 +61,77 @@ end
 -- 模式判定
 -- ---------------------------------------------------------------------------
 -- 返回 "menu" | "clip" | "fav" | "set" | nil
+-- ===== 候选窗口「单行 / 九宫格」状态 =====
+-- 默认单行：只放 GRID_COLS 个候选（正好一行，由 menu_filter 限制个数）；
+-- 按 ↓ 展开成 GRID_COLS × GRID_ROWS（4 行 × 9 列，靠 weasel 主题 max_width 自动换行）；
+-- 选中项在第一行时再按 ↑ 收回去。这里只存状态，真正决定候选个数的是 menu_filter。
+M.GRID_COLS = 9
+M.GRID_ROWS = 4
+M.GRID_OPTION = "vmenu_grid"   -- 状态必须放在 context option 里！
+
+-- 注意：lua_processor 与 lua_filter 各自 require 一份本模块（模块级变量不共享），
+-- 所以「是否展开」只能通过 ctx 的 option 传递（vraw_mode 也是这么做的）。
+function M.grid_limit(ctx)
+  local ok, open = pcall(function() return ctx:get_option(M.GRID_OPTION) end)
+  if ok and open then return M.GRID_COLS * M.GRID_ROWS end
+  return M.GRID_COLS
+end
+
+local function grid_open(ctx)
+  local ok, v = pcall(function() return ctx:get_option(M.GRID_OPTION) end)
+  return (ok and v) and true or false
+end
+
+local function grid_set(ctx, open)
+  pcall(function() ctx:set_option(M.GRID_OPTION, open and true or false) end)
+end
+
+-- 注意：ctx.selected_candidate_index 是「从 1 开始」的（第 1 个候选读出来是 1），
+-- 而 ctx:select(i) 是「从 0 开始」的，这里统一换算成 0 基。
+local function grid_sel(ctx)
+  local ok, v = pcall(function() return ctx.selected_candidate_index end)
+  if ok and type(v) == "number" and v >= 1 then return v - 1 end
+  return 0
+end
+
+-- 方向键：返回 true 表示已被我们处理（要吞掉，不能让原生导航器再动一次）
+--   ↓：收起时展开；已展开时往下跳一行（+9）
+--   ↑：在第一行时收回成单行；否则往上跳一行（-9）
+--   ←/→：在同一行内左右移动
+function M.grid_key(ctx, repr)
+  local is_arrow = (repr == "Down" or repr == "Up" or repr == "Left" or repr == "Right")
+  if not is_arrow then
+    -- 任何其它键（继续打字、上屏、选词）都收回成单行
+    grid_set(ctx, false)
+    return false
+  end
+  local ok_menu, has = pcall(function() return ctx:has_menu() end)
+  if not (ok_menu and has) then return false end
+  local sel = grid_sel(ctx)
+  if not grid_open(ctx) then
+    if repr == "Down" then
+      grid_set(ctx, true)
+      return true
+    end
+    return false
+  end
+  if repr == "Down" then
+    pcall(function() ctx:select(sel + M.GRID_COLS) end)
+    return true
+  elseif repr == "Up" then
+    if sel < M.GRID_COLS then
+      grid_set(ctx, false)
+    else
+      pcall(function() ctx:select(sel - M.GRID_COLS) end)
+    end
+    return true
+  elseif repr == "Left" then
+    if sel > 0 then pcall(function() ctx:select(sel - 1) end) end
+    return true
+  end
+  pcall(function() ctx:select(sel + 1) end)
+  return true
+end
 function M.mode_of(code)
   if type(code) ~= "string" or code == "" then return nil end
   if code == "v" then return "menu" end
