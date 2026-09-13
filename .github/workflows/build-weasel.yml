@@ -134,9 +134,14 @@ jobs:
         run: |
           if (Test-Path prepare.log) { Get-Content prepare.log | Out-File build-output.log -Append -Encoding utf8 }
           cmd /c ".\build.bat data opencc rime weasel >> build-output.log 2>&1"
-          Write-Host "===== build.bat 退出码: $LASTEXITCODE ====="
+          $bc = $LASTEXITCODE
+          Write-Host "===== build.bat 退出码: $bc ====="
+          # build.bat 失败时不一定返回非零（run#19/20 都 concl=success 但没出 DLL），
+          # 所以以日志里有没有 "error building weasel" 作为真实失败信号。
+          $failed = If (Test-Path build-output.log) { [bool](Select-String -Path build-output.log -Pattern 'error building weasel' -Quiet) } else { $true }
           Get-Content build-output.log -Tail 120
           if (-not (Test-Path build-output.log)) { 'no log' | Out-File build-output.log }
+          if ($failed) { throw 'build.bat 报告 error building weasel — 链接/编译失败' }
 
       - name: 全树列出产物
         if: always()
