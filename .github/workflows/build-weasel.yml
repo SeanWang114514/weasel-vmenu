@@ -18,12 +18,18 @@ jobs:
           submodules: recursive
           fetch-depth: 0
 
-      - name: 环境信息
+      - name: 工具链探测
         run: |
+          echo "--- vswhere ---"
+          & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -property installationPath
+          echo "--- msbuild / cl ---"
+          Get-Command msbuild -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source
+          Get-ChildItem "C:\Program Files (x86)\Microsoft Visual Studio" -Recurse -Filter atlbase.h -ErrorAction SilentlyContinue | Select-Object -First 2 -ExpandProperty FullName
           echo "--- SDK ---"
-          if (Test-Path "C:\Program Files (x86)\Windows Kits\10\Include") { Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\Include" | Select-Object Name } else { echo "没有 SDK Include" }
-          echo "--- ATL ---"
-          Get-ChildItem "C:\Program Files (x86)\Microsoft Visual Studio" -Recurse -Filter atlbase.h -ErrorAction SilentlyContinue | Select-Object -First 2 FullName
+          Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\Include" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name
+          echo "--- cmake / ninja ---"
+          cmake --version | Select-Object -First 1
+          ninja --version
 
       - name: 安装 Boost
         run: |
@@ -39,38 +45,49 @@ jobs:
           echo "BOOST_ROOT=$dst" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       - name: 编译 librime + Weasel
-        run: .\build.bat all
+        # 只点名需要的步骤：不含 installer（runner 没 NSIS）、不含 arm64（arm64EC 工具链）
+        run: |
+          cmd /c ".\build.bat boost data opencc rime weasel > build-output.log 2>&1"
+          $code = $LASTEXITCODE
+          Write-Host "===== build.bat 退出码: $code ====="
+          Get-Content build-output.log -Tail 120
+          if (-not (Test-Path build-output.log)) { 'build.bat 没有产生日志' | Out-File build-output.log }
 
-      - name: 全树列出产物（诊断用）
+      - name: 全树列出产物
         if: always()
         run: |
-          foreach ($d in 'output','lib') {
+          foreach ($d in 'output','x64\Release','lib64','lib') {
             if (Test-Path $d) { echo "===== $d ====="; Get-ChildItem $d -Recurse -Include *.dll,*.exe,*.lib -ErrorAction SilentlyContinue | Select-Object FullName,Length,LastWriteTime | Format-Table -AutoSize | Out-String | Write-Host }
           }
 
-      - name: 打包新编译出的 weasel DLL
+      - name: 打包 DLL 与日志
         if: always()
         run: |
+          if (-not (Test-Path build-output.log)) { 'no log' | Out-File build-output.log }
           $cut = (Get-Date).AddMinutes(-150)
-          # 不限定目录：build.bat 可能把 weasel*.dll 放在 output 的子目录里，
-          # 之前只扫 output 顶层，结果错把第三方 7z.dll/WinSparkle.dll 当成了产物。
-          $cand = @(Get-ChildItem $env:GITHUB_WORKSPACE -Recurse -File -ErrorAction SilentlyContinue -Include weasel.dll,weaselx64.dll,weaselarm64.dll |
+          $cand = @(Get-ChildItem $env:GITHUB_WORKSPACE -Recurse -File -ErrorAction SilentlyContinue -Include weasel.dll,weaselx64.dll |
                     Where-Object { $_.LastWriteTime -gt $cut -and $_.FullName -notmatch '\\test\\' })
           Write-Host "== 新生成的小狼毫 DLL =="
           $cand | Select-Object FullName,Length,LastWriteTime | Format-Table -AutoSize | Out-String | Write-Host
-          if ($cand.Count -lt 2) { throw "没有编出 weasel*.dll（找到 $($cand.Count) 个），查看上面 output 全树" }
-          $names = @()
-          foreach ($f in $cand) { Copy-Item $f.FullName -Destination (Join-Path $env:GITHUB_WORKSPACE $f.Name) -Force; $names += $f.Name }
-          $names = $names | Sort-Object -Unique
-          Compress-Archive -Path $names -DestinationPath weasel-grid-dlls.zip -Force
-          Get-Item weasel-grid-dlls.zip | Select-Object Name,Length
+          if ($cand.Count -ge 2) {
+            foreach ($f in $cand) { Copy-Item $f.FullName -Destination (Join-Path $env:GITHUB_WORKSPACE $f.Name) -Force }
+            $names = @($cand.Name | Sort-Object -Unique)
+            Compress-Archive -Path $names -DestinationPath weasel-grid-dlls.zip -Force
+            Get-Item weasel-grid-dlls.zip | Select-Object Name,Length
+          } else {
+            Write-Host "::warning::没编出 weasel*.dll，只发布构建日志供诊断"
+          }
 
-      - name: 发布到 release
+      - name: 发布（DLL 若存在则一并发布，日志始终发布）
+        if: always()
         uses: softprops/action-gh-release@v2
         with:
           tag_name: weasel-grid-${{ github.run_number }}
           name: weasel-grid build ${{ github.run_number }}
           body: |
-            带 vmenu-grid 方向键补丁的小狼毫 0.17.4 x64 DLL（GitHub Actions 编译）。
-            部署方式：停 WeaselServer 后替换安装目录里的同名 DLL。
-          files: weasel-grid-dlls.zip
+            小狼毫 0.17.4 + vmenu-grid 方向键补丁（GitHub Actions 编译）。
+            build-output.log 是 build.bat 的完整输出，用于诊断。
+          files: |
+            build-output.log
+            weasel-grid-dlls.zip
+          fail_on_unmatched_files: false
