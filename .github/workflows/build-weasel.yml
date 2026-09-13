@@ -77,7 +77,7 @@ jobs:
           path: |
             deps/boost_1_84_0/stage
             deps/boost_1_84_0/bin.v2
-          key: boost-184-stage-${{ runner.os }}-${{ hashFiles('install_boost.bat') }}
+          key: boost-184-stage-v145-${{ runner.os }}
 
       - name: 让构建改用带 ATL 的工具集 v145（MSB8052 提示 v142 与 14.51 不兼容）
         run: |
@@ -161,7 +161,7 @@ jobs:
       - name: 编译 librime + Weasel
         run: |
           Copy-Item prepare.log build-output.log -Force -ErrorAction SilentlyContinue
-          cmd /c ".\build.bat boost data opencc rime weasel >> build-output.log 2>&1"
+          cmd /c ".\build.bat data opencc rime weasel >> build-output.log 2>&1"
           Write-Host "===== build.bat 退出码: $LASTEXITCODE ====="
           Get-Content build-output.log -Tail 120
           if (-not (Test-Path build-output.log)) { 'no log' | Out-File build-output.log }
