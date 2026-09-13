@@ -77,43 +77,10 @@ jobs:
           path: |
             deps/boost_1_84_0/stage
             deps/boost_1_84_0/bin.v2
-          key: boost-184-stage-v145-${{ runner.os }}
+          key: boost-184-stage-b2-v1-${{ runner.os }}
 
-      - name: 让构建改用带 ATL 的工具集 v145（MSB8052 提示 v142 与 14.51 不兼容）
-        run: |
-          # 依据：runner 上只有工具集 14.51.36231 装了 ATL（14.29/14.44 均 ATL=False），
-          # 而 MSBuild 的 MSB8052 明确指出该版本对应的 PlatformToolset 是 v145。
-          # 光改 INCLUDE/LIB 无效（MSBuild 会按工具集重算），必须改 PlatformToolset 本身。
-          "PLATFORM_TOOLSET=v145" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-          "PlatformToolset=v145"  | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-
-          # cmake 生成的工程靠 -T 参数，写死在仓库里的工程要直接改文件（排除 Boost 源码树，那里文件上万）
-          $n = 0
-          Get-ChildItem $env:GITHUB_WORKSPACE -Recurse -Include *.vcxproj,*.props -File -ErrorAction SilentlyContinue |
-            Where-Object { $_.FullName -notmatch '\\deps\\boost_' } |
-            ForEach-Object {
-              $raw = Get-Content $_.FullName -Raw
-              if ($raw -match 'v142') {
-                Set-Content -Path $_.FullName -Value ($raw -replace 'v142', 'v145') -Encoding utf8 -NoNewline
-                $n++
-              }
-            }
-          "已把 $n 个工程文件里的 v142 改为 v145" | Out-File prepare.log -Append -Encoding utf8
-          "PLATFORM_TOOLSET=v145, PlatformToolset=v145" | Out-File prepare.log -Append -Encoding utf8
-
-          # ATL 头/库路径兜底（防止某些工程不走工具集默认路径）
-          $atlRoot = Get-ChildItem "C:\Program Files\Microsoft Visual Studio" -Recurse -Directory -Filter 'atlmfc' -ErrorAction SilentlyContinue |
-                     Where-Object { Test-Path (Join-Path $_.FullName 'include\atlbase.h') } |
-                     ForEach-Object { Split-Path $_.FullName -Parent } | Sort-Object -Descending | Select-Object -First 1
-          if ($atlRoot) {
-            $inc = Join-Path $atlRoot 'atlmfc\include'
-            $lib = Join-Path $atlRoot 'atlmfc\lib\x64'
-            "INCLUDE=$inc" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-            "CL=/I`"$inc`"" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-            "_LINK_=/LIBPATH:`"$lib`"" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-            "ATL 兜底: $inc" | Out-File prepare.log -Append -Encoding utf8
-          }
-          Get-Content prepare.log
+      - name: 按需把工程切到带 ATL 的工具集（v142 自带 ATL 时保持原样）
+        run: pwsh -NoProfile -File ci/select-toolset.ps1
       - name: 安装 Boost
         run: |
           $bv = '1.84.0'
@@ -127,23 +94,8 @@ jobs:
           if (-not (Test-Path (Join-Path $dst 'boost\version.hpp'))) { throw "Boost 没解压成功" }
           echo "BOOST_ROOT=$dst" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
-      - name: 编译 Boost 依赖库（只编 Weasel 用到的几个，几分钟）
-        run: |
-          # 不用 build.bat 的 boost 关键字（它会 b2 全量编译，40 分钟）。Weasel 链接只需要
-          # thread / serialization / wserialization（自动链接头请求 mt-s = 静态库 + 静态运行库）。
-          $br = Join-Path $env:GITHUB_WORKSPACE 'deps\boost_1_84_0'
-          Set-Location $br
-          if (-not (Test-Path 'b2.exe')) { cmd /c "bootstrap.bat > bootstrap.log 2>&1" ; "bootstrap 完成" }
-          $args1 = '--with-thread --with-serialization --with-wserialization --with-system --with-filesystem --with-date_time --with-chrono --with-atomic --with-regex link=static runtime-link=static threading=multi address-model=64 variant=release stage'
-          cmd /c "b2.exe -j4 $args1 > b2.log 2>&1"
-          "b2 退出码: $LASTEXITCODE"
-          $libdir = Join-Path $br 'stage\lib'
-          "库目录: $libdir"
-          if (Test-Path $libdir) { Get-ChildItem $libdir -Filter '*.lib' | Select-Object -First 12 -ExpandProperty Name | Out-File prepare.log -Append -Encoding utf8 }
-          $n = 0
-          if (Test-Path $libdir) { $n = (Get-ChildItem $libdir -Filter '*.lib').Count }
-          "$libdir 下共 $n 个 .lib（期望 >= 10）" | Out-File prepare.log -Append -Encoding utf8
-          if ($n -lt 4) { Get-Content (Join-Path $br 'b2.log') -Tail 30 | Out-File prepare.log -Append -Encoding utf8 }
+      - name: 编译 Boost 静态库（b2 多套工具集重试 + CMake 兜底）
+        run: pwsh -NoProfile -File ci/build-boost.ps1
       - name: 修正 Boost 库的工具集标记（vc142 -> vc143）
         run: |
           # 换成 v145 工具集后，Boost 的自动链接头按编译器版本请求 -vc143- 名字，
@@ -177,7 +129,7 @@ jobs:
           $found | Select-Object -First 10 | Out-File prepare.log -Append -Encoding utf8
       - name: 编译 librime + Weasel
         run: |
-          Copy-Item prepare.log build-output.log -Force -ErrorAction SilentlyContinue
+          if (Test-Path prepare.log) { Get-Content prepare.log | Out-File build-output.log -Append -Encoding utf8 }
           cmd /c ".\build.bat data opencc rime weasel >> build-output.log 2>&1"
           Write-Host "===== build.bat 退出码: $LASTEXITCODE ====="
           Get-Content build-output.log -Tail 120

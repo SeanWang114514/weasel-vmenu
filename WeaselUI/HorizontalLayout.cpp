@@ -132,10 +132,8 @@ void HorizontalLayout::DoLayout(CDCHandle dc, PDWR pDWR) {
       //   * 候选数 >  9：每 9 个强制换行，即展开后的「每行严格 9 个」网格。
       const int kGridCols = 9;
       const bool grid_multi_row = (candidates_count > kGridCols);
-      // <=9 个候选：只允许一行。放不下时**丢掉尾部的候选**（用户明确要求：宁可少显示几个，
-      //   也绝不折行；候选多长都保持一行）。
-      // >9 个候选：每 9 个强制换行，形成「每行严格 9 个」的展开网格（9 就是每行 9 个候选词）。
-            // 用户明确要求：候选 <=9 时强制全部显示在一行——不换行、不丢弃候选，窗口随内容变宽。
+      // <=9 个候选：永远只排一行，窗口宽度随内容自适应（不看宽度、不丢候选）。
+      // >9 个候选（展开后的 9×4 网格）：每 9 个强制换行，严格每行 9 个。
       const bool vmenu_line_break =
           grid_multi_row && i > 0 && (i % kGridCols) == 0;
       if (vmenu_line_break) {
