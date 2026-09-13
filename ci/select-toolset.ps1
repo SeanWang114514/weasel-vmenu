@@ -72,6 +72,7 @@ if ($target) {
   $lib = Join-Path $tsRoot 'atlmfc\lib\x64'
   Say "ATL include=$inc lib=$lib"
   if (Test-Path $inc) { "INCLUDE=$inc" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8 }
-  if (Test-Path $lib) { "_LINK_=/LIBPATH:`"$lib`"" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8 }
+  # ATL 链接库不再走 _LINK_（x64/x86 的库目录不同，写死会出错），改由仓库根的 Directory.Build.props
+  # 按 $(PlatformShortName) 给 Weasel* 工程加 atls.lib + atlthunk.lib（见该文件注释）。
 }
 exit 0
