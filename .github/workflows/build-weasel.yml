@@ -1,0 +1,61 @@
+name: build-weasel-grid
+
+# 在 GitHub 的 Windows runner 上编译打了 vmenu-grid 补丁的小狼毫（runner 自带 Windows SDK + ATL，
+# 因此不需要本地 VS 环境）。产出 output\ 下的 x64 DLL，作为 release 附件发布，便于下载部署。
+on:
+  push:
+    branches: [weasel-grid-build]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: 环境信息
+        run: |
+          cmake --version
+          where cl || echo "cl 不在 PATH（build.bat 会自己找 VS）"
+          dir "C:\Program Files (x86)\Windows Kits\10\Include" || echo "没有 SDK Include"
+
+      - name: 安装 Boost
+        run: .\install_boost.bat
+
+      - name: 编译全部
+        run: .\build.bat all
+        continue-on-error: true
+
+      - name: 看看产出了什么
+        if: always()
+        run: |
+          if (Test-Path output) { Get-ChildItem output -Recurse -Include *.dll,*.exe | Select-Object -First 40 FullName,Length }
+          else { echo "output 目录不存在" }
+          if (Test-Path output\archives) { Get-ChildItem output\archives }
+
+      - name: 打包 DLL
+        if: always()
+        run: |
+          if (Test-Path output) {
+            Get-ChildItem output -Filter *.dll | Copy-Item -Destination . -Force
+            Compress-Archive -Path *.dll -DestinationPath weasel-grid-dlls.zip -Force
+            Get-Item weasel-grid-dlls.zip | Select-Object Name,Length
+          } else { echo "没有 output 目录可打包"; exit 1 }
+
+      - name: 发布到 release
+        if: always()
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: weasel-grid-${{ github.run_number }}
+          name: weasel-grid build ${{ github.run_number }}
+          body: |
+            在 GitHub Actions 上编译的、带 vmenu-grid 方向键补丁的小狼毫 0.17.4 x64 DLL。
+            补丁位置：RimeWithWeasel/RimeWithWeasel.cpp 的 ProcessKeyEvent()。
+          files: weasel-grid-dlls.zip
+          fail_on_unmatched_files: false
