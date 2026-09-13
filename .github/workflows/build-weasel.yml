@@ -79,31 +79,41 @@ jobs:
             deps/boost_1_84_0/bin.v2
           key: boost-184-stage-${{ runner.os }}-${{ hashFiles('install_boost.bat') }}
 
-      - name: 让构建改用带 ATL 的工具集（关键修复）
+      - name: 让构建改用带 ATL 的工具集 v145（MSB8052 提示 v142 与 14.51 不兼容）
         run: |
-          # weasel.props 把 PlatformToolset 固定为 v142，而 runner 上只有 14.51.36231 装了 ATL。
-          # 直接改 INCLUDE/LIB 无效（MSBuild/vcvars 会按工具集重算头文件路径），
-          # 正确做法是覆盖 VCToolsVersion —— 这样 cl.exe 与 rc.exe 都会通过工程自身的
-          # VC_IncludePath(= $(VCToolsInstallDir)include;...atlmfc\include) 找到 atlbase.h / afxres.h。
+          # 依据：runner 上只有工具集 14.51.36231 装了 ATL（14.29/14.44 均 ATL=False），
+          # 而 MSBuild 的 MSB8052 明确指出该版本对应的 PlatformToolset 是 v145。
+          # 光改 INCLUDE/LIB 无效（MSBuild 会按工具集重算），必须改 PlatformToolset 本身。
+          "PLATFORM_TOOLSET=v145" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "PlatformToolset=v145"  | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+          # cmake 生成的工程靠 -T 参数，写死在仓库里的工程要直接改文件（排除 Boost 源码树，那里文件上万）
+          $n = 0
+          Get-ChildItem $env:GITHUB_WORKSPACE -Recurse -Include *.vcxproj,*.props -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -notmatch '\\deps\\boost_' } |
+            ForEach-Object {
+              $raw = Get-Content $_.FullName -Raw
+              if ($raw -match 'v142') {
+                Set-Content -Path $_.FullName -Value ($raw -replace 'v142', 'v145') -Encoding utf8 -NoNewline
+                $n++
+              }
+            }
+          "已把 $n 个工程文件里的 v142 改为 v145" | Out-File prepare.log -Append -Encoding utf8
+          "PLATFORM_TOOLSET=v145, PlatformToolset=v145" | Out-File prepare.log -Append -Encoding utf8
+
+          # ATL 头/库路径兜底（防止某些工程不走工具集默认路径）
           $atlRoot = Get-ChildItem "C:\Program Files\Microsoft Visual Studio" -Recurse -Directory -Filter 'atlmfc' -ErrorAction SilentlyContinue |
                      Where-Object { Test-Path (Join-Path $_.FullName 'include\atlbase.h') } |
                      ForEach-Object { Split-Path $_.FullName -Parent } | Sort-Object -Descending | Select-Object -First 1
-          if (-not $atlRoot) { throw "runner 上找不到带 ATL 的工具集" }
-          $ver = Split-Path $atlRoot -Leaf
-          $inc = Join-Path $atlRoot 'atlmfc\include'
-          $lib = Join-Path $atlRoot 'atlmfc\lib\x64'
-          "VCToolsVersion=$ver" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-          "CL=/I`"$inc`"" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-          "_LINK_=/LIBPATH:`"$lib`"" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-          "INCLUDE=$inc" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-          "LIB=$lib" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-          "===== 让构建使用工具集 $ver（ATL 所在处）=====" | Out-File prepare.log -Append -Encoding utf8
-          "VCToolsVersion=$ver" | Out-File prepare.log -Append -Encoding utf8
-          "CL=/I`"$inc`"" | Out-File prepare.log -Append -Encoding utf8
-          "可用工具集:" | Out-File prepare.log -Append -Encoding utf8
-          Get-ChildItem "C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC" -Directory |
-            ForEach-Object { "  $($_.Name) ATL=$(Test-Path (Join-Path $_.FullName 'atlmfc\include\atlbase.h'))" } |
-            Out-File prepare.log -Append -Encoding utf8
+          if ($atlRoot) {
+            $inc = Join-Path $atlRoot 'atlmfc\include'
+            $lib = Join-Path $atlRoot 'atlmfc\lib\x64'
+            "INCLUDE=$inc" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+            "CL=/I`"$inc`"" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+            "_LINK_=/LIBPATH:`"$lib`"" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+            "ATL 兜底: $inc" | Out-File prepare.log -Append -Encoding utf8
+          }
+          Get-Content prepare.log
       - name: 安装 Boost
         run: |
           $bv = '1.84.0'
