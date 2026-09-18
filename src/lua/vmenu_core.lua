@@ -171,10 +171,10 @@ function M.grid_key(ctx, repr)
       grid_set(ctx, true)     -- 第一次 ↓：展开成 4 行 × 9 列
       return true
     end
-    -- 已展开时按 ↓：**绝不折叠**（用户明确要求），也不再做别的动作。
-    -- 「往下跳一行 (+9)」由 Weasel 侧补丁（RimeWithWeasel.cpp::ProcessKeyEvent 里的
-    -- highlight_candidate_on_current_page）完成；只有跳到越界（已在最后一行）时才会
-    -- 落到这里，此时什么都不做，并吞掉按键，避免 rime 原生导航器把高亮挪走。
+    -- 已展开还能收到 ↓ = Weasel 侧补丁判定「已在最后一行、再按 ↓ 越界」才放行到这里
+    -- → 按「继续翻页」处理：整屏翻 36 个，新一屏的第 1 行 = 原来的第 5 行（以此类推）。
+    -- 「光标停在翻页前所在列的最上方」由补丁在放行后把高亮放回**同一列**（col = 高亮 % 9）。
+    M.page_next(ctx)
     return true
   end
   if repr == "Up" then

@@ -185,6 +185,24 @@ void CCandidateList::UpdateUI(...) {
 
 ---
 
+### 2.5 补丁 5/6：翻页 +「第 5 行 → 第 1 行」+「光标停在同一纵列的最上方」（本机首编 Server，2026-09-19）
+
+**需求（用户原话）**：「在候选词最底部继续翻页然后将第5行的词显示在第一行 以此类推 光标在同一纵列的最上方」
+「还有保留+号下翻选择预选词的功能」。
+
+| 项 | 内容 |
+| --- | --- |
+| 翻页量 | 展开态一页 36 个（`menu_filter.lua`：`start = page*lim`，`start >= 总数`归零）→ 翻一页 = 原第 5 行变新第 1 行（上一轮已上线） |
+| Server 拦截（`RimeWithWeasel.cpp::ProcessKeyEvent`） | `vmenu_grid` 展开态下拦截 `+`/`-`（`keycode==0x2b/0x2d`（主键盘，ToUnicodeEx 产物）或 `KP_Add/KP_Subtract`）和「最后一行再按 `↓`（`delta>0 && Down` 且 `target>=count` 越界）」→ ① 记 `col = 高亮 % 9`；② 交给 `rime_api->process_key`（Lua 处理器选项翻页）；③ `highlight_candidate_on_current_page(col)` 放回同列第一行；④ `_Respond/_UpdateUI`，`return handled` |
+| 为什么不越界拦截 | 箭头键目标**没越界**时维持 2.3 的纯移动高亮（窗口不换）；`↑` 在第一行 / `←` 在最左 仍放行给 rime（`↑` 收起） |
+| Lua 配合 | `vmenu_core.lua grid_key`：已展开还能收到 `↓` ＝ 越界放行 → `page_next`（不再空吞） |
+| ★ 本机编 Server 的完整解锁链 | ① `VC.ATL`（14.51）真正装上（UAC 禁用 → `Start-Process -Verb RunAs`）；② `rime.dll` 导出 → `rime.def`（修列序抓名字）→ `lib /machine:x64` 得 `rime.lib`；③ Boost 静态库 `libboost_*-vc143-mt-s-x64-1_84.lib`（`ci/build-boost.ps1` 的 user-config 显式写 cl 路径；编完把名字补 `-x64-` 段）；④ RC 缺 `afxres.h` → 写本地 `include/afxres.h` shim（gitignore）。`msbuild /t:WeaselServer /p:Platform=x64` → `output\WeaselServer.exe` |
+| 部署 | 只换 `C:\Program Files\Rime\weasel-0.17.4\WeaselServer.exe`（停进程→替换→重启）。md5 新旧：`FFA4285B…`(2756096) → `1D87C729A92FCD8336A62C814CBD7B87`(2684416)。备份 `dll-backup\20260919-0050-pre-samecol\` |
+| 作用域 | **服务端全局**：不改 TSF 客户端 DLL → 所有程序**立竿见影、无需重启各自程序**（与 2.4 相反） |
+| 验收（fresh Notepad + modlens 读图 + 像素） | `shi`→`↓`→`→→`（第 3 列 `十`）→`+`：第 1 行 = 37–45 且高亮 = 第 3 列第 1 行 `3 狮` ✅；`++−` 与 `+` 后像素 diff=0 ✅；第 4 行按 `↓` 翻页、高亮仍在第 3 列第 1 行 ✅ |
+
+---
+
 ## 3. Lua 侧（跟着 DLL 一起才是完整体验）
 
 DLL 只提供「能不能」；「什么时候」由 Lua 通过 context option `vmenu_grid` 控制。

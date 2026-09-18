@@ -3,6 +3,17 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 本项目在真机（Windows 11 + Weasel 0.17.4 + librime 1.13.1 + rime-ice）上验证。
 
+## [0.2.6] — 2026-09-19
+
+候选方格翻页收尾，**第一次在本机编出 `WeaselServer.exe`**（不再依赖 CI）：
+`+` / `-`（主键盘与小键盘）以及「最后一行继续按 `↓`」都会**整屏翻 36 个** →
+「新一屏第 1 行 = 原来的第 5 行，以此类推」；翻页后**高亮自动回到同一纵列的最上方**
+（`col = 原高亮 % 9`，服务端 `highlight_candidate_on_current_page`）；`+` 再 `-` 能
+**像素级回到原页**。部署只换服务端 exe（md5 `1D87C729A92FCD8336A62C814CBD7B87`），
+TSF 客户端 DLL 未动 → 所有程序立即生效、不用各自重启。完整记录见
+[`docs/GRID-CANDIDATE-DLL.md`](docs/GRID-CANDIDATE-DLL.md) §2.5 与
+[`docs/PROGRESS.md`](docs/PROGRESS.md) §1.19。
+
 ## [0.2.5] — 2026-09-18
 
 候选方格这一轮**改了 Weasel 源码并用 GitHub Actions 重新编译**（这是本项目第一次改动输入法本体）：
