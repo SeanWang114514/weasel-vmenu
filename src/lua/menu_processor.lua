@@ -51,7 +51,15 @@ local function handle(key, env)
     -- 主键盘 +（shift+equal）与小键盘 +（KP_Add）在 librime 里都归一化成 plus；
     -- 减号是 minus / KP_Subtract。两个方向都要接，「原来的 +- 翻页」才算回来。
     if repr == "plus" or repr == "KP_Add" then
+      -- [同列光标] 先记住当前选中项所在的「列」，翻页后再放回同一列的最上面一行
+      local col = 0
+      pcall(function()
+        local i = ctx:get_selected_candidate_index()
+        if i then col = i % core.GRID_COLS end
+      end)
       pcall(core.page_next, ctx)
+      pcall(function() ctx.selected_candidate_index = col end)
+      pcall(function() ctx:set_selected_candidate_index(col) end)
       return 1
     end
     if repr == "minus" or repr == "KP_Subtract" then
