@@ -52,12 +52,27 @@ function Get-FgTitle {
 }
 
 function Tap([string]$name) {
+  # Supports "shift+equals" / "ctrl+a" style chunks so we can send + (shift+=) etc.
+  $mods = @()
+  while ($name -match '^(shift|ctrl|alt)\+(.+)$') {
+    $mods += $Matches[1]
+    $name = $Matches[2]
+  }
   $vk = $VK[$name.ToLower()]
   if ($null -eq $vk) { throw "unknown key: $name" }
   $sc = [Tg]::MapVirtualKey([uint32]$vk, 0)
+  foreach ($m in $mods) {
+    [Tg]::keybd_event([byte]$VK[$m], 0, 0, [UIntPtr]::Zero)
+    Start-Sleep -Milliseconds 25
+  }
   [Tg]::keybd_event([byte]$vk, [byte]$sc, 0, [UIntPtr]::Zero)
   Start-Sleep -Milliseconds 35
   [Tg]::keybd_event([byte]$vk, [byte]$sc, 2, [UIntPtr]::Zero)
+  $rev = @($mods); [array]::Reverse($rev)
+  foreach ($m in $rev) {
+    Start-Sleep -Milliseconds 25
+    [Tg]::keybd_event([byte]$VK[$m], 0, 2, [UIntPtr]::Zero)
+  }
   Start-Sleep -Milliseconds 65
 }
 
