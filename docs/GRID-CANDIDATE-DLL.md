@@ -30,7 +30,7 @@
 
 ---
 
-## 2. 三个补丁
+## 2. 四个补丁
 
 ### 2.1 排版：每 9 个换行，≤9 个绝不换行
 
@@ -126,6 +126,62 @@ if (!(keyEvent.mask & ibus::Modifier::RELEASE_MASK) &&
 
 > ⚠️ `include/KeyEvent.h` 里 `Keycode::Down` 与 `ibus::Down` 是**同一个枚举**，
 > 键盘映射不用担心（`WeaselTSF/KeyEvent.cpp` 把 `VK_DOWN` → `ibus::Down`）。
+
+---
+
+### 2.4 集成：不让「应用程序自己画候选」抢走我们的窗（用户实测「只有记事本有数字」的根因）
+
+**症状**：用户反馈「**只有记事本有数字，其他软件都没有**」。记事本里序号/方格一切正常，
+Chrome、微信、Office 等全是原样的浅色系统列表。
+
+**根因**（在源码里逐行确认）：`WeaselTSF/CandidateList.cpp`
+
+```cpp
+if (IsEqualIID(riid, IID_ITfUIElement) || ... ) { *ppvObj = ...; }
+else if (IsEqualIID(riid, IID_IUnknown) ||
+         IsEqualIID(riid, __uuidof(ITfIntegratableCandidateListUIElement))) {
+  *ppvObj = (ITfIntegratableCandidateListUIElement*)this;   // ← 把「集成候选列表」接口给了应用
+}
+...
+pUIElementMgr->BeginUIElement(this, &_pbShow, &uiid);        // 应用在这里说「我自己画」
+if (_pbShow) { _ui->style() = _style; _MakeUIWindow(); }     // _pbShow == FALSE → 我们根本不建窗
+...
+void CCandidateList::UpdateUI(...) {
+  if (_pbShow == FALSE) _UpdateUIElement();                  // 把候选登记给应用去画
+  if (status.composing) Show(_pbShow); else Show(FALSE);     // _pbShow == FALSE → 我们的窗永不显示
+}
+```
+
+小狼毫把 `ITfIntegratableCandidateListUIElement` 暴露了出去，于是**支持「集成候选列表」的程序
+（Chrome / Edge / 微信 / Office / UWP / 搜索框）会自己画候选**；它们只能拿到
+`CCandidateList::GetString()` 给的**候选文本** —— 标签槽里的 1–9 序号、我们的 9×4 方格
+**全都不存在**。记事本不支持集成，`_pbShow = TRUE`，于是退回**我们自己的候选窗**，
+所以只有它有数字。
+
+**修法（两处，都已落进分支）**：
+
+1. **源码**：`CandidateList.cpp` 的 `QueryInterface` 里**不再暴露**
+   `ITfIntegratableCandidateListUIElement`（只保留 `ITfUIElement` /
+   `ITfCandidateListUIElement` / `ITfCandidateListUIElementBehavior`）；
+   并在 `StartUI()` 里把 `_pbShow` **强制置 TRUE** 再 `_MakeUIWindow()` 作保险
+   （`_pbShow` 同时决定 `UpdateUI()` 里的 `Show(_pbShow)`，不强制就会「建了但永不显示」）。
+2. **已部署的二进制补丁（本机没装 ATL，编不出来时的等效做法）**：
+   `__uuidof(...)` 会把 IID 以 **16 字节常量**编进 DLL；把该常量**最后一个字节**
+   `0x7B → 0x7A`，`IsEqualIID()` 就永远匹配不上，等价于「不再暴露集成接口」。
+   实测：x86 `weasel.dll` 偏移 **729804**、x64 `weaselx64.dll` 偏移 **825488**，
+   该 GUID `4F-F5-A6-C7-80-B1-6F-41-B2-BF-7B-F2-E4-68-3D-7B` 在各自 DLL 里**只出现 1 次**，
+   而 `WeaselServer.exe` 里**一次都没有** —— 所以改动只影响这一处判断，不碰别的功能。
+
+**注意（必须告诉用户）**：TSF 客户端 DLL 是**进程内**的，改完**要让那些程序重启**才会加载新代码；
+只重启 `WeaselServer.exe` 不够（这一点和「网格/序号在服务端」正好相反）。
+
+**验收证据**（2026-09-18 夜，Chrome + `file://` 测试页）：
+
+| 状态 | 视觉读图结果 |
+|---|---|
+| 补丁后收起态 | `1 这个 2 这关 3 这股 4 组合柜 5 赵河沟 6 遮盖 7 这给 8 鹧鸪 9 这跟`（数字均在词的**左边**）✅ |
+| 补丁后按 `↓` | 第 1 行 `1…9` 带序号；第 2/3/4 行「**开头无数字**」✅（正是「只有第一行带序号」的规格） |
+| 补丁前 | 同样的操作在 Chrome 里读到的只有 `zhe'g` + 应用自画的候选列表，**没有任何数字** |
 
 ---
 
@@ -310,6 +366,7 @@ node "C:\Users\Administrator\.codex\skills\claude-vision-skill\vision.js" "<png 
 | `→` 在同一行内右移 | 差分集中在行内、y 范围不变 | ✅ **2085** 点 |
 | 第 1 行按 `↑` **收起** | 高度回到 64px | ✅ 64px |
 | 序号在**词前** | 视觉读出 `1 这个 2 这关 …` | ✅ 三个状态 + 重启后第一次输入都读出「数字在词的左边」 |
+| **Chrome（原本自己画候选的程序）也有序号** | 补丁 4 后视觉读出 `1 这个 … 9 这跟`，`↓` 后只有第 1 行带 1–9 | ✅ 见 §2.4 |
 | **按高亮行重新编号** | `↓↓` 后视觉读出第 2 行是 `1 这更 2 遮光 3 这该 …`，第 1/3/4 行「无数字」 | ✅ |
 | `+` 下翻 | 换掉一批候选、第 4 次回到第 0 页、编码不上屏 | ✅ 页0/1 差 **1739** 点、页1/2 差 **1528** 点、第 4 次差 **0** 点 |
 | v 菜单没被破坏 | 按 `v` 仍出 5 项 | ✅（人工看图） |

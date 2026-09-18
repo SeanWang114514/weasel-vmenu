@@ -266,6 +266,23 @@
 | 顺带修掉的脚本 bug | ① 函数里 `return` 数组被 PowerShell 展平 → 高度恒为 0、四条几何断言误报 FAIL（改成返回 hashtable）；② 第一张截图必须真点窗口（否则没焦点、按键全丢）；③ 脚本必须存成 **UTF-8 带 BOM**，否则 `powershell -File`（5.1）按 ANSI 解析、直接语法报错 |
 | 教训 | 新写的任何 `ctx:set_option` 都必须**先读再写** —— 否则每个按键都会让 rime 重翻译一整份候选 |
 
+### 1.18 「只有记事本有数字」的真根因：应用自己画候选（补丁 4）
+
+用户紧接着反馈 **「只是在笔记本有了 其他软件都没有」** —— 这是本轮最关键的发现。
+
+| 项 | 内容 |
+| --- | --- |
+| 症状 | 记事本里序号 / 9×4 方格都正常；Chrome、微信、Office 等**完全是原样**（没数字、没方格） |
+| 为什么一开始骗过了我 | 我一直在**新开的记事本**里验收：记事本不支持「集成候选列表」→ 用我们自己的候选窗 → 当然有数字；用户用的是 Chrome / 微信，走的是另一条路 |
+| 根因（源码逐行确认） | `WeaselTSF/CandidateList.cpp` 的 `QueryInterface` 把 `ITfIntegratableCandidateListUIElement` 暴露给应用 → Chrome / Edge / 微信 / Office / UWP / 搜索框这些**会自己画候选**的程序接管列表，而它们只拿到 `GetString()` 的**候选文本**：标签槽的 1–9 序号、9×4 方格都不存在；记事本不支持 → `_pbShow = TRUE` → 退回我们自己的窗 |
+| 修法（源码） | ① `QueryInterface` 不再暴露该接口（只留 `ITfUIElement` / `ITfCandidateListUIElement` / `...Behavior`）；② `StartUI()` 里 `_pbShow = TRUE` 后再 `_MakeUIWindow()` 作保险（`_pbShow` 同时决定 `UpdateUI()` 的 `Show(_pbShow)`，不强制就会「建了但永不显示」） |
+| ★ 本机编不出来 | VS18 **没装 ATL**（`VC\Tools\MSVC\14.51.36231` 下没有 `atlmfc`、vswhere 也查不到 `VC.ATL`）→ `WeaselTSF` 必失败（`atlbase.h`/`afxres.h`）。本地从零编还要先编 Boost（约 40 分钟）+ librime，**且仍会卡在 ATL** |
+| ★ 二进制等效补丁（实际部署的） | `__uuidof(ITfIntegratableCandidateListUIElement)` 把 IID 以 **16 字节常量**编进 DLL：把该常量**最后一字节** `0x7B → 0x7A`，`IsEqualIID()` 永远匹配不上 = 等价于「不再暴露集成接口」。实测该常量在 x86 `weasel.dll` 偏移 **729804**、x64 `weaselx64.dll` 偏移 **825488**，各自**只出现 1 次**，`WeaselServer.exe` 里 **0 次** → 只影响这一处判断 |
+| 部署结果 | `weasel.dll` 1034752 = `60B0F018D85B7DE1322A332E31657D11`、`weaselx64.dll` 1179648 = `0B1307495A5766094CA6636242748677`；`System32` = x64、`SysWOW64` = x86（md5 一一对应 ✅）；备份 `D:\weasel-build\dll-backup\20260918-205936-patch4\` |
+| 验收证据（Chrome + `file://` 测试页） | 补丁前：只有 `zhe'g` + 应用自画列表、**无数字**；补丁后：`1 这个 2 这关 3 这股 4 组合柜 5 赵河沟 6 遮盖 7 这给 8 鹧鸪 9 这跟`（数字在词**左边**），按 `↓` 展开后**只有第 1 行** 1–9、第 2/3/4 行「开头无数字」✅ |
+| ★ 必须告知用户 | TSF 客户端 DLL 是**进程内**的：用 Chrome / 微信等**已开着的程序**验证时必须**先重启那些程序**（只重启 `WeaselServer.exe` 不够）；这一点与「网格/序号画在服务端」正好相反 |
+| 顺带发现 | 本机**没有 Edge**；`SysWOW64\notepad.exe` 被应用别名拦成 Store 版记事本（想测 32 位得另找程序）；微信输入法与「按程序记住输入法」会让人误判成「小狼毫坏了」 |
+
 ---
 
 ## 2. 时间线（2026-09-13）
@@ -355,6 +372,9 @@
 | 19:56 | 视觉复核：收起态读出 `1 这个 2 这关 …`、`↓` 展开后**只有第 1 行**有 1–9 且数字在**词前**、`↓↓` 后第 2 行变成 `1 这更 2 遮光 3 这该 …` ✅ |
 | 20:0x | 用户反馈「没显示数字 + 有卡顿」：查日志发现**每个按键连刷约 30 条 `updated option`**（一事一链的级联）→ 修成「值没变不写 option」，同样操作从 **410 行 → 2 行** ✅；「没数字」是 19:2x–19:52 的中间态（旧 server + 已删注释序号） |
 | 20:1x | 修 `tools/verify-grid.ps1` 的三个坑（数组展平 / 首图没焦点 / 无 BOM 解析失败），重跑 **10 项全 PASS**（`+` 下翻 1739/1528 点、循环回首页 0 点） |
+| 20:2x | 用户报「**只有记事本有数字**」→ 复查源码发现 CCandidateList 把 ITfIntegratableCandidateListUIElement 暴露给应用，Chrome/微信/Office 因此**自己画候选**（无序号/无方格）；记事本不支持集成才用我们的窗 → 这就是「一直只在记事本里验收」漏掉的盲区 |
+| 20:4x | 本机 VS18 **缺 ATL**（本地编译修不了）；改用**一字节常量补丁**（IID 末字节  x7B→0x7A）打已部署 DLL，4 份文件部署完毕（60B0F018…/ B130749…）|
+| 20:5x | 在 **Chrome**（原本会自己画候选的程序）里视觉验收：补丁后读出 1 这个 … 9 这跟（数字在词左边），按 ↓ 展开后**只有第 1 行**带 1–9 ✅ 修复确认 |
 
 ---
 
@@ -392,7 +412,7 @@
 
 | 组件 | 状态 |
 | --- | --- |
-| `WeaselServer.exe` | **自己编的网格版**在运行：2756096 字节，md5 `FFA4285B058E81BDA32EC55F45A2D4DD`（run#24，含**标签槽序号**补丁）；`weasel.dll` 1034752 = `79E433322C63C7E5FC411EE97FA90B4D`、`weaselx64.dll` 1179648 = `993E74EC9A95F327F3D91BF7483C3759`；`C:\Windows\System32\weasel.dll` = 1179648 = `993E74EC…`（= x64）、`C:\Windows\SysWOW64\weasel.dll` = 1034752 = `79E43332…`（= x86）✅ 5 个文件都对上了（run#23 的 `E021086B…` / `87D7A659…` / `777A7995…` 已全部被替换） |
+| `WeaselServer.exe` | **自己编的网格版**在运行：2756096 字节，md5 `FFA4285B058E81BDA32EC55F45A2D4DD`（run#24，含**标签槽序号**补丁）；`weasel.dll` 1034752 = `60B0F018D85B7DE1322A332E31657D11`、`weaselx64.dll` 1179648 = `0B1307495A5766094CA6636242748677`；`C:\Windows\System32\weasel.dll` = 1179648 = `0B130749…`（= x64）、`C:\Windows\SysWOW64\weasel.dll` = 1034752 = `60B0F018…`（= x86）✅ 5 个文件都对上了。**后缀 `-patch4` 的 md5 是在 run#24 基础上改了集成 IID 一个字节**（见 §1.18 与 `GRID-CANDIDATE-DLL.md` §2.4；未打补丁前的 md5 是 `79E43332…` / `993E74EC…`） |
 | `clipboard-sync.ps1` | 1 个实例 |
 | `vmenu-watcher.ps1` | 1 个实例（监督常驻窗口） |
 | `vmenu-settings-gui.ps1` | 1 个实例（常驻，未打开时是隐藏窗口） |

@@ -122,6 +122,9 @@ librime 的 `DetectModifications` 判定「无改动」后会**直接中止整�
 | 26 | **`ctx:set_option` 必须先读再写：值没变就一个 option 都别写** | context option 一变，rime 就判定候选表失效、**重新翻译整份候选**。本项目曾因此在**每个按键**上写 4–6 个 option（`page_reset` 循环写 `vmenu_page_0..3`、`grid_set` 写 `vmenu_grid`、`set_raw` 写 `vraw_mode`），实测**一次按键 2ms 内连刷约 30 条** `updated option`、日志 410/571 行是它 → 用户直接反馈「打字卡顿」。改完 410 → **2** 行（`PROGRESS.md` §1.17、`GRID-CANDIDATE-DLL.md` §5.4） |
 | 27 | 带中文的 `.ps1` 要存成 **UTF-8 带 BOM**（或干脆全 ASCII） | `powershell -File`（5.1）按 ANSI 解析无 BOM 的 UTF-8 → 中文字节把引号吃掉，报 `Unexpected token '}'` / `The string is missing the terminator`。`tools/verify-grid.ps1` 就踩过（`pwsh` 7 下正常，所以容易漏） |
 | 28 | PowerShell 函数里 **`return $array` 会被展平** | `tools/verify-grid.ps1` 曾返回「深底横带数组」，调用方拿到的是散开的整数 → 算出的高度**恒为 0**、四条几何断言误报 FAIL。返回 hashtable（或 `,$array`）才安全 |
+| 29 | **验收候选窗必须在「会自己画候选」的程序里也测一遍** —— 记事本一类程序不支持「集成候选列表」，走的路径和其它程序**完全不同** | 小狼毫 WeaselTSF/CandidateList.cpp 把 ITfIntegratableCandidateListUIElement 暴露给应用后，Chrome / Edge / 微信 / Office / UWP 会**自己画候选**（只拿到 GetString() 的候选文本 → **没有标签槽序号、没有 9×4 方格**），只有记事本这类程序才 _pbShow = TRUE 退回我们的窗。症状是「只有记事本有数字」；修法见 GRID-CANDIDATE-DLL.md §2.4。**只在新开记事本里验收会 100% 漏掉这个 bug** |
+| 30 | 改了 weasel.dll / weaselx64.dll 之后，**所有客户端程序都要重启**才会加载新代码 | TSF 是**进程内** DLL：WeaselServer.exe 只管服务端 UI（网格/序号/方向键），客户端 DLL 管按键与「要不要让应用自己画候选」。用户说「只有记事本有数字」时，第一件事就是让他在目标程序里**重开窗口**再试 |
+| 31 | 本机**没有 ATL**（tlmfc/tlbase.h 不存在，swhere -requires VC.ATL 为空）→ WeaselTSF **本地编不出来** | 本地从零编还要先编 Boost（约 40 分钟）+ librime，**且仍会卡在 ATL**。要出 DLL 只能走 CI（需要 push），或对已部署 DLL 做等效的**二进制常量补丁**（改 __uuidof 那个 16 字节 IID 的最后一字节 → IsEqualIID 永不匹配；先确认该常量在目标 DLL 里只出现 1 次、且 server 里 0 次） |
 
 ---
 
@@ -373,7 +376,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\vmenu-tray-setup.ps1
 | 候选框不展开（还是只有一行） | `build\weasel.yaml` 的 `max_width` 是不是 `530`、`build\rime_ice.schema.yaml` 的 `page_size` 是不是 `36`（改完要重启 `WeaselServer`）；`vmenu_core.lua` 的 `GRID_COLS` 是否与之一致；两个 lua 目录是否 MD5 一致 |
 | 按 `↓` / `↑` / `←` / `→` 行为不对 | 普通打字走 `core.grid_key`：`↓` = 收起时展开 / 已展开时**收回**（**0.2.4 起不再上屏**）、`↑` = 收回、`←`/`→` 放行给原生导航器；**v 菜单内方向键必须放行**。若在 v 菜单里乱跳，说明 `grid_key` 被套到了菜单模式上（`cur ~= "" and not core.mode_of(cur)` 这个条件被改坏了） |
 | 展开后按 `↓` 把候选打出去了 | **0.2.3 的 bug，0.2.4 已修**：老代码用 `ctx:select(sel + 9)` 跳行，而 `ctx.select` 是**上屏**。检查两处 lua 的 `vmenu_core.lua` 是否 MD5 一致且重启过；搜文件里还有没有 `ctx:select` 的**调用**（注释提到它属正常）。不要再写回这套「跳行」逻辑 |
-| 选了方向键却不动选中项 | **先确认跑的是自编的 `WeaselServer.exe`**（原版没有这个补丁）：`WeaselServer.exe` 字节数应为 2756096、md5 `FFA4285B058E81BDA32EC55F45A2D4DD`；再确认 `System32`/`SysWOW64` 的 `weasel.dll` 也换过、测试程序重启过。都对了还不动 → 查 `vmenu_grid` option 是否置位（v 菜单里方向键本来就不接管） |
+| 选了方向键却不动选中项 | **先确认跑的是自编的 `WeaselServer.exe`**（原版没有这个补丁）：`WeaselServer.exe` 字节数应为 2756096、md5 `FFA4285B058E81BDA32EC55F45A2D4DD`，`weasel.dll`/`weaselx64.dll` 应为 `60B0F018D85B7DE1322A332E31657D11` / `0B1307495A5766094CA6636242748677`（含集成 IID 的那一字节改动）；再确认 `System32`/`SysWOW64` 的 `weasel.dll` 也换过、测试程序重启过。都对了还不动 → 查 `vmenu_grid` option 是否置位（v 菜单里方向键本来就不接管） |
 | 展开后第 2–4 行也有序号 | 说明跑的还是**原版 server**（序号机制现在是 DLL 的 `GetLabelText` 覆写）；另外确认主题 `style/label_format` 是留空。**不要**用 `alternative_select_labels`（对 Weasel 无效） |
 | **改完 `build` 产物后打字直接出字母、一个候选都没有** | 插进去那行的缩进错了（`menu:` 的子键必须 2 个空格）→ 日志 `config_data.cc:78 Error parsing YAML ... illegal map value`，schema 整个失效；改回缩进再重启 |
 | 菜单里按 `5` 没反应 | `vqi` 分支 / `mode_of` 的 `vqi`→`quick` 是否还在；是否同步了两个 lua 目录并重启过 `WeaselServer`；日志有没有 lua 报错 |
