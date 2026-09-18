@@ -70,37 +70,37 @@ cmake x64 退出码=0
 [64/88] Building CXX object libs\serialization\CMakeFiles\boost_serialization.dir\src\xml_grammar.cpp.obj
 [65/88] Building CXX object libs\filesystem\CMakeFiles\boost_filesystem.dir\src\operations.cpp.obj
 [66/88] Building CXX object libs\filesystem\CMakeFiles\boost_filesystem.dir\src\directory.cpp.obj
-[67/88] Building CXX object libs\filesystem\CMakeFiles\boost_filesystem.dir\src\portability.cpp.obj
-[68/88] Building CXX object libs\filesystem\CMakeFiles\boost_filesystem.dir\src\path.cpp.obj
-[69/88] Building CXX object libs\filesystem\CMakeFiles\boost_filesystem.dir\src\unique_path.cpp.obj
-[70/88] Building CXX object libs\filesystem\CMakeFiles\boost_filesystem.dir\src\path_traits.cpp.obj
-[71/88] Linking CXX static library stage\lib\libboost_serialization-vc145-mt-x64-1_84.lib
+[67/88] Building CXX object libs\filesystem\CMakeFiles\boost_filesystem.dir\src\path.cpp.obj
+[68/88] Building CXX object libs\filesystem\CMakeFiles\boost_filesystem.dir\src\portability.cpp.obj
+[69/88] Building CXX object libs\filesystem\CMakeFiles\boost_filesystem.dir\src\path_traits.cpp.obj
+[70/88] Linking CXX static library stage\lib\libboost_serialization-vc145-mt-x64-1_84.lib
+[71/88] Building CXX object libs\filesystem\CMakeFiles\boost_filesystem.dir\src\unique_path.cpp.obj
 [72/88] Building CXX object libs\filesystem\CMakeFiles\boost_filesystem.dir\src\utf8_codecvt_facet.cpp.obj
 [73/88] Building CXX object libs\filesystem\CMakeFiles\boost_filesystem.dir\src\windows_file_codecvt.cpp.obj
 [74/88] Building CXX object libs\serialization\CMakeFiles\boost_wserialization.dir\src\basic_text_woprimitive.cpp.obj
-[75/88] Building CXX object libs\serialization\CMakeFiles\boost_wserialization.dir\src\binary_wiarchive.cpp.obj
-[76/88] Building CXX object libs\serialization\CMakeFiles\boost_wserialization.dir\src\basic_text_wiprimitive.cpp.obj
-[77/88] Building CXX object libs\serialization\CMakeFiles\boost_wserialization.dir\src\binary_woarchive.cpp.obj
-[78/88] Building CXX object libs\serialization\CMakeFiles\boost_wserialization.dir\src\polymorphic_text_wiarchive.cpp.obj
-[79/88] Building CXX object libs\serialization\CMakeFiles\boost_wserialization.dir\src\polymorphic_text_woarchive.cpp.obj
-[80/88] Building CXX object libs\serialization\CMakeFiles\boost_wserialization.dir\src\polymorphic_xml_woarchive.cpp.obj
-[81/88] Building CXX object libs\serialization\CMakeFiles\boost_wserialization.dir\src\polymorphic_xml_wiarchive.cpp.obj
+[75/88] Building CXX object libs\serialization\CMakeFiles\boost_wserialization.dir\src\binary_woarchive.cpp.obj
+[76/88] Building CXX object libs\serialization\CMakeFiles\boost_wserialization.dir\src\binary_wiarchive.cpp.obj
+[77/88] Building CXX object libs\serialization\CMakeFiles\boost_wserialization.dir\src\basic_text_wiprimitive.cpp.obj
+[78/88] Building CXX object libs\serialization\CMakeFiles\boost_wserialization.dir\src\polymorphic_xml_wiarchive.cpp.obj
+[79/88] Building CXX object libs\serialization\CMakeFiles\boost_wserialization.dir\src\polymorphic_text_wiarchive.cpp.obj
+[80/88] Building CXX object libs\serialization\CMakeFiles\boost_wserialization.dir\src\polymorphic_text_woarchive.cpp.obj
+[81/88] Building CXX object libs\serialization\CMakeFiles\boost_wserialization.dir\src\polymorphic_xml_woarchive.cpp.obj
 [82/88] Building CXX object libs\serialization\CMakeFiles\boost_wserialization.dir\src\text_woarchive.cpp.obj
 [83/88] Building CXX object libs\serialization\CMakeFiles\boost_wserialization.dir\src\text_wiarchive.cpp.obj
-[84/88] Linking CXX static library stage\lib\libboost_filesystem-vc145-mt-x64-1_84.lib
-[85/88] Building CXX object libs\serialization\CMakeFiles\boost_wserialization.dir\src\xml_wiarchive.cpp.obj
+[84/88] Building CXX object libs\serialization\CMakeFiles\boost_wserialization.dir\src\xml_wiarchive.cpp.obj
+[85/88] Linking CXX static library stage\lib\libboost_filesystem-vc145-mt-x64-1_84.lib
 [86/88] Building CXX object libs\serialization\CMakeFiles\boost_wserialization.dir\src\xml_woarchive.cpp.obj
 [87/88] Building CXX object libs\serialization\CMakeFiles\boost_wserialization.dir\src\xml_wgrammar.cpp.obj
 [88/88] Linking CXX static library stage\lib\libboost_wserialization-vc145-mt-x64-1_84.lib
 cmake x64 产出 .lib 数=9
 cmake x86 退出码=0
 --- cmake-boost-x86.log 尾部 25 行
-[64/88] Building CXX object libs\filesystem\CMakeFiles\boost_filesystem.dir\src\operations.cpp.obj
-[65/88] Building CXX object libs\serialization\CMakeFiles\boost_serialization.dir\src\xml_grammar.cpp.obj
+[64/88] Building CXX object libs\serialization\CMakeFiles\boost_serialization.dir\src\xml_grammar.cpp.obj
+[65/88] Building CXX object libs\filesystem\CMakeFiles\boost_filesystem.dir\src\operations.cpp.obj
 [66/88] Building CXX object libs\filesystem\CMakeFiles\boost_filesystem.dir\src\directory.cpp.obj
 [67/88] Building CXX object libs\filesystem\CMakeFiles\boost_filesystem.dir\src\path.cpp.obj
-[68/88] Building CXX object libs\filesystem\CMakeFiles\boost_filesystem.dir\src\portability.cpp.obj
-[69/88] Building CXX object libs\filesystem\CMakeFiles\boost_filesystem.dir\src\path_traits.cpp.obj
+[68/88] Building CXX object libs\filesystem\CMakeFiles\boost_filesystem.dir\src\path_traits.cpp.obj
+[69/88] Building CXX object libs\filesystem\CMakeFiles\boost_filesystem.dir\src\portability.cpp.obj
 [70/88] Linking CXX static library stage\lib\libboost_serialization-vc145-mt-x32-1_84.lib
 [71/88] Building CXX object libs\filesystem\CMakeFiles\boost_filesystem.dir\src\utf8_codecvt_facet.cpp.obj
 [72/88] Building CXX object libs\filesystem\CMakeFiles\boost_filesystem.dir\src\windows_file_codecvt.cpp.obj
@@ -109,15 +109,15 @@ cmake x86 退出码=0
 [75/88] Building CXX object libs\serialization\CMakeFiles\boost_wserialization.dir\src\basic_text_wiprimitive.cpp.obj
 [76/88] Building CXX object libs\serialization\CMakeFiles\boost_wserialization.dir\src\binary_wiarchive.cpp.obj
 [77/88] Building CXX object libs\serialization\CMakeFiles\boost_wserialization.dir\src\binary_woarchive.cpp.obj
-[78/88] Building CXX object libs\serialization\CMakeFiles\boost_wserialization.dir\src\polymorphic_text_wiarchive.cpp.obj
-[79/88] Building CXX object libs\serialization\CMakeFiles\boost_wserialization.dir\src\polymorphic_text_woarchive.cpp.obj
-[80/88] Building CXX object libs\serialization\CMakeFiles\boost_wserialization.dir\src\polymorphic_xml_wiarchive.cpp.obj
+[78/88] Building CXX object libs\serialization\CMakeFiles\boost_wserialization.dir\src\polymorphic_text_woarchive.cpp.obj
+[79/88] Building CXX object libs\serialization\CMakeFiles\boost_wserialization.dir\src\polymorphic_xml_wiarchive.cpp.obj
+[80/88] Building CXX object libs\serialization\CMakeFiles\boost_wserialization.dir\src\polymorphic_text_wiarchive.cpp.obj
 [81/88] Building CXX object libs\serialization\CMakeFiles\boost_wserialization.dir\src\polymorphic_xml_woarchive.cpp.obj
 [82/88] Building CXX object libs\serialization\CMakeFiles\boost_wserialization.dir\src\text_woarchive.cpp.obj
 [83/88] Building CXX object libs\serialization\CMakeFiles\boost_wserialization.dir\src\text_wiarchive.cpp.obj
 [84/88] Linking CXX static library stage\lib\libboost_filesystem-vc145-mt-x32-1_84.lib
-[85/88] Building CXX object libs\serialization\CMakeFiles\boost_wserialization.dir\src\xml_wiarchive.cpp.obj
-[86/88] Building CXX object libs\serialization\CMakeFiles\boost_wserialization.dir\src\xml_woarchive.cpp.obj
+[85/88] Building CXX object libs\serialization\CMakeFiles\boost_wserialization.dir\src\xml_woarchive.cpp.obj
+[86/88] Building CXX object libs\serialization\CMakeFiles\boost_wserialization.dir\src\xml_wiarchive.cpp.obj
 [87/88] Building CXX object libs\serialization\CMakeFiles\boost_wserialization.dir\src\xml_wgrammar.cpp.obj
 [88/88] Linking CXX static library stage\lib\libboost_wserialization-vc145-mt-x32-1_84.lib
 cmake x86 产出 .lib 数=9
@@ -186,7 +186,7 @@ libboost_date_time-vc143-mt-s-x32-1_84.lib
 libboost_date_time-vc143-mt-s-x64-1_84.lib
 libboost_exception-vc143-mt-s-x32-1_84.lib
 libboost_exception-vc143-mt-s-x64-1_84.lib
-PRODUCT_VERSION=0.17.4.0.3afff79
+PRODUCT_VERSION=0.17.4.0.9ddf372
 WEASEL_VERSION=0.17.4
 WEASEL_BUILD=0
 WEASEL_ROOT=D:\a\weasel-vmenu\weasel-vmenu
@@ -308,8 +308,8 @@ to suppress it.
 -- Performing Test COMPILER_HAS_DEPRECATED_ATTR - Failed
 -- Performing Test COMPILER_HAS_DEPRECATED
 -- Performing Test COMPILER_HAS_DEPRECATED - Success
--- Configuring done (35.6s)
--- Generating done (0.0s)
+-- Configuring done (41.2s)
+-- Generating done (0.2s)
 CMake Warning (unused-cli):
   Manually-specified variables were not used by the project:
 
@@ -504,7 +504,7 @@ to suppress it.
 -- Looking for pthread_create in pthread
 -- Looking for pthread_create in pthread - not found
 -- Found Threads: TRUE
--- Configuring done (12.2s)
+-- Configuring done (10.0s)
 -- Generating done (0.0s)
 CMake Warning (unused-cli):
   Manually-specified variables were not used by the project:
@@ -667,7 +667,7 @@ to suppress it.
 -- Check for working CXX compiler: C:/Program Files/Microsoft Visual Studio/18/Enterprise/VC/Tools/MSVC/14.51.36231/bin/Hostx64/x64/cl.exe - skipped
 -- Detecting CXX compile features
 -- Detecting CXX compile features - done
--- Configuring done (2.2s)
+-- Configuring done (2.1s)
 -- Generating done (0.0s)
 CMake Warning (unused-cli):
   Manually-specified variables were not used by the project:
@@ -808,7 +808,7 @@ to suppress it.
 -- Looking for pthread_create in pthread
 -- Looking for pthread_create in pthread - not found
 -- Found Threads: TRUE
--- Configuring done (7.5s)
+-- Configuring done (8.0s)
 -- Generating done (0.0s)
 CMake Warning (unused-cli):
   Manually-specified variables were not used by the project:
@@ -889,7 +889,7 @@ to suppress it.
 -- Check for working CXX compiler: C:/Program Files/Microsoft Visual Studio/18/Enterprise/VC/Tools/MSVC/14.51.36231/bin/Hostx64/x64/cl.exe - skipped
 -- Detecting CXX compile features
 -- Detecting CXX compile features - done
--- Configuring done (3.8s)
+-- Configuring done (2.8s)
 -- Generating done (0.0s)
 CMake Warning (unused-cli):
   Manually-specified variables were not used by the project:
@@ -1115,8 +1115,8 @@ CMake Warning (policy) at data/CMakeLists.txt:181 (install):
 This warning is for project developers.  Use -Wno-author or -Wno-policy to
 suppress it.
 
--- Configuring done (3.5s)
--- Generating done (0.1s)
+-- Configuring done (2.9s)
+-- Generating done (0.0s)
 -- Build files have been written to: D:/a/weasel-vmenu/weasel-vmenu/librime/deps/opencc/build
 MSBuild version 18.9.1+a81b43525 for .NET Framework
 
@@ -1307,8 +1307,8 @@ suppress it.
 -- rime_plugins_libs: 
 -- rime_plugins_modules: 
 true
--- Configuring done (5.9s)
--- Generating done (0.1s)
+-- Configuring done (4.8s)
+-- Generating done (0.0s)
 CMake Warning (unused-cli):
   Manually-specified variables were not used by the project:
 
@@ -8309,7 +8309,7 @@ to suppress it.
 -- Performing Test COMPILER_HAS_DEPRECATED_ATTR - Failed
 -- Performing Test COMPILER_HAS_DEPRECATED
 -- Performing Test COMPILER_HAS_DEPRECATED - Success
--- Configuring done (33.1s)
+-- Configuring done (27.8s)
 -- Generating done (0.0s)
 CMake Warning (unused-cli):
   Manually-specified variables were not used by the project:
@@ -8505,7 +8505,7 @@ to suppress it.
 -- Looking for pthread_create in pthread
 -- Looking for pthread_create in pthread - not found
 -- Found Threads: TRUE
--- Configuring done (12.3s)
+-- Configuring done (10.2s)
 -- Generating done (0.0s)
 CMake Warning (unused-cli):
   Manually-specified variables were not used by the project:
@@ -8612,7 +8612,7 @@ to suppress it.
 -- Check for working CXX compiler: C:/Program Files/Microsoft Visual Studio/18/Enterprise/VC/Tools/MSVC/14.51.36231/bin/Hostx64/x86/cl.exe - skipped
 -- Detecting CXX compile features
 -- Detecting CXX compile features - done
--- Configuring done (2.1s)
+-- Configuring done (2.0s)
 -- Generating done (0.0s)
 CMake Warning (unused-cli):
   Manually-specified variables were not used by the project:
@@ -8753,7 +8753,7 @@ to suppress it.
 -- Looking for pthread_create in pthread
 -- Looking for pthread_create in pthread - not found
 -- Found Threads: TRUE
--- Configuring done (6.2s)
+-- Configuring done (4.8s)
 -- Generating done (0.0s)
 CMake Warning (unused-cli):
   Manually-specified variables were not used by the project:
@@ -8834,7 +8834,7 @@ to suppress it.
 -- Check for working CXX compiler: C:/Program Files/Microsoft Visual Studio/18/Enterprise/VC/Tools/MSVC/14.51.36231/bin/Hostx64/x86/cl.exe - skipped
 -- Detecting CXX compile features
 -- Detecting CXX compile features - done
--- Configuring done (3.6s)
+-- Configuring done (2.9s)
 -- Generating done (0.0s)
 CMake Warning (unused-cli):
   Manually-specified variables were not used by the project:
@@ -9056,7 +9056,7 @@ CMake Warning (policy) at data/CMakeLists.txt:181 (install):
 This warning is for project developers.  Use -Wno-author or -Wno-policy to
 suppress it.
 
--- Configuring done (3.3s)
+-- Configuring done (3.0s)
 -- Generating done (0.1s)
 -- Build files have been written to: D:/a/weasel-vmenu/weasel-vmenu/librime/deps/opencc/build
 MSBuild version 18.9.1+a81b43525 for .NET Framework
@@ -9236,7 +9236,7 @@ suppress it.
 -- rime_plugins_libs: 
 -- rime_plugins_modules: 
 true
--- Configuring done (5.6s)
+-- Configuring done (4.6s)
 -- Generating done (0.0s)
 CMake Warning (unused-cli):
   Manually-specified variables were not used by the project:
@@ -15651,12 +15651,12 @@ PLATFORM_TOOLSET=v145
 VERSION_MAJOR=0
 VERSION_MINOR=17
 VERSION_PATCH=4
-PRODUCT_VERSION=0.17.4.0.3afff79
+PRODUCT_VERSION=0.17.4.0.9ddf372
 FILE_VERSION=0.17.4.0
 Generated weasel.props
 Could Not Find D:\a\weasel-vmenu\weasel-vmenu\msbuild*.log
 MSBuild version 18.9.1+a81b43525 for .NET Framework
-Build started 9/18/2026 9:27:29 AM.
+Build started 9/18/2026 10:22:18 AM.
 
 Project "D:\a\weasel-vmenu\weasel-vmenu\weasel.sln" on node 1 (Build target(s)).
 ValidateSolutionConfiguration:
@@ -15760,29 +15760,29 @@ ClCompile:
   HorizontalLayout.cpp
   Layout.cpp
 D:\a\weasel-vmenu\weasel-vmenu\include\WeaselUtility.h(279,22): warning C4996: 'localtime': This function or variable may be unsafe. Consider using localtime_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details. [D:\a\weasel-vmenu\weasel-vmenu\WeaselUI\WeaselUI.vcxproj]
-  (compiling source file '/DirectWriteResources.cpp')
+  (compiling source file '/HorizontalLayout.cpp')
+  
+D:\a\weasel-vmenu\weasel-vmenu\include\WeaselUtility.h(279,22): warning C4996: 'localtime': This function or variable may be unsafe. Consider using localtime_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details. [D:\a\weasel-vmenu\weasel-vmenu\WeaselUI\WeaselUI.vcxproj]
+  (compiling source file '/Layout.cpp')
   
 D:\a\weasel-vmenu\weasel-vmenu\include\WeaselUtility.h(279,22): warning C4996: 'localtime': This function or variable may be unsafe. Consider using localtime_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details. [D:\a\weasel-vmenu\weasel-vmenu\WeaselUI\WeaselUI.vcxproj]
   (compiling source file '/FullScreenLayout.cpp')
   
 D:\a\weasel-vmenu\weasel-vmenu\include\WeaselUtility.h(279,22): warning C4996: 'localtime': This function or variable may be unsafe. Consider using localtime_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details. [D:\a\weasel-vmenu\weasel-vmenu\WeaselUI\WeaselUI.vcxproj]
-  (compiling source file '/HorizontalLayout.cpp')
-  
-D:\a\weasel-vmenu\weasel-vmenu\include\WeaselUtility.h(279,22): warning C4996: 'localtime': This function or variable may be unsafe. Consider using localtime_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details. [D:\a\weasel-vmenu\weasel-vmenu\WeaselUI\WeaselUI.vcxproj]
-  (compiling source file '/Layout.cpp')
+  (compiling source file '/DirectWriteResources.cpp')
   
   StandardLayout.cpp
   VerticalLayout.cpp
   VHorizontalLayout.cpp
   WeaselPanel.cpp
 D:\a\weasel-vmenu\weasel-vmenu\include\WeaselUtility.h(279,22): warning C4996: 'localtime': This function or variable may be unsafe. Consider using localtime_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details. [D:\a\weasel-vmenu\weasel-vmenu\WeaselUI\WeaselUI.vcxproj]
-  (compiling source file '/StandardLayout.cpp')
+  (compiling source file '/VHorizontalLayout.cpp')
   
 D:\a\weasel-vmenu\weasel-vmenu\include\WeaselUtility.h(279,22): warning C4996: 'localtime': This function or variable may be unsafe. Consider using localtime_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details. [D:\a\weasel-vmenu\weasel-vmenu\WeaselUI\WeaselUI.vcxproj]
   (compiling source file '/VerticalLayout.cpp')
   
 D:\a\weasel-vmenu\weasel-vmenu\include\WeaselUtility.h(279,22): warning C4996: 'localtime': This function or variable may be unsafe. Consider using localtime_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details. [D:\a\weasel-vmenu\weasel-vmenu\WeaselUI\WeaselUI.vcxproj]
-  (compiling source file '/VHorizontalLayout.cpp')
+  (compiling source file '/StandardLayout.cpp')
   
 D:\a\weasel-vmenu\weasel-vmenu\include\WeaselUtility.h(279,22): warning C4996: 'localtime': This function or variable may be unsafe. Consider using localtime_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details. [D:\a\weasel-vmenu\weasel-vmenu\WeaselUI\WeaselUI.vcxproj]
   (compiling source file '/WeaselPanel.cpp')
@@ -15824,16 +15824,16 @@ ClCompile:
   Composition.cpp
   DisplayAttribute.cpp
 D:\a\weasel-vmenu\weasel-vmenu\include\WeaselUtility.h(279,22): warning C4996: 'localtime': This function or variable may be unsafe. Consider using localtime_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details. [D:\a\weasel-vmenu\weasel-vmenu\WeaselTSF\WeaselTSF.vcxproj]
-  (compiling source file '/Composition.cpp')
+  (compiling source file '/DisplayAttribute.cpp')
+  
+D:\a\weasel-vmenu\weasel-vmenu\include\WeaselUtility.h(279,22): warning C4996: 'localtime': This function or variable may be unsafe. Consider using localtime_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details. [D:\a\weasel-vmenu\weasel-vmenu\WeaselTSF\WeaselTSF.vcxproj]
+  (compiling source file '/CandidateList.cpp')
   
 D:\a\weasel-vmenu\weasel-vmenu\include\WeaselUtility.h(279,22): warning C4996: 'localtime': This function or variable may be unsafe. Consider using localtime_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details. [D:\a\weasel-vmenu\weasel-vmenu\WeaselTSF\WeaselTSF.vcxproj]
   (compiling source file '/Compartment.cpp')
   
 D:\a\weasel-vmenu\weasel-vmenu\include\WeaselUtility.h(279,22): warning C4996: 'localtime': This function or variable may be unsafe. Consider using localtime_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details. [D:\a\weasel-vmenu\weasel-vmenu\WeaselTSF\WeaselTSF.vcxproj]
-  (compiling source file '/DisplayAttribute.cpp')
-  
-D:\a\weasel-vmenu\weasel-vmenu\include\WeaselUtility.h(279,22): warning C4996: 'localtime': This function or variable may be unsafe. Consider using localtime_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details. [D:\a\weasel-vmenu\weasel-vmenu\WeaselTSF\WeaselTSF.vcxproj]
-  (compiling source file '/CandidateList.cpp')
+  (compiling source file '/Composition.cpp')
   
   DisplayAttributeInfo.cpp
   DisplayAttributeProvider.cpp
@@ -15852,24 +15852,24 @@ D:\a\weasel-vmenu\weasel-vmenu\include\WeaselUtility.h(279,22): warning C4996: '
 D:\a\weasel-vmenu\weasel-vmenu\include\WeaselUtility.h(279,22): warning C4996: 'localtime': This function or variable may be unsafe. Consider using localtime_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details. [D:\a\weasel-vmenu\weasel-vmenu\WeaselTSF\WeaselTSF.vcxproj]
   (compiling source file '/KeyEventSink.cpp')
   
-  Register.cpp
 D:\a\weasel-vmenu\weasel-vmenu\include\WeaselUtility.h(279,22): warning C4996: 'localtime': This function or variable may be unsafe. Consider using localtime_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details. [D:\a\weasel-vmenu\weasel-vmenu\WeaselTSF\WeaselTSF.vcxproj]
   (compiling source file '/LanguageBar.cpp')
   
+  Register.cpp
+  Server.cpp
 D:\a\weasel-vmenu\weasel-vmenu\include\WeaselUtility.h(279,22): warning C4996: 'localtime': This function or variable may be unsafe. Consider using localtime_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details. [D:\a\weasel-vmenu\weasel-vmenu\WeaselTSF\WeaselTSF.vcxproj]
   (compiling source file '/Register.cpp')
   
+  TextEditSink.cpp
 D:\a\weasel-vmenu\weasel-vmenu\WeaselTSF\Register.cpp(35,17): warning C4312: 'type cast': conversion from 'DWORD' to 'HKL' of greater size [D:\a\weasel-vmenu\weasel-vmenu\WeaselTSF\WeaselTSF.vcxproj]
   (compiling source file '/Register.cpp')
   
 D:\a\weasel-vmenu\weasel-vmenu\WeaselTSF\Register.cpp(66,31): warning C4267: 'initializing': conversion from 'size_t' to 'ULONG', possible loss of data [D:\a\weasel-vmenu\weasel-vmenu\WeaselTSF\WeaselTSF.vcxproj]
   (compiling source file '/Register.cpp')
   
-  Server.cpp
 D:\a\weasel-vmenu\weasel-vmenu\WeaselTSF\Register.cpp(232,56): warning C4267: 'argument': conversion from 'size_t' to 'DWORD', possible loss of data [D:\a\weasel-vmenu\weasel-vmenu\WeaselTSF\WeaselTSF.vcxproj]
   (compiling source file '/Register.cpp')
   
-  TextEditSink.cpp
   ThreadMgrEventSink.cpp
   WeaselTSF.cpp
 D:\a\weasel-vmenu\weasel-vmenu\include\WeaselUtility.h(279,22): warning C4996: 'localtime': This function or variable may be unsafe. Consider using localtime_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details. [D:\a\weasel-vmenu\weasel-vmenu\WeaselTSF\WeaselTSF.vcxproj]
@@ -15887,7 +15887,7 @@ D:\a\weasel-vmenu\weasel-vmenu\include\WeaselUtility.h(279,22): warning C4996: '
   C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.51.36231\bin\HostX86\x64\CL.exe /c /I"D:\a\weasel-vmenu\weasel-vmenu\\include" /I"D:\a\weasel-vmenu\weasel-vmenu\deps\boost_1_84_0" /Zi /nologo /W3 /WX- /diagnostics:column /MP /O2 /Oi /GL /D WIN32 /D NDEBUG /D _WINDOWS /D _USRDLL /D WEASELTSF_EXPORTS /D _WINDLL /D _UNICODE /D UNICODE /D VERSION_MAJOR=0 /D VERSION_MINOR=17 /D VERSION_PATCH=4 /Gm- /EHsc /MT /GS /Gy /fp:precise /Zc:wchar_t /Zc:forScope /Zc:inline /std:c++17 /Fo"D:\a\weasel-vmenu\weasel-vmenu\msbuild\Release\x64\WeaselTSF\\" /Fd"D:\a\weasel-vmenu\weasel-vmenu\msbuild\Release\x64\WeaselTSF\vc145.pdb" /external:W3 /Gd /TP /FC /errorReport:queue /Zc:threadSafeInit- /utf-8 dllmain.cpp
   dllmain.cpp
 ResourceCompile:
-  C:\Program Files (x86)\Windows Kits\10\bin\10.0.26100.0\x86\rc.exe /D WIN64 /D _UNICODE /D UNICODE /D _UNICODE /D UNICODE /D VERSION_MAJOR=0 /D VERSION_MINOR=17 /D VERSION_PATCH=4 /D PRODUCT_VERSION=0.17.4.0.3afff79 /D FILE_VERSION=0.17.4.0 /l"0x0409" /I"D:\a\weasel-vmenu\weasel-vmenu\\include" /nologo /fo"D:\a\weasel-vmenu\weasel-vmenu\msbuild\Release\x64\WeaselTSF\WeaselTSF.res" WeaselTSF.rc 
+  C:\Program Files (x86)\Windows Kits\10\bin\10.0.26100.0\x86\rc.exe /D WIN64 /D _UNICODE /D UNICODE /D _UNICODE /D UNICODE /D VERSION_MAJOR=0 /D VERSION_MINOR=17 /D VERSION_PATCH=4 /D PRODUCT_VERSION=0.17.4.0.9ddf372 /D FILE_VERSION=0.17.4.0 /l"0x0409" /I"D:\a\weasel-vmenu\weasel-vmenu\\include" /nologo /fo"D:\a\weasel-vmenu\weasel-vmenu\msbuild\Release\x64\WeaselTSF\WeaselTSF.res" WeaselTSF.rc 
 Link:
   C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.51.36231\bin\HostX86\x64\link.exe /ERRORREPORT:QUEUE /OUT:"D:\a\weasel-vmenu\weasel-vmenu\output\weaselx64.dll" /INCREMENTAL:NO /NOLOGO /LIBPATH:"D:\a\weasel-vmenu\weasel-vmenu\\lib" /LIBPATH:"D:\a\weasel-vmenu\weasel-vmenu\deps\boost_1_84_0\stage\lib" /LIBPATH:"C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.51.36231\atlmfc\lib\x64" Usp10.lib kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib odbc32.lib odbccp32.lib kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib odbc32.lib odbccp32.lib atls.lib /DEF:"WeaselTSF.def" /MANIFEST /MANIFESTUAC:"level='asInvoker' uiAccess='false'" /manifest:embed /manifestinput:"C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.51.36231\Include\Manifest\PerMonitorHighDPIAware.manifest" /DEBUG /PDB:"D:\a\weasel-vmenu\weasel-vmenu\output\weaselx64.pdb" /SUBSYSTEM:WINDOWS /OPT:REF /OPT:ICF /LTCG:incremental /LTCGOUT:"D:\a\weasel-vmenu\weasel-vmenu\msbuild\Release\x64\WeaselTSF\weaselx64.iobj" /TLBID:1 /DYNAMICBASE /NXCOMPAT /IMPLIB:"D:\a\weasel-vmenu\weasel-vmenu\output\weaselx64.lib" /MACHINE:X64 /DLL "D:\a\weasel-vmenu\weasel-vmenu\msbuild\Release\x64\WeaselTSF\WeaselTSF.res"
   "D:\a\weasel-vmenu\weasel-vmenu\msbuild\Release\x64\WeaselTSF\CandidateList.obj"
@@ -15957,7 +15957,7 @@ D:\a\weasel-vmenu\weasel-vmenu\WeaselIME\WeaselIME.cpp(471,39): warning C4267: '
   (compiling source file '/WeaselIME.cpp')
   
 ResourceCompile:
-  C:\Program Files (x86)\Windows Kits\10\bin\10.0.26100.0\x86\rc.exe /D _UNICODE /D UNICODE /D VERSION_MAJOR=0 /D VERSION_MINOR=17 /D VERSION_PATCH=4 /D PRODUCT_VERSION=0.17.4.0.3afff79 /D FILE_VERSION=0.17.4.0 /l"0x0409" /I"D:\a\weasel-vmenu\weasel-vmenu\\include" /nologo /fo"D:\a\weasel-vmenu\weasel-vmenu\msbuild\Release\x64\WeaselIME\WeaselIME.res" WeaselIME.rc 
+  C:\Program Files (x86)\Windows Kits\10\bin\10.0.26100.0\x86\rc.exe /D _UNICODE /D UNICODE /D VERSION_MAJOR=0 /D VERSION_MINOR=17 /D VERSION_PATCH=4 /D PRODUCT_VERSION=0.17.4.0.9ddf372 /D FILE_VERSION=0.17.4.0 /l"0x0409" /I"D:\a\weasel-vmenu\weasel-vmenu\\include" /nologo /fo"D:\a\weasel-vmenu\weasel-vmenu\msbuild\Release\x64\WeaselIME\WeaselIME.res" WeaselIME.rc 
 Link:
   C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.51.36231\bin\HostX86\x64\link.exe /ERRORREPORT:QUEUE /OUT:"D:\a\weasel-vmenu\weasel-vmenu\output\weaselx64.ime" /INCREMENTAL:NO /NOLOGO /LIBPATH:"D:\a\weasel-vmenu\weasel-vmenu\\lib" /LIBPATH:"D:\a\weasel-vmenu\weasel-vmenu\deps\boost_1_84_0\stage\lib" /LIBPATH:"C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.51.36231\atlmfc\lib\x64" imm32.lib kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib odbc32.lib odbccp32.lib atls.lib /DEF:"weasel.def" /MANIFEST /MANIFESTUAC:"level='asInvoker' uiAccess='false'" /manifest:embed /manifestinput:"C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.51.36231\Include\Manifest\PerMonitorHighDPIAware.manifest" /PDB:"D:\a\weasel-vmenu\weasel-vmenu\output\weaselx64.pdb" /SUBSYSTEM:WINDOWS /OPT:REF /OPT:ICF /LTCG:incremental /LTCGOUT:"D:\a\weasel-vmenu\weasel-vmenu\msbuild\Release\x64\WeaselIME\weaselx64.iobj" /TLBID:1 /DYNAMICBASE /NXCOMPAT /IMPLIB:"D:\a\weasel-vmenu\weasel-vmenu\output\weaselx64.lib" /MACHINE:X64 /DLL "D:\a\weasel-vmenu\weasel-vmenu\msbuild\Release\x64\WeaselIME\WeaselIME.res"
   "D:\a\weasel-vmenu\weasel-vmenu\msbuild\Release\x64\WeaselIME\dllmain.obj"
@@ -16097,7 +16097,7 @@ D:\a\weasel-vmenu\weasel-vmenu\include\WeaselUtility.h(279,22): warning C4996: '
   
   Generating Code...
 ResourceCompile:
-  C:\Program Files (x86)\Windows Kits\10\bin\10.0.26100.0\x86\rc.exe /D NDEBUG /D _UNICODE /D UNICODE /D VERSION_MAJOR=0 /D VERSION_MINOR=17 /D VERSION_PATCH=4 /D PRODUCT_VERSION=0.17.4.0.3afff79 /D FILE_VERSION=0.17.4.0 /l"0x0409" /I"D:\a\weasel-vmenu\weasel-vmenu\msbuild\Release\x64\WeaselServer\\" /I"D:\a\weasel-vmenu\weasel-vmenu\\include" /nologo /fo"D:\a\weasel-vmenu\weasel-vmenu\msbuild\Release\x64\WeaselServer\WeaselServer.res" WeaselServer.rc 
+  C:\Program Files (x86)\Windows Kits\10\bin\10.0.26100.0\x86\rc.exe /D NDEBUG /D _UNICODE /D UNICODE /D VERSION_MAJOR=0 /D VERSION_MINOR=17 /D VERSION_PATCH=4 /D PRODUCT_VERSION=0.17.4.0.9ddf372 /D FILE_VERSION=0.17.4.0 /l"0x0409" /I"D:\a\weasel-vmenu\weasel-vmenu\msbuild\Release\x64\WeaselServer\\" /I"D:\a\weasel-vmenu\weasel-vmenu\\include" /nologo /fo"D:\a\weasel-vmenu\weasel-vmenu\msbuild\Release\x64\WeaselServer\WeaselServer.res" WeaselServer.rc 
 Link:
   C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.51.36231\bin\HostX86\x64\link.exe /ERRORREPORT:QUEUE /OUT:"D:\a\weasel-vmenu\weasel-vmenu\\output\WeaselServer.exe" /NOLOGO /LIBPATH:"D:\a\weasel-vmenu\weasel-vmenu\\lib64" /LIBPATH:"D:\a\weasel-vmenu\weasel-vmenu\deps\boost_1_84_0\stage\lib" /LIBPATH:"D:\a\weasel-vmenu\weasel-vmenu\\librime\build\lib\Release" /LIBPATH:"C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.51.36231\atlmfc\lib\x64" imm32.lib usp10.lib rime.lib kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib odbc32.lib odbccp32.lib atls.lib /MANIFEST /MANIFESTUAC:"level='asInvoker' uiAccess='false'" /manifest:embed /manifestinput:"C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.51.36231\Include\Manifest\PerMonitorHighDPIAware.manifest" /DEBUG /PDB:"D:\a\weasel-vmenu\weasel-vmenu\output\WeaselServer.pdb" /SUBSYSTEM:WINDOWS /TLBID:1 /DYNAMICBASE /NXCOMPAT /IMPLIB:"D:\a\weasel-vmenu\weasel-vmenu\output\WeaselServer.lib" /MACHINE:X64 "D:\a\weasel-vmenu\weasel-vmenu\msbuild\Release\x64\WeaselServer\WeaselServer.res"
   "D:\a\weasel-vmenu\weasel-vmenu\msbuild\Release\x64\WeaselServer\stdafx.obj"
@@ -16184,7 +16184,7 @@ D:\a\weasel-vmenu\weasel-vmenu\include\WeaselUtility.h(279,22): warning C4996: '
   (compiling source file '/WeaselDeployer.cpp')
   
 ResourceCompile:
-  C:\Program Files (x86)\Windows Kits\10\bin\10.0.26100.0\x86\rc.exe /D _UNICODE /D UNICODE /D VERSION_MAJOR=0 /D VERSION_MINOR=17 /D VERSION_PATCH=4 /D PRODUCT_VERSION=0.17.4.0.3afff79 /D FILE_VERSION=0.17.4.0 /l"0x0409" /nologo /fo"D:\a\weasel-vmenu\weasel-vmenu\msbuild\Release\x64\WeaselDeployer\WeaselDeployer.res" WeaselDeployer.rc 
+  C:\Program Files (x86)\Windows Kits\10\bin\10.0.26100.0\x86\rc.exe /D _UNICODE /D UNICODE /D VERSION_MAJOR=0 /D VERSION_MINOR=17 /D VERSION_PATCH=4 /D PRODUCT_VERSION=0.17.4.0.9ddf372 /D FILE_VERSION=0.17.4.0 /l"0x0409" /nologo /fo"D:\a\weasel-vmenu\weasel-vmenu\msbuild\Release\x64\WeaselDeployer\WeaselDeployer.res" WeaselDeployer.rc 
 Link:
   C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.51.36231\bin\HostX86\x64\link.exe /ERRORREPORT:QUEUE /OUT:"D:\a\weasel-vmenu\weasel-vmenu\output\WeaselDeployer.exe" /INCREMENTAL:NO /NOLOGO /LIBPATH:"D:\a\weasel-vmenu\weasel-vmenu\\lib64" /LIBPATH:"D:\a\weasel-vmenu\weasel-vmenu\deps\boost_1_84_0\stage\lib" /LIBPATH:"D:\a\weasel-vmenu\weasel-vmenu\\librime\build\lib\Release" /LIBPATH:"C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.51.36231\atlmfc\lib\x64" rime.lib kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib odbc32.lib odbccp32.lib atls.lib /MANIFEST /MANIFESTUAC:"level='asInvoker' uiAccess='false'" /manifest:embed /manifestinput:"C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.51.36231\Include\Manifest\PerMonitorHighDPIAware.manifest" /DEBUG /PDB:"D:\a\weasel-vmenu\weasel-vmenu\output\WeaselDeployer.pdb" /SUBSYSTEM:WINDOWS /OPT:REF /OPT:ICF /LTCG:incremental /LTCGOUT:"D:\a\weasel-vmenu\weasel-vmenu\msbuild\Release\x64\WeaselDeployer\WeaselDeployer.iobj" /TLBID:1 /DYNAMICBASE /NXCOMPAT /IMPLIB:"D:\a\weasel-vmenu\weasel-vmenu\output\WeaselDeployer.lib" /MACHINE:X64 "D:\a\weasel-vmenu\weasel-vmenu\msbuild\Release\x64\WeaselDeployer\WeaselDeployer.res"
   "D:\a\weasel-vmenu\weasel-vmenu\msbuild\Release\x64\WeaselDeployer\WeaselUtility.obj"
@@ -16330,9 +16330,9 @@ Build succeeded.
 
 FileLogger wrote to: D:\a\weasel-vmenu\weasel-vmenu\msbuild2.log
 
-Time Elapsed 00:01:18.74
+Time Elapsed 00:01:16.57
 MSBuild version 18.9.1+a81b43525 for .NET Framework
-Build started 9/18/2026 9:28:48 AM.
+Build started 9/18/2026 10:23:35 AM.
 
 Project "D:\a\weasel-vmenu\weasel-vmenu\weasel.sln" on node 1 (Build target(s)).
 ValidateSolutionConfiguration:
@@ -16408,13 +16408,13 @@ ClCompile:
   HorizontalLayout.cpp
   Layout.cpp
 D:\a\weasel-vmenu\weasel-vmenu\include\WeaselUtility.h(279,22): warning C4996: 'localtime': This function or variable may be unsafe. Consider using localtime_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details. [D:\a\weasel-vmenu\weasel-vmenu\WeaselUI\WeaselUI.vcxproj]
-  (compiling source file '/HorizontalLayout.cpp')
-  
-D:\a\weasel-vmenu\weasel-vmenu\include\WeaselUtility.h(279,22): warning C4996: 'localtime': This function or variable may be unsafe. Consider using localtime_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details. [D:\a\weasel-vmenu\weasel-vmenu\WeaselUI\WeaselUI.vcxproj]
   (compiling source file '/FullScreenLayout.cpp')
   
 D:\a\weasel-vmenu\weasel-vmenu\include\WeaselUtility.h(279,22): warning C4996: 'localtime': This function or variable may be unsafe. Consider using localtime_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details. [D:\a\weasel-vmenu\weasel-vmenu\WeaselUI\WeaselUI.vcxproj]
   (compiling source file '/DirectWriteResources.cpp')
+  
+D:\a\weasel-vmenu\weasel-vmenu\include\WeaselUtility.h(279,22): warning C4996: 'localtime': This function or variable may be unsafe. Consider using localtime_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details. [D:\a\weasel-vmenu\weasel-vmenu\WeaselUI\WeaselUI.vcxproj]
+  (compiling source file '/HorizontalLayout.cpp')
   
 D:\a\weasel-vmenu\weasel-vmenu\include\WeaselUtility.h(279,22): warning C4996: 'localtime': This function or variable may be unsafe. Consider using localtime_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details. [D:\a\weasel-vmenu\weasel-vmenu\WeaselUI\WeaselUI.vcxproj]
   (compiling source file '/Layout.cpp')
@@ -16424,10 +16424,10 @@ D:\a\weasel-vmenu\weasel-vmenu\include\WeaselUtility.h(279,22): warning C4996: '
   VHorizontalLayout.cpp
   WeaselPanel.cpp
 D:\a\weasel-vmenu\weasel-vmenu\include\WeaselUtility.h(279,22): warning C4996: 'localtime': This function or variable may be unsafe. Consider using localtime_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details. [D:\a\weasel-vmenu\weasel-vmenu\WeaselUI\WeaselUI.vcxproj]
-  (compiling source file '/VerticalLayout.cpp')
+  (compiling source file '/StandardLayout.cpp')
   
 D:\a\weasel-vmenu\weasel-vmenu\include\WeaselUtility.h(279,22): warning C4996: 'localtime': This function or variable may be unsafe. Consider using localtime_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details. [D:\a\weasel-vmenu\weasel-vmenu\WeaselUI\WeaselUI.vcxproj]
-  (compiling source file '/StandardLayout.cpp')
+  (compiling source file '/VerticalLayout.cpp')
   
 D:\a\weasel-vmenu\weasel-vmenu\include\WeaselUtility.h(279,22): warning C4996: 'localtime': This function or variable may be unsafe. Consider using localtime_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details. [D:\a\weasel-vmenu\weasel-vmenu\WeaselUI\WeaselUI.vcxproj]
   (compiling source file '/VHorizontalLayout.cpp')
@@ -16505,11 +16505,11 @@ D:\a\weasel-vmenu\weasel-vmenu\include\WeaselUtility.h(279,22): warning C4996: '
   
   Register.cpp
   Server.cpp
-  TextEditSink.cpp
-  ThreadMgrEventSink.cpp
 D:\a\weasel-vmenu\weasel-vmenu\include\WeaselUtility.h(279,22): warning C4996: 'localtime': This function or variable may be unsafe. Consider using localtime_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details. [D:\a\weasel-vmenu\weasel-vmenu\WeaselTSF\WeaselTSF.vcxproj]
   (compiling source file '/Register.cpp')
   
+  TextEditSink.cpp
+  ThreadMgrEventSink.cpp
   WeaselTSF.cpp
 D:\a\weasel-vmenu\weasel-vmenu\include\WeaselUtility.h(279,22): warning C4996: 'localtime': This function or variable may be unsafe. Consider using localtime_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details. [D:\a\weasel-vmenu\weasel-vmenu\WeaselTSF\WeaselTSF.vcxproj]
   (compiling source file '/Server.cpp')
@@ -16526,7 +16526,7 @@ D:\a\weasel-vmenu\weasel-vmenu\include\WeaselUtility.h(279,22): warning C4996: '
   C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.51.36231\bin\HostX86\x86\CL.exe /c /I"D:\a\weasel-vmenu\weasel-vmenu\\include" /I"D:\a\weasel-vmenu\weasel-vmenu\deps\boost_1_84_0" /Zi /nologo /W3 /WX- /diagnostics:column /MP /O2 /Oi /Oy- /GL /D WIN32 /D NDEBUG /D _WINDOWS /D _USRDLL /D WEASELTSF_EXPORTS /D _WINDLL /D _UNICODE /D UNICODE /D VERSION_MAJOR=0 /D VERSION_MINOR=17 /D VERSION_PATCH=4 /Gm- /EHsc /MT /GS /Gy /fp:precise /Zc:wchar_t /Zc:forScope /Zc:inline /std:c++17 /Fo"D:\a\weasel-vmenu\weasel-vmenu\msbuild\Release\Win32\WeaselTSF\\" /Fd"D:\a\weasel-vmenu\weasel-vmenu\msbuild\Release\Win32\WeaselTSF\vc145.pdb" /external:W3 /Gd /TP /analyze- /FC /errorReport:queue /Zc:threadSafeInit- /utf-8 dllmain.cpp
   dllmain.cpp
 ResourceCompile:
-  C:\Program Files (x86)\Windows Kits\10\bin\10.0.26100.0\x86\rc.exe /D _UNICODE /D UNICODE /D _UNICODE /D UNICODE /D VERSION_MAJOR=0 /D VERSION_MINOR=17 /D VERSION_PATCH=4 /D PRODUCT_VERSION=0.17.4.0.3afff79 /D FILE_VERSION=0.17.4.0 /l"0x0409" /I"D:\a\weasel-vmenu\weasel-vmenu\\include" /nologo /fo"D:\a\weasel-vmenu\weasel-vmenu\msbuild\Release\Win32\WeaselTSF\WeaselTSF.res" WeaselTSF.rc 
+  C:\Program Files (x86)\Windows Kits\10\bin\10.0.26100.0\x86\rc.exe /D _UNICODE /D UNICODE /D _UNICODE /D UNICODE /D VERSION_MAJOR=0 /D VERSION_MINOR=17 /D VERSION_PATCH=4 /D PRODUCT_VERSION=0.17.4.0.9ddf372 /D FILE_VERSION=0.17.4.0 /l"0x0409" /I"D:\a\weasel-vmenu\weasel-vmenu\\include" /nologo /fo"D:\a\weasel-vmenu\weasel-vmenu\msbuild\Release\Win32\WeaselTSF\WeaselTSF.res" WeaselTSF.rc 
 Link:
   C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.51.36231\bin\HostX86\x86\link.exe /ERRORREPORT:QUEUE /OUT:"D:\a\weasel-vmenu\weasel-vmenu\output\weasel.dll" /INCREMENTAL:NO /NOLOGO /LIBPATH:"D:\a\weasel-vmenu\weasel-vmenu\\lib" /LIBPATH:"D:\a\weasel-vmenu\weasel-vmenu\deps\boost_1_84_0\stage\lib" /LIBPATH:"C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.51.36231\atlmfc\lib\x86" Usp10.lib kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib odbc32.lib odbccp32.lib kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib odbc32.lib odbccp32.lib atls.lib /DEF:"WeaselTSF.def" /MANIFEST /MANIFESTUAC:"level='asInvoker' uiAccess='false'" /manifest:embed /manifestinput:"C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.51.36231\Include\Manifest\PerMonitorHighDPIAware.manifest" /DEBUG /PDB:"D:\a\weasel-vmenu\weasel-vmenu\output\weasel.pdb" /SUBSYSTEM:WINDOWS /OPT:REF /OPT:ICF /LTCG:incremental /LTCGOUT:"D:\a\weasel-vmenu\weasel-vmenu\msbuild\Release\Win32\WeaselTSF\weasel.iobj" /TLBID:1 /DYNAMICBASE /NXCOMPAT /IMPLIB:"D:\a\weasel-vmenu\weasel-vmenu\output\weasel.lib" /MACHINE:X86 /SAFESEH /DLL "D:\a\weasel-vmenu\weasel-vmenu\msbuild\Release\Win32\WeaselTSF\WeaselTSF.res"
   "D:\a\weasel-vmenu\weasel-vmenu\msbuild\Release\Win32\WeaselTSF\CandidateList.obj"
@@ -16587,7 +16587,7 @@ D:\a\weasel-vmenu\weasel-vmenu\include\WeaselUtility.h(279,22): warning C4996: '
   (compiling source file '/WeaselIME.cpp')
   
 ResourceCompile:
-  C:\Program Files (x86)\Windows Kits\10\bin\10.0.26100.0\x86\rc.exe /D _UNICODE /D UNICODE /D VERSION_MAJOR=0 /D VERSION_MINOR=17 /D VERSION_PATCH=4 /D PRODUCT_VERSION=0.17.4.0.3afff79 /D FILE_VERSION=0.17.4.0 /l"0x0409" /I"D:\a\weasel-vmenu\weasel-vmenu\\include" /nologo /fo"D:\a\weasel-vmenu\weasel-vmenu\msbuild\Release\Win32\WeaselIME\WeaselIME.res" WeaselIME.rc 
+  C:\Program Files (x86)\Windows Kits\10\bin\10.0.26100.0\x86\rc.exe /D _UNICODE /D UNICODE /D VERSION_MAJOR=0 /D VERSION_MINOR=17 /D VERSION_PATCH=4 /D PRODUCT_VERSION=0.17.4.0.9ddf372 /D FILE_VERSION=0.17.4.0 /l"0x0409" /I"D:\a\weasel-vmenu\weasel-vmenu\\include" /nologo /fo"D:\a\weasel-vmenu\weasel-vmenu\msbuild\Release\Win32\WeaselIME\WeaselIME.res" WeaselIME.rc 
 Link:
   C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.51.36231\bin\HostX86\x86\link.exe /ERRORREPORT:QUEUE /OUT:"D:\a\weasel-vmenu\weasel-vmenu\output\weasel.ime" /INCREMENTAL:NO /NOLOGO /LIBPATH:"D:\a\weasel-vmenu\weasel-vmenu\\lib" /LIBPATH:"D:\a\weasel-vmenu\weasel-vmenu\deps\boost_1_84_0\stage\lib" /LIBPATH:"C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.51.36231\atlmfc\lib\x86" imm32.lib kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib odbc32.lib odbccp32.lib atls.lib /DEF:"weasel.def" /MANIFEST /MANIFESTUAC:"level='asInvoker' uiAccess='false'" /manifest:embed /manifestinput:"C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.51.36231\Include\Manifest\PerMonitorHighDPIAware.manifest" /PDB:"D:\a\weasel-vmenu\weasel-vmenu\output\weasel.pdb" /SUBSYSTEM:WINDOWS /OPT:REF /OPT:ICF /LTCG:incremental /LTCGOUT:"D:\a\weasel-vmenu\weasel-vmenu\msbuild\Release\Win32\WeaselIME\weasel.iobj" /TLBID:1 /DYNAMICBASE /NXCOMPAT /IMPLIB:"D:\a\weasel-vmenu\weasel-vmenu\output\weasel.lib" /MACHINE:X86 /SAFESEH /DLL "D:\a\weasel-vmenu\weasel-vmenu\msbuild\Release\Win32\WeaselIME\WeaselIME.res"
   "D:\a\weasel-vmenu\weasel-vmenu\msbuild\Release\Win32\WeaselIME\dllmain.obj"
@@ -16698,7 +16698,7 @@ D:\a\weasel-vmenu\weasel-vmenu\include\WeaselUtility.h(279,22): warning C4996: '
   
   Generating Code...
 ResourceCompile:
-  C:\Program Files (x86)\Windows Kits\10\bin\10.0.26100.0\x86\rc.exe /D NDEBUG /D _UNICODE /D UNICODE /D VERSION_MAJOR=0 /D VERSION_MINOR=17 /D VERSION_PATCH=4 /D PRODUCT_VERSION=0.17.4.0.3afff79 /D FILE_VERSION=0.17.4.0 /l"0x0409" /I"D:\a\weasel-vmenu\weasel-vmenu\msbuild\Release\Win32\WeaselServer\\" /I"D:\a\weasel-vmenu\weasel-vmenu\\include" /nologo /fo"D:\a\weasel-vmenu\weasel-vmenu\msbuild\Release\Win32\WeaselServer\WeaselServer.res" WeaselServer.rc 
+  C:\Program Files (x86)\Windows Kits\10\bin\10.0.26100.0\x86\rc.exe /D NDEBUG /D _UNICODE /D UNICODE /D VERSION_MAJOR=0 /D VERSION_MINOR=17 /D VERSION_PATCH=4 /D PRODUCT_VERSION=0.17.4.0.9ddf372 /D FILE_VERSION=0.17.4.0 /l"0x0409" /I"D:\a\weasel-vmenu\weasel-vmenu\msbuild\Release\Win32\WeaselServer\\" /I"D:\a\weasel-vmenu\weasel-vmenu\\include" /nologo /fo"D:\a\weasel-vmenu\weasel-vmenu\msbuild\Release\Win32\WeaselServer\WeaselServer.res" WeaselServer.rc 
 Link:
   C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.51.36231\bin\HostX86\x86\link.exe /ERRORREPORT:QUEUE /OUT:"D:\a\weasel-vmenu\weasel-vmenu\\output\Win32\WeaselServer.exe" /NOLOGO /LIBPATH:"D:\a\weasel-vmenu\weasel-vmenu\\lib" /LIBPATH:"D:\a\weasel-vmenu\weasel-vmenu\deps\boost_1_84_0\stage\lib" /LIBPATH:"D:\a\weasel-vmenu\weasel-vmenu\\librime\build\lib\Release" /LIBPATH:"C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.51.36231\atlmfc\lib\x86" imm32.lib usp10.lib rime.lib kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib odbc32.lib odbccp32.lib atls.lib /MANIFEST /MANIFESTUAC:"level='asInvoker' uiAccess='false'" /manifest:embed /manifestinput:"C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.51.36231\Include\Manifest\PerMonitorHighDPIAware.manifest" /DEBUG /PDB:"D:\a\weasel-vmenu\weasel-vmenu\output\Win32\WeaselServer.pdb" /SUBSYSTEM:WINDOWS /LARGEADDRESSAWARE /LTCG /LTCGOUT:"D:\a\weasel-vmenu\weasel-vmenu\msbuild\Release\Win32\WeaselServer\WeaselServer.iobj" /TLBID:1 /DYNAMICBASE /NXCOMPAT /IMPLIB:"D:\a\weasel-vmenu\weasel-vmenu\output\Win32\WeaselServer.lib" /MACHINE:X86 /SAFESEH "D:\a\weasel-vmenu\weasel-vmenu\msbuild\Release\Win32\WeaselServer\WeaselServer.res"
   "D:\a\weasel-vmenu\weasel-vmenu\msbuild\Release\Win32\WeaselServer\stdafx.obj"
@@ -16783,7 +16783,7 @@ D:\a\weasel-vmenu\weasel-vmenu\include\WeaselUtility.h(279,22): warning C4996: '
   (compiling source file '/WeaselDeployer.cpp')
   
 ResourceCompile:
-  C:\Program Files (x86)\Windows Kits\10\bin\10.0.26100.0\x86\rc.exe /D _UNICODE /D UNICODE /D VERSION_MAJOR=0 /D VERSION_MINOR=17 /D VERSION_PATCH=4 /D PRODUCT_VERSION=0.17.4.0.3afff79 /D FILE_VERSION=0.17.4.0 /l"0x0409" /nologo /fo"D:\a\weasel-vmenu\weasel-vmenu\msbuild\Release\Win32\WeaselDeployer\WeaselDeployer.res" WeaselDeployer.rc 
+  C:\Program Files (x86)\Windows Kits\10\bin\10.0.26100.0\x86\rc.exe /D _UNICODE /D UNICODE /D VERSION_MAJOR=0 /D VERSION_MINOR=17 /D VERSION_PATCH=4 /D PRODUCT_VERSION=0.17.4.0.9ddf372 /D FILE_VERSION=0.17.4.0 /l"0x0409" /nologo /fo"D:\a\weasel-vmenu\weasel-vmenu\msbuild\Release\Win32\WeaselDeployer\WeaselDeployer.res" WeaselDeployer.rc 
 Link:
   C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.51.36231\bin\HostX86\x86\link.exe /ERRORREPORT:QUEUE /OUT:"D:\a\weasel-vmenu\weasel-vmenu\output\Win32\WeaselDeployer.exe" /INCREMENTAL:NO /NOLOGO /LIBPATH:"D:\a\weasel-vmenu\weasel-vmenu\\lib" /LIBPATH:"D:\a\weasel-vmenu\weasel-vmenu\deps\boost_1_84_0\stage\lib" /LIBPATH:"D:\a\weasel-vmenu\weasel-vmenu\\librime\build\lib\Release" /LIBPATH:"C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.51.36231\atlmfc\lib\x86" rime.lib kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib odbc32.lib odbccp32.lib atls.lib /MANIFEST /MANIFESTUAC:"level='asInvoker' uiAccess='false'" /manifest:embed /manifestinput:"C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.51.36231\Include\Manifest\PerMonitorHighDPIAware.manifest" /DEBUG /PDB:"D:\a\weasel-vmenu\weasel-vmenu\output\Win32\WeaselDeployer.pdb" /SUBSYSTEM:WINDOWS /LARGEADDRESSAWARE /OPT:REF /OPT:ICF /LTCG:incremental /LTCGOUT:"D:\a\weasel-vmenu\weasel-vmenu\msbuild\Release\Win32\WeaselDeployer\WeaselDeployer.iobj" /TLBID:1 /DYNAMICBASE /NXCOMPAT /IMPLIB:"D:\a\weasel-vmenu\weasel-vmenu\output\Win32\WeaselDeployer.lib" /MACHINE:X86 /SAFESEH "D:\a\weasel-vmenu\weasel-vmenu\msbuild\Release\Win32\WeaselDeployer\WeaselDeployer.res"
   "D:\a\weasel-vmenu\weasel-vmenu\msbuild\Release\Win32\WeaselDeployer\WeaselUtility.obj"
@@ -16827,7 +16827,7 @@ D:\a\weasel-vmenu\weasel-vmenu\include\WeaselUtility.h(279,22): warning C4996: '
   (compiling source file '/WeaselSetup.cpp')
   
 ResourceCompile:
-  C:\Program Files (x86)\Windows Kits\10\bin\10.0.26100.0\x86\rc.exe /D NDEBUG /D _UNICODE /D UNICODE /D VERSION_MAJOR=0 /D VERSION_MINOR=17 /D VERSION_PATCH=4 /D PRODUCT_VERSION=0.17.4.0.3afff79 /D FILE_VERSION=0.17.4.0 /l"0x7804" /I"D:\a\weasel-vmenu\weasel-vmenu\msbuild\Release\Win32\WeaselSetup\\" /I"D:\a\weasel-vmenu\weasel-vmenu\\include\wtl" /nologo /fo"D:\a\weasel-vmenu\weasel-vmenu\msbuild\Release\Win32\WeaselSetup\WeaselSetup.res" WeaselSetup.rc 
+  C:\Program Files (x86)\Windows Kits\10\bin\10.0.26100.0\x86\rc.exe /D NDEBUG /D _UNICODE /D UNICODE /D VERSION_MAJOR=0 /D VERSION_MINOR=17 /D VERSION_PATCH=4 /D PRODUCT_VERSION=0.17.4.0.9ddf372 /D FILE_VERSION=0.17.4.0 /l"0x7804" /I"D:\a\weasel-vmenu\weasel-vmenu\msbuild\Release\Win32\WeaselSetup\\" /I"D:\a\weasel-vmenu\weasel-vmenu\\include\wtl" /nologo /fo"D:\a\weasel-vmenu\weasel-vmenu\msbuild\Release\Win32\WeaselSetup\WeaselSetup.res" WeaselSetup.rc 
 Link:
   C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.51.36231\bin\HostX86\x86\link.exe /ERRORREPORT:QUEUE /OUT:"D:\a\weasel-vmenu\weasel-vmenu\output\WeaselSetup.exe" /INCREMENTAL:NO /NOLOGO /LIBPATH:"C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.51.36231\atlmfc\lib\x86" Imm32.lib Kernel32.lib kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib odbc32.lib odbccp32.lib atls.lib /MANIFEST /MANIFESTUAC:"level='asInvoker' uiAccess='false'" /manifest:embed /manifestinput:"C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.51.36231\Include\Manifest\PerMonitorHighDPIAware.manifest" /DEBUG:FULL /PDB:"D:\a\weasel-vmenu\weasel-vmenu\output\WeaselSetup.pdb" /SUBSYSTEM:WINDOWS /OPT:REF /OPT:ICF /LTCG /LTCGOUT:"D:\a\weasel-vmenu\weasel-vmenu\msbuild\Release\Win32\WeaselSetup\WeaselSetup.iobj" /TLBID:1 /DYNAMICBASE /NXCOMPAT /IMPLIB:"D:\a\weasel-vmenu\weasel-vmenu\output\WeaselSetup.lib" /MACHINE:X86 /SAFESEH "D:\a\weasel-vmenu\weasel-vmenu\msbuild\Release\Win32\WeaselSetup\WeaselSetup.res"
   "D:\a\weasel-vmenu\weasel-vmenu\msbuild\Release\Win32\WeaselSetup\imesetup.obj"
@@ -16941,5 +16941,5 @@ Build succeeded.
 
 FileLogger wrote to: D:\a\weasel-vmenu\weasel-vmenu\msbuild1.log
 
-Time Elapsed 00:01:12.52
-===== run #22 / 3afff793637613c28db59d0fe09f535e71ab2380 =====
+Time Elapsed 00:01:00.34
+===== run #23 / 9ddf3728140f3e4a37be17e35c11a942ac177d6a =====
