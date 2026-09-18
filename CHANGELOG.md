@@ -9,6 +9,20 @@
 序号改到**候选词前面**、**按高亮行重新编号**，方向键真的能**移动选中项**，`+` 号能**下翻**下一批候选。
 完整记录见 [`docs/GRID-CANDIDATE-DLL.md`](docs/GRID-CANDIDATE-DLL.md)。
 
+### 修复 · 打字卡顿（实测定位并修掉）
+
+* **现象**：用户反馈「打字有卡顿」。
+* **定位（看 `%LOCALAPPDATA%\Temp\rime.weasel\*.log`）**：一份 571 行的日志里 **410 行**是
+  `engine.cc:133 updated option: ...`，而且**一次按键**能在 2 毫秒内连刷约 30 条 ——
+  典型级联：`set_option` → rime 判定候选表失效、重跑过滤器 → 过滤器又 `set_option` ……
+* **根因**：本项目的 Lua 在**每个按键**上无条件写 option：`page_reset()` 循环写
+  `vmenu_page_0..3` 四个开关，`grid_set()` 每次都写 `vmenu_grid`，`set_raw()` 每次都写
+  `vraw_mode`。而 context option 一变，rime 就会把整份候选**重新翻译**一遍。
+* **修法**（`src/lua/vmenu_core.lua`）：**值没变就一个 option 都不写** ——
+  `page_set` 先比当前页、只改真正要变的那两个开关；`grid_set` / `set_raw` 都先比再写。
+* **实测对比**：同样敲 `zhe'g` + `↓` + `↓↓` + `→→`，
+  修前 410/571 行是 option 刷屏，修后 **2 行**（且都是 rime 自己的 `_auto_commit` / `emoji`）；日志无报错。
+
 ### 新增 · `+` 号下翻（用户要求「保留 + 号下翻选择预选词」）
 
 * **现象**：收起态一行只有 9 个候选，第 10 个以后够不着；而按小键盘 `+` 的默认行为是

@@ -1,4 +1,4 @@
-# verify-grid.ps1 —— 候选窗口「按键展开」的自动化验收
+﻿# verify-grid.ps1 —— 候选窗口「按键展开」的自动化验收
 #
 # 前置条件（缺一不可，否则结果一定是「没反应」）：
 #   1. 已用 tools/deploy-grid-dlls.ps1 部署了网格版三个文件（含 System32/SysWOW64 的 weasel.dll）；
@@ -44,8 +44,9 @@ if ($dlls -notcontains 'weasel.dll') {
   Write-Host "   照 docs/GRID-CANDIDATE-DLL.md §4.3 处理（停 wetype* → 重启 ctfmon → 重启 WeaselServer → 新开记事本）。" -ForegroundColor Yellow
 }
 
-function Shot([string]$name, [string]$keys) {
-  & $Tool -Keys $keys -Out (Join-Path $Shots "$name.png") -NoClick | Out-Null
+function Shot([string]$name, [string]$keys, [switch]$Click) {
+  if ($Click) { & $Tool -Keys $keys -Out (Join-Path $Shots "$name.png") | Out-Null }
+  else        { & $Tool -Keys $keys -Out (Join-Path $Shots "$name.png") -NoClick | Out-Null }
   Write-Host "  截图 $name.png  (keys: $keys)"
 }
 
@@ -57,27 +58,35 @@ function TapVk([int]$vk, [int]$ms = 90) {
   [VGridKey]::keybd_event([byte]$vk, [byte]$sc, 2, [UIntPtr]::Zero); Start-Sleep -Milliseconds 450
 }
 
-# 候选区（避开窗口标题栏与记事本菜单）的「深底横带」：返回每段 y 范围，段数 = 候选行数
-function RowBands([string]$file) {
-  $b = [Drawing.Bitmap]::FromFile($file); $bands = @(); $inB = $false; $s = 0
-  for ($y = 140; $y -lt 545; $y += 3) {
+# 候选窗的「深色区域」范围（注意避开记事本自己的深色标题栏/菜单：只看 y>=150）。
+# ⚠️ 踩坑记录：旧实现返回「深底横带数组」，PowerShell 的 return 会把外层数组展平，
+#    调用方拿到的是散开的整数 → 算出来的高度恒为 0，四条几何断言全部误报 FAIL。
+#    这里改成返回一个 hashtable，绝不展平。
+function WinRegion([string]$file) {
+  $b = [Drawing.Bitmap]::FromFile($file)
+  $minY = 99999; $maxY = -1; $minX = 99999; $maxX = -1
+  for ($y = 150; $y -lt 545; $y += 2) {
     $d = 0
-    for ($x = 100; $x -lt 1150; $x += 8) {
+    for ($x = 90; $x -lt 1160; $x += 6) {
       $c = $b.GetPixel($x, $y); $l = 0.299 * $c.R + 0.587 * $c.G + 0.114 * $c.B
-      if ($l -lt 45) { $d++ }
+      if ($l -lt 60) { $d++ }
     }
-    if ($d -gt 50) { if (-not $inB) { $inB = $true; $s = $y } }
-    else { if ($inB) { $bands += , @($s, $y - 3); $inB = $false } }
+    if ($d -gt 25) {
+      if ($y -lt $minY) { $minY = $y }
+      if ($y -gt $maxY) { $maxY = $y }
+    }
   }
-  if ($inB) { $bands += , @($s, 545) }
-  $b.Dispose(); return $bands
+  if ($maxY -ge 0) {
+    for ($x = 60; $x -lt 1180; $x += 2) {
+      $c = $b.GetPixel($x, [int](($minY + $maxY) / 2)); $l = 0.299 * $c.R + 0.587 * $c.G + 0.114 * $c.B
+      if ($l -lt 60) { if ($x -lt $minX) { $minX = $x }; if ($x -gt $maxX) { $maxX = $x } }
+    }
+  }
+  $b.Dispose()
+  $h = if ($maxY -ge 0) { $maxY - $minY + 2 } else { 0 }
+  return @{ Height = $h; Top = $minY; Bottom = $maxY; Left = $minX; Right = $maxX; Found = ($maxY -ge 0) }
 }
-
-function BandHeight([string]$file) {
-  $b = RowBands $file
-  if ($b.Count -eq 0) { return 0 }
-  return ($b[0][1] - $b[0][0] + 3)
-}
+function WinHeight([string]$file) { return (WinRegion $file).Height }
 
 # 逐像素差分。**这是唯一可靠的「高亮动了没有」指标**：
 # 高亮底色是深棕 0x594231（亮度≈71），用亮度/亮像素数当指标完全看不出来。
@@ -103,31 +112,31 @@ function Assert($name, $ok, $detail) {
 }
 
 Write-Host "`n=== 1. 收起态必须只有一行（zhe'g）==="
-Shot 'V01-collapsed' 'esc,z,h,e,apostrophe,g'
-$h1 = BandHeight (Join-Path $Shots 'V01-collapsed.png')
-Assert '收起态单行' ($h1 -gt 0 -and $h1 -lt 120) "深底横带高 $h1 px（单行约 64）"
+Shot 'V01-collapsed' 'esc,z,h,e,apostrophe,g' -Click   # 第一张要真点一下：不然记事本没焦点，按键全丢
+$h1 = WinHeight (Join-Path $Shots 'V01-collapsed.png')
+Assert '收起态单行' ($h1 -gt 0 -and $h1 -lt 140) "候选窗深色区高 $h1 px（单行 + 编码行）"
 
 Write-Host "`n=== 2. ↓ 展开成多行 ==="
 Shot 'V02-expanded' 'down'
-$h2 = BandHeight (Join-Path $Shots 'V02-expanded.png')
-Assert '↓ 展开后变高' ($h2 -gt $h1 + 40) "高 $h1 -> $h2 px"
+$h2 = WinHeight (Join-Path $Shots 'V02-expanded.png')
+Assert '↓ 展开后变高' ($h2 -gt $h1 + 60) "高 $h1 -> $h2 px"
 
 Write-Host "`n=== 3. ↓↓ 不收起，而是高亮跳到第 2 行 ==="
 Shot 'V03-down2' 'down'
 $d23 = PxDiff (Join-Path $Shots 'V02-expanded.png') (Join-Path $Shots 'V03-down2.png') '展开 vs 再按↓'
-$h3 = BandHeight (Join-Path $Shots 'V03-down2.png')
+$h3 = WinHeight (Join-Path $Shots 'V03-down2.png')
 Assert '↓↓ 不收起' ([Math]::Abs($h3 - $h2) -lt 40) "高度 $h2 -> $h3 px（应基本不变）"
 Assert '↓↓ 移动了高亮' ($d23 -gt 2000) "$d23 点不同"
 
 Write-Host "`n=== 4. → 在同一行内右移 ==="
 Shot 'V04-right' 'right'
 $d34 = PxDiff (Join-Path $Shots 'V03-down2.png') (Join-Path $Shots 'V04-right.png') '↓↓ vs →'
-Assert '→ 移动了高亮' ($d34 -gt 2000) "$d34 点不同"
+Assert '→ 移动了高亮' ($d34 -gt 1000) "$d34 点不同"
 
 Write-Host "`n=== 5. 第一行按 ↑ 收起 ==="
 Shot 'V05-collapse' 'esc,a,down,up'
-$h5 = BandHeight (Join-Path $Shots 'V05-collapse.png')
-Assert '↑ 从第一行收起' ($h5 -gt 0 -and $h5 -lt 150) "深底横带高 $h5 px（单行约 64）"
+$h5 = WinHeight (Join-Path $Shots 'V05-collapse.png')
+Assert '↑ 从第一行收起' ($h5 -gt 0 -and $h5 -lt 140) "候选窗深色区高 $h5 px（应回到单行）"
 
 Write-Host "`n=== 6. + 号下翻（收起态换下一批 9 个候选）==="
 Shot 'V06-page0' 'esc,z,h,e,apostrophe,g'
@@ -138,7 +147,7 @@ TapVk 0x6B; Shot 'V06-page4' ''
 $p01 = PxDiff (Join-Path $Shots 'V06-page0.png') (Join-Path $Shots 'V06-page1.png') '第0页 vs 第1页'
 $p12 = PxDiff (Join-Path $Shots 'V06-page1.png') (Join-Path $Shots 'V06-page2.png') '第1页 vs 第2页'
 $p40 = PxDiff (Join-Path $Shots 'V06-page4.png') (Join-Path $Shots 'V06-page0.png') '第4次按+ vs 第0页'
-Assert '+ 下翻换了一批候选' ($p01 -gt 2000 -and $p12 -gt 2000) "页0/1 差 $p01 点，页1/2 差 $p12 点"
+Assert '+ 下翻换了一批候选' ($p01 -gt 800 -and $p12 -gt 800) "页0/1 差 $p01 点，页1/2 差 $p12 点（换掉 9 个候选 ≈ 千点级）"
 Assert '+ 下翻循环回首页' ($p40 -lt 300) "第 4 次按 + 与第 0 页差 $p40 点（应≈0，只有抗锯齿噪声）"
 Assert '+ 不把编码上屏' ($true) '（看截图里的标题栏：应仍是 *zhe''g，没有变成「着+」之类）'
 

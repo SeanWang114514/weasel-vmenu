@@ -251,6 +251,21 @@
 | 回退 | 见 `GRID-CANDIDATE-DLL.md` §6（备份目录 + 顺序） |
 | 未做 | v 菜单剪贴板列表（输入 `vclip`）里的 `+` 不翻页（翻译器忽略后缀，`is_more_key` 只对已撤掉的 `vsetc*` 生效）；`+` 固定 4 页 |
 
+### 1.17 打字卡顿的根因：每个按键都在写 context option（第七轮当天发现并修掉）
+
+用户随后反馈两点：**「没有显示文字前面的数字」** 和 **「有卡顿」**。
+
+| 项 | 内容 |
+| --- | --- |
+| 「没数字」的真实原因 | 是**中间态**：19:2x 我已把 `menu_filter.lua` 的注释序号删掉（因为要改走标签槽），但**新版 DLL（run#24）到 19:52 才装上** —— 这半小时里「旧 server 不会画标签槽 + Lua 不再写注释」= **一个数字都没有**。装完新 DLL 后 4 次独立视觉读图都读出「数字在词的左边」（收起态 / 展开态 / 高亮第 2 行 / 重启后第一次输入），`tools/verify-grid.ps1` 也全项 PASS |
+| 卡顿的定位方法 | **数日志**：`%LOCALAPPDATA%\Temp\rime.weasel\*.log`，一份 571 行的日志里 **410 行**是 `engine.cc:133 updated option: …`；而且**一次按键**在 2 毫秒内连刷约 30 条 —— 级联（`set_option` → 候选表失效、重跑过滤器 → 过滤器又 `set_option`） |
+| 卡顿的根因（Lua 侧） | `page_reset()` 在**每个按键**上循环写 `vmenu_page_0..3` 四个开关，`grid_set()` 每次都写 `vmenu_grid`，`set_raw()` 每次都写 `vraw_mode`；而 context option 一变化，rime 就会把整份候选**重新翻译** |
+| 修法 | `src/lua/vmenu_core.lua` 三处都改成「**先读再写、值没变就一个 option 都不写**」：`page_set` 先比当前页、只改真正要变的那两个开关；`grid_set` / `set_raw` 同理 |
+| 实测对比 | 同样敲 `zhe'g` + `↓` + `↓↓` + `→→`：修前 410/571 行是 option 刷屏，修后只剩 **2 行**（且都是 rime 自己的 `_auto_commit` / `emoji`），日志无报错；`vmenu_core.lua` 新 md5 = `C99F3643E3F96440C19730E35BC52722`（三处一致） |
+| 装 run#24 后的完整验收 | 收起 **64px** → `↓` **274px** → `↓↓` 高亮移动 **5938** 点（高度不变）→ `→` **2085** 点 → 第 1 行 `↑` 回到 **64px**；`+` 页0/1 差 **1739** 点、页1/2 差 **1528** 点、第 4 次与第 0 页差 **0** 点；`tools/verify-grid.ps1` **10 项全 PASS** |
+| 顺带修掉的脚本 bug | ① 函数里 `return` 数组被 PowerShell 展平 → 高度恒为 0、四条几何断言误报 FAIL（改成返回 hashtable）；② 第一张截图必须真点窗口（否则没焦点、按键全丢）；③ 脚本必须存成 **UTF-8 带 BOM**，否则 `powershell -File`（5.1）按 ANSI 解析、直接语法报错 |
+| 教训 | 新写的任何 `ctx:set_option` 都必须**先读再写** —— 否则每个按键都会让 rime 重翻译一整份候选 |
+
 ---
 
 ## 2. 时间线（2026-09-13）
@@ -336,6 +351,10 @@
 | 下午 | 视觉复核发现**序号在词后面**（`这个1 这股2`，注释序号的老毛病）→ 改成**标签槽**实现（覆写 `GetLabelText`，按高亮行 1-9），并删掉 Lua 里的注释序号 |
 | 下午 | `+` 号下翻：发现 `+` 默认被当标点**直接上屏**（`zhe` → 「着+」）；实现为 `plus` → `page_next()`（4 页循环）+ 过滤器按页切片，实测三页候选互不重复、第 4 次回首页 ✅ |
 | 下午 | 新增 `docs/GRID-CANDIDATE-DLL.md`（补丁、CI 配方、部署 5 文件、激活风险、验收方法、回退），并同步 `AGENT-HANDOFF.md` / `README.md` / `CHANGELOG.md`；新增 `tools/verify-grid.ps1` |
+| 19:52 | run#24 构建到手（`weasel-grid-dlls.zip`，1,969,903 字节），换掉 **5 个文件**（安装目录 3 + `System32`/`SysWOW64` 各 1），md5 全部对上 |
+| 19:56 | 视觉复核：收起态读出 `1 这个 2 这关 …`、`↓` 展开后**只有第 1 行**有 1–9 且数字在**词前**、`↓↓` 后第 2 行变成 `1 这更 2 遮光 3 这该 …` ✅ |
+| 20:0x | 用户反馈「没显示数字 + 有卡顿」：查日志发现**每个按键连刷约 30 条 `updated option`**（一事一链的级联）→ 修成「值没变不写 option」，同样操作从 **410 行 → 2 行** ✅；「没数字」是 19:2x–19:52 的中间态（旧 server + 已删注释序号） |
+| 20:1x | 修 `tools/verify-grid.ps1` 的三个坑（数组展平 / 首图没焦点 / 无 BOM 解析失败），重跑 **10 项全 PASS**（`+` 下翻 1739/1528 点、循环回首页 0 点） |
 
 ---
 
@@ -373,17 +392,18 @@
 
 | 组件 | 状态 |
 | --- | --- |
-| `WeaselServer.exe` | **自己编的网格版**在运行：2755584 字节，md5 `E021086B58292AC357650E48CC5459EE`（二进制里含 `vmenu_grid` = 方向键补丁在）；`weasel.dll` 1033728 = `777A7995C28777D22349E3D14CB7EFD5`、`weaselx64.dll` 1178624 = `87D7A65945FA170B9567DE824F8B1934`；`C:\Windows\System32\weasel.dll` = 1178624 = `87D7A659…`（= x64）、`C:\Windows\SysWOW64\weasel.dll` = 1033728 = `777A7995…`（= x86）✅ 5 个文件都对上了 |
+| `WeaselServer.exe` | **自己编的网格版**在运行：2756096 字节，md5 `FFA4285B058E81BDA32EC55F45A2D4DD`（run#24，含**标签槽序号**补丁）；`weasel.dll` 1034752 = `79E433322C63C7E5FC411EE97FA90B4D`、`weaselx64.dll` 1179648 = `993E74EC9A95F327F3D91BF7483C3759`；`C:\Windows\System32\weasel.dll` = 1179648 = `993E74EC…`（= x64）、`C:\Windows\SysWOW64\weasel.dll` = 1034752 = `79E43332…`（= x86）✅ 5 个文件都对上了（run#23 的 `E021086B…` / `87D7A659…` / `777A7995…` 已全部被替换） |
 | `clipboard-sync.ps1` | 1 个实例 |
 | `vmenu-watcher.ps1` | 1 个实例（监督常驻窗口） |
 | `vmenu-settings-gui.ps1` | 1 个实例（常驻，未打开时是隐藏窗口） |
 | `open-settings.flag` | 稳态下**不存在** |
-| Lua 双目录一致性 | `D:\rime-sandbox\lua\` 与 `%APPDATA%\Rime\lua\` 三处（+ 仓库 `src/lua/`）MD5 必须一致：`vmenu_core.lua` = `9266BD320814F68B85881EAE658F2AC5`、`menu_filter.lua` = `8C83EEDA3B668E759D57E55AFA786290`、`menu_processor.lua` = `4EA304F822B2C580993B184EA78101D7` |
+| Lua 双目录一致性 | `D:\rime-sandbox\lua\` 与 `%APPDATA%\Rime\lua\` 三处（+ 仓库 `src/lua/`）MD5 必须一致：`vmenu_core.lua` = `C99F3643E3F96440C19730E35BC52722`、`menu_filter.lua` = `8C83EEDA3B668E759D57E55AFA786290`、`menu_processor.lua` = `4EA304F822B2C580993B184EA78101D7` |
 | `style/layout/max_width` | 1100（只是兜底）——**换行已经不归它管**：自编 DLL 的 `HorizontalLayout.cpp` 按「候选 > 9 时每 9 个换行、≤9 绝不换行」硬编码（用户要求「不许丢候选、必须一行」） |
 | `style/label_format` | 留空（`weasel.custom.yaml` 写 `" "`）→ 不画原生序号；序号改由**自编 DLL 的 `GetLabelText` 覆写**写进标签槽（旧做法 `menu_filter.number_row1` 写注释已删除） |
 | `menu/page_size` | 36（`rime_ice.custom.yaml` + `build/rime_ice.schema.yaml`；= 9 × 4，按 `↓` 展开后的条数） |
 | 候选框序号 | **数字在候选词前面**，只有**高亮那一行**带 `1`–`9`（高亮在第 1 行 = 「只有第一行有」；`↓↓` 到第 2 行则第 2 行变 1–9、第 1 行干净）；其余行两个空格保证左边缘对齐。视觉实测 `1 这个 2 这股 3 遮盖 …` ✅ |
-| 候选方格方向键 / 下翻 | `↓` = 收起时展开 / 已展开时**跳下一行**（不收起）；`↑` = 第一行时收回 / 否则跳上一行；`←`/`→` = 行内移动；`+`（小键盘）= **下翻**下一批 9 个候选（4 页循环）。实测：64px → 204px → 高亮跳行（差分 12767 点）→ 行内右移（11374 点）→ 第 1 行 `↑` 回到 64px；`+` 三页候选互不重复、第 4 次回首页（差分 14 点）✅ 全程 `zhe` 未上屏 |
+| 候选方格方向键 / 下翻 | `↓` = 收起时展开 / 已展开时**跳下一行**（不收起）；`↑` = 第一行时收回 / 否则跳上一行；`←`/`→` = 行内移动；`+`（小键盘）= **下翻**下一批 9 个候选（4 页循环）。run#24 实测：64px → 274px → 高亮跳行（差分 **5938** 点）→ 行内右移（**2085** 点）→ 第 1 行 `↑` 回到 64px；`+` 页间差 **1739/1528** 点、第 4 次与第 0 页差 **0** 点（全程 `zhe` 未上屏）✅ |
+| 性能（option 写入） | **每个按键最多写 0 个 option**（值不变不写）。历史 bug：`page_reset`/`grid_set`/`set_raw` 无条件写 → 每键连刷约 30 条 `updated option`、rime 每键重翻译一整份候选 = 打字卡顿；修后同样操作 410 行 → **2 行**（详见 §1.17） |
 | `v` 主菜单 | 5 项：设置 / 剪贴板 / 常用语 / 原符号 / **快捷输入**（`vqi` 子模式 9 项 + 返回） |
 | 部件拆字前缀 | `u`（`rime_ice.custom.yaml` 的 `radical_lookup/prefix: u` + `recognizer/patterns/radical_lookup: "^u[a-z]+$"`；`build\rime_ice.schema.yaml` 里已生效） |
 | 托盘菜单项文字 | ⚠️ **当前不生效**：`WeaselServer.exe` 已经换成自编的网格版（原版那份被就地改过文字的 2243072 字节 exe 已被覆盖），而 fork 分支**没带托盘补丁**（`WeaselTrayIcon::CustomizeMenu` 是空实现）→ 托盘右键的「输入法设置」回到原版行为。打字 `v` 开功能菜单不受影响（那是 Lua）。要两全：把托盘补丁合进 `weasel-grid-build` 再编一次 |

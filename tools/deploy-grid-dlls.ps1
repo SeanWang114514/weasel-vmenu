@@ -114,9 +114,10 @@ if (-not $SkipSystemDlls) {
     if (-not (Test-Path $p.Dst)) { Write-Host ("跳过 {0}（不存在）" -f $p.Dst); continue }
     $before = (Get-FileHash $p.Dst -Algorithm MD5).Hash
     Copy-Item $p.Dst (Join-Path $sysBackup ("weasel-{0}.dll" -f $p.Arch)) -Force
-    # 已被无数进程加载的 DLL 不能直接覆盖，但可以改名
-    $old = "$($p.Dst).grid-old"
-    Remove-Item $old -Force -ErrorAction SilentlyContinue
+    # 已被无数进程加载的 DLL 不能直接覆盖，但可以改名。
+    # ⚠️ 旧名必须唯一：上次留下的 weasel.dll.grid-old 仍被运行中的程序加载着、删不掉，
+    #    固定复用同一个名字会撞成「当文件已存在时，无法创建该文件」而整步跳过（踩过）。
+    $old = "$($p.Dst).old-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
     try {
       Move-Item $p.Dst $old -Force
     } catch {

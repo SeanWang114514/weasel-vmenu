@@ -44,7 +44,12 @@ end
 function M.set_raw(ctx, v)
   raw_flag = v and true or false
   if ctx then
-    pcall(function() ctx:set_option("vraw_mode", raw_flag) end)
+    -- ⚠️ 值没变就**不要**写 option：set_option 会让 rime 把候选整份重翻译，
+    --    每个按键都无条件写一遍是「打字卡顿」的来源（日志里每个键都刷 updated option）。
+    local ok, cur = pcall(function() return ctx:get_option("vraw_mode") end)
+    if not (ok and (cur and true or false) == raw_flag) then
+      pcall(function() ctx:set_option("vraw_mode", raw_flag) end)
+    end
   end
 end
 
@@ -83,7 +88,10 @@ local function grid_open(ctx)
 end
 
 local function grid_set(ctx, open)
-  pcall(function() ctx:set_option(M.GRID_OPTION, open and true or false) end)
+  open = open and true or false
+  -- 同样的道理：状态没变就不写 option（↓/↑ 收起后每个按键都会走到这里）
+  if grid_open(ctx) == open then return end
+  pcall(function() ctx:set_option(M.GRID_OPTION, open) end)
 end
 
 -- vmenu_grid 是「会话级」选项，一旦展开过就会一直开着；新一次输入开始时必须强制复位，
@@ -102,8 +110,16 @@ M.PAGE_OPTION = "vmenu_page"
 M.GRID_PAGES = 4
 
 local function page_set(ctx, n)
+  -- ⚠️ 关键性能点：只在**真的换页**时写 option。旧写法无条件写 4 个开关，
+  --    而 page_reset 在每个按键上都会被调用 → 每个键都让 rime 重翻译一整份候选，
+  --    表现就是「打字卡顿」（实测：按键时日志里成片刷 updated option: vmenu_page_*）。
+  if M.page_get(ctx) == n then return end
   for i = 0, M.GRID_PAGES - 1 do
-    pcall(function() ctx:set_option(M.PAGE_OPTION .. "_" .. i, i == n) end)
+    local want = (i == n)
+    local ok, cur = pcall(function() return ctx:get_option(M.PAGE_OPTION .. "_" .. i) end)
+    if not (ok and (cur and true or false) == want) then
+      pcall(function() ctx:set_option(M.PAGE_OPTION .. "_" .. i, want) end)
+    end
   end
 end
 
