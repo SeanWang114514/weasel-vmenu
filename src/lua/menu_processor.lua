@@ -33,6 +33,8 @@ local function handle(key, env)
     -- 于是「展开」状态会一直留着，导致普通打字也按 36 个候选排版（候选窗口换行成 4 行）。
     -- 用户要求「原本的一行显示」必须回来，所以在这里无条件复位成单行。
     pcall(core.grid_reset, ctx)
+    -- 「下翻」页码也要复位，否则下一次打字会从上一轮的第 2 页开始。
+    pcall(core.page_reset, ctx)
   end
   -- 原符号模式：完全不拦截，让 speller / punctuator 按原版行为处理
   if core.raw(ctx) then return 2 end
@@ -43,6 +45,13 @@ local function handle(key, env)
   -- 只有输入和某条编码完全一致时才接管，其余回车行为原样放行。
   -- 候选窗口展开/收起 + 二维选择（只在正常打字时生效；v 菜单里保持原样）
   if cur ~= "" and not core.mode_of(cur) then
+    -- 「+ 号下翻」：用户要求保留这个功能 —— 收起态一行只有 9 个候选，按 + 把可见窗口
+    -- 后移 9 个（第 10-18 个候选），配合 Weasel 标签槽的 1-9 序号即可直接选词。
+    -- rime 默认把 KP_Add 绑成 plus（只当标点、会直接上屏），所以必须在这里拦下来。
+    if repr == "plus" then
+      pcall(core.page_next, ctx)
+      return 1
+    end
     local ok_grid, handled = pcall(core.grid_key, ctx, repr)
     if ok_grid and handled then return 1 end
   end

@@ -92,12 +92,40 @@ function M.grid_reset(ctx)
   grid_set(ctx, false)
 end
 
--- 注意：ctx.selected_candidate_index 是「从 1 开始」的（第 1 个候选读出来是 1），
--- 而 ctx:select(i) 是「从 0 开始」的，这里统一换算成 0 基。
-local function grid_sel(ctx)
-  local ok, v = pcall(function() return ctx.selected_candidate_index end)
-  if ok and type(v) == "number" and v >= 1 then return v - 1 end
+-- ===== 候选窗口「下翻」页码（+ 号触发）=====
+-- 用户要求：「还有保留 + 号下翻选择预选词的功能」。
+-- 收起态一行只放 9 个候选（menu_filter 限个数），所以第 10 个以后本来够不着；
+-- 按 + 就把可见窗口整体往后挪 9 个（第 2 页 = 第 10-18 个候选），数字仍然是 1-9，
+-- 与「序号按当前可见行重新编号」的标签槽实现天然配套。
+-- ctx 的 option 只能是布尔值，所以用 GRID_PAGES 个开关表示 0..GRID_PAGES-1 页。
+M.PAGE_OPTION = "vmenu_page"
+M.GRID_PAGES = 4
+
+local function page_set(ctx, n)
+  for i = 0, M.GRID_PAGES - 1 do
+    pcall(function() ctx:set_option(M.PAGE_OPTION .. "_" .. i, i == n) end)
+  end
+end
+
+function M.page_get(ctx)
+  for i = 0, M.GRID_PAGES - 1 do
+    local ok, v = pcall(function() return ctx:get_option(M.PAGE_OPTION .. "_" .. i) end)
+    if ok and v then return i end
+  end
   return 0
+end
+
+function M.page_set(ctx, n) page_set(ctx, n) end
+
+--- 翻到下一页（到最后一页后回到第 0 页）
+function M.page_next(ctx)
+  local n = (M.page_get(ctx) + 1) % M.GRID_PAGES
+  page_set(ctx, n)
+  return n
+end
+
+function M.page_reset(ctx)
+  page_set(ctx, 0)
 end
 
 -- 方向键：返回 true 表示已被我们处理（要吞掉，不能让原生导航器再动一次）

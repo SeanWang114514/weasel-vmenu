@@ -223,6 +223,34 @@
 | 仍未达成 | 「展开后用 `↑`/`↓`/`←`/`→` 移动选中项」**做不到**（没有 API，不是没写）：`→`×1 或 ×3 再空格仍上屏第 1 个。要做得改小狼毫 C++ 源码 → 见 §5 第 14 条 |
 | 遗留死代码 | `vmenu_core.lua` 的 `grid_sel()` 已无人调用（重写后），可删；它的注释还留着那条错误的「1 基 / 0 基」说明 |
 
+### 1.16 候选方格「按键展开 + 序号在词前 + 方向键导航」= 改 Weasel 源码重编 DLL（第七轮）
+
+用户这轮的要求（逐条对账）：
+
+| 用户要求 | 结果 |
+| --- | --- |
+| 默认单行候选；按 `↓` 展开 **9 列 × 4 行** | ✅ 一行 9 个（宽随内容变长、**不换行**）；`↓` 展开成 4 行 × 9 列 |
+| **只有第一行带 1-9 序号，下面几行不带** | ✅ （实现成「**高亮那一行**带 1-9」，高亮在第 1 行时就是「只有第一行」） |
+| `↓↓` **不收起** | ✅ 实测差分 12767 点，高亮跳到第 2 行、窗口高度不变 |
+| 展开态 `↑↓←→` 移动选中项 | ✅ `↓`+9 / `↑`-9 / `←`-1 / `→`+1（复用鼠标悬停选词的服务端通路） |
+| 第一行按 `↑` 收起 | ✅ 高度 204 → 64px |
+| 数字在**词前**、按高亮行**重新编号**并对齐 | ✅ 改走**标签槽**（见下），视觉读出 `1 这个 2 这股 …` |
+| `+` 号下翻选择预选词 | ✅ 收起态按 `+` 换下一批 9 个（4 页循环），三页候选互不重复 |
+| **必须在真实 DLL 上实测并写进文档** | ✅ 全流程实测（截图 + 像素差分 + 视觉读字），文档 `docs/GRID-CANDIDATE-DLL.md` |
+
+| 项 | 内容 |
+| --- | --- |
+| 为什么必须改源码 | 换行、序号位置、方向键移动**都发生在 `WeaselServer.exe` 里**：`max_width` 只能整体截断（列数凑不准）、注释永远在词后面且翻译阶段就定了、Lua 没有「移动高亮」API（`ctx.select` 是上屏）。详见 `GRID-CANDIDATE-DLL.md` §1 |
+| 三个补丁 | ① `WeaselUI/HorizontalLayout.cpp`：删掉按宽度折行，改成 `candidates_count > 9` 时每 9 个换行；② 同文件 + `.h`：覆写 `GetLabelText`，按 `this->id/9 == id/9` 给高亮行写 `1`-`9`（其余行两个空格对齐）；③ `RimeWithWeasel/RimeWithWeasel.cpp`：`ProcessKeyEvent` 里在 option `vmenu_grid` 打开时把方向键转成 `HighlightCandidateOnCurrentPage()`，越界不吞键 |
+| 源码与 CI | fork `SeanWang114514/weasel-vmenu` 的分支 **`weasel-grid-build`**（本地 `D:\weasel-build\weasel`）；GitHub Actions（VS2026，约 50 分钟/次）出 release `weasel-grid-<run 号>`，资产 **`weasel-grid-dlls.zip`** + `build-output.log` |
+| ★ 部署要换 5 个文件 | 安装目录 `weasel.dll` / `weaselx64.dll` / `WeaselServer.exe` **加上** `C:\Windows\System32\weasel.dll`（x64）与 `C:\Windows\SysWOW64\weasel.dll`（x86）—— 注册表 `CLSID\{A3F4CDED-…}\InprocServer32` 指向系统目录，**只换安装目录等于没换**（md5 实测确认） |
+| ★ 激活风险 | 重启 `WeaselServer` 后腾讯微信输入法（WeType）有时抢走 zh-CN 活动权 → 表现为「打拼音出字母、没候选窗」。判定只能靠枚举目标程序模块（只加载 `weasel.dll` 才对）；`nihao→你好` 区分不出来 |
+| 序号实现细节 | `label_format` 现在是 `" "`（不含 `%s`），覆写**故意绕过模板**直接返回数字；已删掉 `menu_filter.lua` 里旧的注释序号（`number_row1` 及 v 菜单那段） |
+| `+` 下翻细节 | rime 里 `KP_Add → send: plus`，而 `plus` 默认是**标点会直接上屏**（实测 `zhe` → 「着+」），所以由 `menu_processor.lua` 拦下 → `vmenu_core.page_next()`（页码用 `vmenu_page_0..3` 四个布尔 option 存）→ `menu_filter.lua` 按页切片；新一次输入复位 |
+| 功能倒退（已告知用户） | 自编的 `WeaselServer.exe` **没带托盘补丁** → 托盘「输入法设置」入口回到原版；打字 `v` 开菜单不受影响 |
+| 回退 | 见 `GRID-CANDIDATE-DLL.md` §6（备份目录 + 顺序） |
+| 未做 | v 菜单剪贴板列表（输入 `vclip`）里的 `+` 不翻页（翻译器忽略后缀，`is_more_key` 只对已撤掉的 `vsetc*` 生效）；`+` 固定 4 页 |
+
 ---
 
 ## 2. 时间线（2026-09-13）
@@ -295,6 +323,20 @@
 | 09:1x | 实测 144 → 287 → 144 → 287 → 144，**标题全程 `*shi`、无候选被上屏** ✅；数字键基准 `1`→是、`2`→师 ✅ |
 | 09:1x | 结论：**方向键移动选中项做不到**（没有 API，需改小狼毫 C++ 源码）→ 记入 §5 第 14 条；文档里那条错误的「1 基 / 0 基」约束同步更正 |
 
+### 2.6 第七轮（2026-09-18，候选方格改用自编 Weasel DLL）
+
+| 时间 | 事件 |
+| --- | --- |
+| 上午 | 用户要求「默认单行、`↓` 展开 9×4、只有第一行带序号、`↓↓` 不收起、展开态方向键移动、第一行 `↑` 收起、数字在词前并按高亮行重编号」，且**必须在真实 DLL 上实测并写进文档** |
+| 上午 | 确认只靠配置/Lua 做不到（换行在 `HorizontalLayout.cpp`、按键在 `RimeWithWeasel.cpp`、序号位置在标签槽），用户放宽「不改 C++」的限制并要求用 GitHub Actions |
+| 上午 | fork 出 `weasel-grid-build` 分支，写三个补丁；CI 踩坑：ATL（`atls.lib` 路径）、boost 缓存、`-Include` 不递归导致发布包**漏掉 `WeaselServer.exe`**（run#22 事故，run#23 修） |
+| 中午 | 发现**只换安装目录无效**：TSF 客户端 DLL 由注册表指向 `System32` / `SysWOW64`（md5 对比确认），补上第 4、5 个文件 |
+| 中午 | 发现重启 `WeaselServer` 后**腾讯微信输入法抢走活动权**，表现为「打拼音出字母」；确立判定法（枚举目标程序模块，只认 `weasel.dll`）与恢复法（停 `wetype*` → 重启 `ctfmon` → 重启服务 → 新开记事本） |
+| 下午 | 实测：收起单行 64px、`↓` 展开 204px（`zhe` 3 行）、`↓↓` 跳到第 2 行（差分 12767 点）、`→` 行内右移（11374 点）、第 1 行 `↑` 收回 64px ✅ |
+| 下午 | 视觉复核发现**序号在词后面**（`这个1 这股2`，注释序号的老毛病）→ 改成**标签槽**实现（覆写 `GetLabelText`，按高亮行 1-9），并删掉 Lua 里的注释序号 |
+| 下午 | `+` 号下翻：发现 `+` 默认被当标点**直接上屏**（`zhe` → 「着+」）；实现为 `plus` → `page_next()`（4 页循环）+ 过滤器按页切片，实测三页候选互不重复、第 4 次回首页 ✅ |
+| 下午 | 新增 `docs/GRID-CANDIDATE-DLL.md`（补丁、CI 配方、部署 5 文件、激活风险、验收方法、回退），并同步 `AGENT-HANDOFF.md` / `README.md` / `CHANGELOG.md`；新增 `tools/verify-grid.ps1` |
+
 ---
 
 ## 3. 已修复的坑（重要，别再踩）
@@ -331,22 +373,22 @@
 
 | 组件 | 状态 |
 | --- | --- |
-| `WeaselServer.exe` | 运行中（改 Lua 后重启过；本轮 lua 修改 **09:11:42**、服务 **09:11:44** 启动，确认已加载 0.2.4 的 `grid_key`） |
+| `WeaselServer.exe` | **自己编的网格版**在运行：2755584 字节，md5 `E021086B58292AC357650E48CC5459EE`（二进制里含 `vmenu_grid` = 方向键补丁在）；`weasel.dll` 1033728 = `777A7995C28777D22349E3D14CB7EFD5`、`weaselx64.dll` 1178624 = `87D7A65945FA170B9567DE824F8B1934`；`C:\Windows\System32\weasel.dll` = 1178624 = `87D7A659…`（= x64）、`C:\Windows\SysWOW64\weasel.dll` = 1033728 = `777A7995…`（= x86）✅ 5 个文件都对上了 |
 | `clipboard-sync.ps1` | 1 个实例 |
 | `vmenu-watcher.ps1` | 1 个实例（监督常驻窗口） |
 | `vmenu-settings-gui.ps1` | 1 个实例（常驻，未打开时是隐藏窗口） |
 | `open-settings.flag` | 稳态下**不存在** |
-| Lua 双目录一致性 | `D:\rime-sandbox\lua\` 与 `%APPDATA%\Rime\lua\` 四个文件 MD5 必须一致（本轮 `vmenu_core.lua` = `F863A8AB609EA1FC6B2C16FDA83B1877`、`menu_filter.lua` = `6798F8D1B7AAAA562B377E2910CFC617`，三处一致） |
-| `style/layout/max_width` | 530（`weasel.custom.yaml` + `build/weasel.yaml` 两处一致；150% 缩放下正好一行 9 个。**注意**：`%APPDATA%\Rime\build\weasel.yaml` 是旧副本、不生效，实测那里还停在 `300`） |
-| `style/label_format` | 留空（`weasel.custom.yaml` 写 `" "`、`build/weasel.yaml` 实测原样是 `" "`）→ 不画原生序号；序号由 `menu_filter.number_row1` 写进注释 |
+| Lua 双目录一致性 | `D:\rime-sandbox\lua\` 与 `%APPDATA%\Rime\lua\` 三处（+ 仓库 `src/lua/`）MD5 必须一致：`vmenu_core.lua` = `9266BD320814F68B85881EAE658F2AC5`、`menu_filter.lua` = `8C83EEDA3B668E759D57E55AFA786290`、`menu_processor.lua` = `4EA304F822B2C580993B184EA78101D7` |
+| `style/layout/max_width` | 1100（只是兜底）——**换行已经不归它管**：自编 DLL 的 `HorizontalLayout.cpp` 按「候选 > 9 时每 9 个换行、≤9 绝不换行」硬编码（用户要求「不许丢候选、必须一行」） |
+| `style/label_format` | 留空（`weasel.custom.yaml` 写 `" "`）→ 不画原生序号；序号改由**自编 DLL 的 `GetLabelText` 覆写**写进标签槽（旧做法 `menu_filter.number_row1` 写注释已删除） |
 | `menu/page_size` | 36（`rime_ice.custom.yaml` + `build/rime_ice.schema.yaml`；= 9 × 4，按 `↓` 展开后的条数） |
-| 候选框序号 | **展开后第一行 1–9、第 2–4 行无序号**（读图确认）；**收起时 9 个候选排 2 行、第 2 行也带 8/9**（序号按候选下标写）；v 菜单仍显示 1–5（「快捷输入」子菜单的「返回」显示 `10`，按键是 `q`） |
-| 候选方格方向键 | `↓` = 收起时展开 / 已展开时收回；`↑` = 收回；`←`/`→` 放行原版。**不能移动选中项**（无 API）；实测 144 ↔ 287 且不上屏 |
+| 候选框序号 | **数字在候选词前面**，只有**高亮那一行**带 `1`–`9`（高亮在第 1 行 = 「只有第一行有」；`↓↓` 到第 2 行则第 2 行变 1–9、第 1 行干净）；其余行两个空格保证左边缘对齐。视觉实测 `1 这个 2 这股 3 遮盖 …` ✅ |
+| 候选方格方向键 / 下翻 | `↓` = 收起时展开 / 已展开时**跳下一行**（不收起）；`↑` = 第一行时收回 / 否则跳上一行；`←`/`→` = 行内移动；`+`（小键盘）= **下翻**下一批 9 个候选（4 页循环）。实测：64px → 204px → 高亮跳行（差分 12767 点）→ 行内右移（11374 点）→ 第 1 行 `↑` 回到 64px；`+` 三页候选互不重复、第 4 次回首页（差分 14 点）✅ 全程 `zhe` 未上屏 |
 | `v` 主菜单 | 5 项：设置 / 剪贴板 / 常用语 / 原符号 / **快捷输入**（`vqi` 子模式 9 项 + 返回） |
 | 部件拆字前缀 | `u`（`rime_ice.custom.yaml` 的 `radical_lookup/prefix: u` + `recognizer/patterns/radical_lookup: "^u[a-z]+$"`；`build\rime_ice.schema.yaml` 里已生效） |
-| 托盘菜单项文字 | 已改：`WeaselServer.exe` 里 `输入法设置 (&S)`（新标签 1 处 / 旧标签 0 处），命令号 40008 |
-| `WeaselServer.exe` 备份 | `C:\Program Files\Rime\weasel-0.17.4\WeaselServer.exe.vmenu-bak`（2243072 字节，只在第一次安装时生成） |
-| 部署器代理 | 已装：`WeaselDeployer.exe` = 代理（5632 字节）；真身 `WeaselDeployer.real.exe` = 638976 字节 |
+| 托盘菜单项文字 | ⚠️ **当前不生效**：`WeaselServer.exe` 已经换成自编的网格版（原版那份被就地改过文字的 2243072 字节 exe 已被覆盖），而 fork 分支**没带托盘补丁**（`WeaselTrayIcon::CustomizeMenu` 是空实现）→ 托盘右键的「输入法设置」回到原版行为。打字 `v` 开功能菜单不受影响（那是 Lua）。要两全：把托盘补丁合进 `weasel-grid-build` 再编一次 |
+| `WeaselServer.exe` 备份 | `C:\Program Files\Rime\weasel-0.17.4\WeaselServer.exe.vmenu-bak`（2243072 字节 = 原版；md5 `FBE1F6CEF85B852E510DF7E53CFC7CC3`）；自编版本的备份在 `D:\weasel-build\dll-backup\20260918-182645\`、旧的 System32/SysWOW64 副本在 `…\20260918-182933-system32\` |
+| 部署器代理 | 已装：`WeaselDeployer.exe` = 代理（5632 字节）；真身 `WeaselDeployer.real.exe` = 638976 字节（代理只被托盘菜单调用，托盘入口现在不指向它，所以当前处于「装了但用不上」的状态） |
 | 开始菜单快捷方式 | `【小狼毫】输入法设置.lnk`（原 `【小狼毫】输入法设定.lnk`，已改名） |
 
 ---
@@ -405,19 +447,23 @@
 12. ~~**「`↓↓` vs `↓` + `→`×9」有一轮对照不一致，需要复测。**~~ **✅ 已复测（第六轮）：这条旧结论是误判。**
     0.2.3 时第二次 `↓` 会**直接把候选上屏**，所以两次「比较」比的其实是被意外上屏的那个字。
     0.2.4 把 `↓` 改成展开 / 收起开关后，这一对照已经没有意义。
-13. **（小瑕疵）v 菜单「快捷输入」里的「返回」前面显示 `10`。** v 菜单的序号是逐条写进注释的，
-    而快捷输入子菜单有 10 条（9 项 + 返回），于是第 10 条被编成 `10`（实际按键是 `q`）。
-    要改的话在 `menu_filter.lua` 的 v 菜单编号循环里把「操作行/返回」排除（例如 `type == "vact"` 不编号），
-    属可选清理 —— **需要人类拍板要不要动**。
-14. **「展开后用方向键移动选中项」做不到，需要决定要不要为它改小狼毫本体。**
-    需求原文包含「按向下变成 9 乘 4 **同时保留左右选择预选词的功能**」，但实测：
-    本机 librime-lua **没有**「只移动高亮」的 API（`ctx.select_candidate` / `set_selected_candidate_index` /
-    `highlight` / `move_selection` / `ctx.menu` / `ctx.get_menu` / `ctx.selected_candidate_index` /
-    `menu.*` / `composition.select` **全是 `nil`**），而 `ctx.select` 是**上屏**。
-    对照实测：数字键 `1` → 是、`2` → 师（✅），但 `→` 按 1 次或 3 次再空格仍上屏第 1 个「是」；
-    展开后 `↓↓` + `→` 也一样 —— **四个方向键都不会移动选中项**。
-    可选出路：① 接受现状（方向键只做展开 / 收起，选词用数字键，**当前选择**）；
-    ② 放宽需求（例如「展开后用数字键选」）；③ 改小狼毫 C++ 源码或自己写一个带高亮移动的候选渲染
-    （成本高、违背本项目「不改输入法源码」的前提）。**正在等用户拍板。**
-15. **`vmenu_core.lua` 里的 `grid_sel()` 是死代码。** `grid_key` 重写后已无人调用它，
-    而它的注释还留着那条**错误**的「1 基 / 0 基」说明（会误导后来者）。建议删掉整个函数 —— 属清理项。
+13. ~~**（小瑕疵）v 菜单「快捷输入」里的「返回」前面显示 `10`。**~~
+    **✅ 已消失（第七轮）**：序号不再写进注释，改由自编 DLL 按「高亮那一行」给 1–9，
+    第 10 条会换到第 2 行、高亮到它时它自己就是 `1`，不会再出现 `10`。
+14. ~~**「展开后用方向键移动选中项」做不到，需要决定要不要为它改小狼毫本体。**~~
+    **✅ 已解决（第七轮，2026-09-18）**：用户放开了「不改输入法源码」的限制、并选择用
+    GitHub Actions 出包，于是编出了带补丁的 `WeaselServer.exe` —— 方向键移动选中项现在**真的能用**
+    （`↓`+9 / `↑`-9 / `←`-1 / `→`+1，复用鼠标悬停选词那条服务端通路，不会上屏）。
+    详见 `GRID-CANDIDATE-DLL.md` §2.3 与 `PROGRESS.md` §1.16。
+15. ~~**`vmenu_core.lua` 里的 `grid_sel()` 是死代码。**~~
+    **✅ 已删除（第七轮）**：连同那条错误的「1 基 / 0 基」注释一起去掉了。
+16. **v 菜单剪贴板列表里的 `+` 不会下翻（需要拍板）。**
+    从主菜单按 `2` 进入的是 `vclip`，`lua_menu.lua` 的翻译器**忽略** `vclip` 后面的字符，
+    所以 `+` / `m` 都不会换页；Lua 的 `is_more_key` 只对**入口已被撤掉**的 `vsetc*` 管理列表生效。
+    第七轮实现的 `+` 下翻只在**普通打字的候选列表**里生效。要覆盖 v 菜单列表，
+    得给 `yield_clip_list` 加页码偏移（翻译器 + `parse_sub` + 处理器三处），属新功能。
+17. **托盘「输入法设置」入口在自编 `WeaselServer.exe` 下失效（需要拍板）。**
+    见 §4 的「托盘菜单项文字」行。两条路：① 把托盘补丁合进 `weasel-grid-build` 分支再编一次
+    （推荐，一次 CI 约 50 分钟）；② 接受现状，用打字 `v` → `1` 打开设置窗口。
+18. **`+` 固定 4 页（`GRID_PAGES = 4`）**，与展开态 36 个候选对齐。
+    要更多页就加 `vmenu_page_4…` 开关（context option 只能存布尔，所以每页一个开关）。

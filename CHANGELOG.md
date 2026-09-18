@@ -3,6 +3,78 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 本项目在真机（Windows 11 + Weasel 0.17.4 + librime 1.13.1 + rime-ice）上验证。
 
+## [0.2.5] — 2026-09-18
+
+候选方格这一轮**改了 Weasel 源码并用 GitHub Actions 重新编译**（这是本项目第一次改动输入法本体）：
+序号改到**候选词前面**、**按高亮行重新编号**，方向键真的能**移动选中项**，`+` 号能**下翻**下一批候选。
+完整记录见 [`docs/GRID-CANDIDATE-DLL.md`](docs/GRID-CANDIDATE-DLL.md)。
+
+### 新增 · `+` 号下翻（用户要求「保留 + 号下翻选择预选词」）
+
+* **现象**：收起态一行只有 9 个候选，第 10 个以后够不着；而按小键盘 `+` 的默认行为是
+  **当标点用**——实测 `zhe` 会被**直接上屏**成「着+」。
+* **实现**：rime 里 `KP_Add → send: plus`，由 `src/lua/menu_processor.lua` 拦下 →
+  `vmenu_core.page_next()`（页码存成 `vmenu_page_0..3` 四个布尔 option，因为 context option 只能存布尔）
+  → `menu_filter.lua` 收起态按 `page*9+1 … page*9+9` 切片。共 4 页，第 4 次按回到第 0 页；
+  新一次输入复位。
+* **实测**：三页候选互不重复（`这个/这股/遮盖…` → `这关/遮光/这该…` → `折股/这鬼/折桂…`），
+  第 4 次与第 0 页的像素差分只有 **14 点**（抗锯齿噪声）✅，全程编码未上屏。
+
+### 变更 · 候选序号：从「注释」搬进「标签槽」，数字在词前、按高亮行 1–9
+
+* **问题（视觉实测）**：旧实现把序号写进候选**注释**（`menu_filter.number_row1`），
+  Weasel 一格候选的渲染顺序是「标签 → 候选词 → 注释」，于是渲染成 **`这个1 这股2`** ——
+  数字在词的**后面**；而且注释是**翻译阶段**由过滤器生成的，**移动高亮不会重跑过滤器**，
+  序号永远钉在第一行，**不可能**「按高亮行重新编号」。
+* **修法**：在 `WeaselUI/HorizontalLayout.cpp` 覆写 `GetLabelText`，按
+  `this->id / 9 == id / 9` 判断「本候选是否在高亮那一行」：是高亮行给列号 `1`–`9`，
+  其余行返回两个空格（宽度接近，保证各行候选词**左边缘对齐**）。标签槽是**每次绘制**都重算的，
+  所以移动高亮时序号自动跟着重新编号。主题 `label_format` 是 `" "`（不含 `%s`），
+  覆写因此**故意绕过模板**。
+* 同时**删除** `menu_filter.lua` 里的注释序号（`number_row1` 与 v 菜单那段编号），
+  以及 `vmenu_core.lua` 里已无人调用的死代码 `grid_sel()`（它的注释还留着一条错误说明）。
+* **副作用（好的一面）**：v 菜单「快捷输入」子菜单第 10 条（返回）以前显示 `10`，现在不会再出现。
+
+### 新增 · 候选窗口「按键展开」的自编 DLL（三个 C++ 补丁）
+
+* `WeaselUI/HorizontalLayout.cpp`：删掉「按宽度折行」，改成**按个数**——
+  `candidates_count > 9` 时每 9 个换行，**≤ 9 个绝不换行**（窗口宽度随内容变长、绝不丢候选）。
+  `style/layout/max_width` 因此**不再参与**网格排版。
+* `WeaselUI/HorizontalLayout.cpp` + `.h`：`GetLabelText` 覆写（见上）。
+* `RimeWithWeasel/RimeWithWeasel.cpp`：`ProcessKeyEvent` 里当 option `vmenu_grid` 打开时，
+  把方向键转成「移动高亮」——复用**鼠标悬停选词**的那条服务端通路
+  （`HighlightCandidateOnCurrentPage`），`↓` +9 / `↑` -9 / `←` -1 / `→` +1；越界**不吞键**、
+  落回原生处理（例如第 1 行按 `↑` 交给 Lua 收起）。
+* **实测**：收起 64px（一行）→ `↓` 展开 204px（`zhe` 3 行 × 9 列）→ `↓↓` 高亮跳到第 2 行
+  （差分 12767 点，x[90..212] y[197..327]）→ `→` 行内右移（11374 点，x[90..294]）→
+  第 1 行 `↑` 回到 64px ✅；**全程 `zhe` 未被上屏**。
+
+### 新增 · 构建/部署/验收的完整方法与工具
+
+* **CI**：fork 分支 `weasel-grid-build` → GitHub Actions（VS2026，约 50 分钟/次）→ release
+  `weasel-grid-<run 号>`，资产 **`weasel-grid-dlls.zip`**（+ `build-output.log`）。
+  踩过的坑：ATL 的 `atls.lib` 路径、boost 缓存、`-Include` 不带 `-Recurse` 导致发布包**漏掉
+  `WeaselServer.exe`**（run#22 的真实事故）。
+* **部署要换 5 个文件**（`tools/deploy-grid-dlls.ps1`）：安装目录三件套 **加上**
+  `C:\Windows\System32\weasel.dll`（x64）与 `C:\Windows\SysWOW64\weasel.dll`（x86）——
+  **TSF 客户端 DLL 不在安装目录**（注册表 `CLSID\{A3F4CDED-…}\InprocServer32` 指向系统目录），
+  只换安装目录时行为**一点变化都没有**（md5 对比确认）。
+* **新增 `tools/verify-grid.ps1`**：一次跑完收起 / 展开 / `↓↓` 不收起 / 行内移动 / `↑` 收起 /
+  `+` 下翻的**像素断言**，并打印汇总；语义部分（数字在词前、按高亮行编号）用裁图 + `vision.js` 复核。
+* **文档**：新增 `docs/GRID-CANDIDATE-DLL.md`；同步 `docs/AGENT-HANDOFF.md`（环境事实表、
+  约束 11/13/22 更正、新增约束 23–25）、`docs/PROGRESS.md`（§1.16、§2.6、§4、§5）、`README.md`。
+
+### 已知限制 / 倒退（部署前必须知道）
+
+* **托盘「输入法设置」入口失效**：自编的 `WeaselServer.exe` 没带托盘补丁
+  （`WeaselTrayIcon::CustomizeMenu` 是空实现），托盘右键那一项回到原版行为；
+  打字 `v` 打开功能菜单**不受影响**（那是 Lua）。要两全就把托盘补丁合进 `weasel-grid-build` 再编一次。
+* **v 菜单剪贴板列表（`vclip`）里的 `+` 不会下翻**：翻译器忽略 `vclip` 后面的字符，
+  `is_more_key` 只对入口已撤掉的 `vsetc*` 生效。`+` 下翻目前只在**普通打字**的候选列表里有效。
+* **激活风险**：重启 `WeaselServer` 后腾讯微信输入法（WeType）有时抢走 zh-CN 活动权
+  （表现：打拼音出字母、没有候选窗）。判定只能靠枚举目标程序已加载模块（只认 `weasel.dll`），
+  `nihao→你好` **区分不出来**。恢复法见 `GRID-CANDIDATE-DLL.md` §4.3。
+
 ## [0.2.4] — 2026-09-13
 
 修复 **0.2.3 的候选方格导航 bug**：展开后**再按一次 `↓` 会把当前候选直接上屏**。
