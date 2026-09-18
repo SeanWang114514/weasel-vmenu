@@ -159,9 +159,15 @@ jobs:
                     Where-Object { $_.LastWriteTime -gt $cut -and $_.FullName -notmatch '\\test\\' })
           Write-Host "== 新生成的小狼毫 DLL =="
           $cand | Select-Object FullName,Length,LastWriteTime | Format-Table -AutoSize | Out-String | Write-Host
+          # 网格布局 + 方向键补丁编译进 WeaselServer.exe（它持有 UI host 和 RimeWithWeaselHandler），
+          # 所以必须一起打进发布包，否则只换两个 DLL 界面上什么都不会变。
+          $srv = Get-ChildItem $env:GITHUB_WORKSPACE\output -File -ErrorAction SilentlyContinue -Include WeaselServer.exe |
+                 Where-Object { $_.LastWriteTime -gt $cut } | Select-Object -First 1
+          if ($srv) { Write-Host "== WeaselServer.exe =="; $srv | Select-Object FullName,Length,LastWriteTime | Format-Table -AutoSize | Out-String | Write-Host }
           if ($cand.Count -ge 2) {
             foreach ($f in $cand) { Copy-Item $f.FullName -Destination (Join-Path $env:GITHUB_WORKSPACE $f.Name) -Force }
             $names = @($cand.Name | Sort-Object -Unique)
+            if ($srv) { Copy-Item $srv.FullName -Destination (Join-Path $env:GITHUB_WORKSPACE $srv.Name) -Force; $names += $srv.Name }
             Compress-Archive -Path $names -DestinationPath weasel-grid-dlls.zip -Force
             Get-Item weasel-grid-dlls.zip | Select-Object Name,Length
           } else {
