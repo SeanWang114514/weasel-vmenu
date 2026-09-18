@@ -111,14 +111,46 @@ void HorizontalLayout::DoLayout(CDCHandle dc, PDWR pDWR) {
   int row_of_candidate[MAX_CANDIDATES_COUNT] = {0};  // row info of every cand
   int mintop_of_rows[MAX_CANDIDATES_COUNT] = {0};
   // only when there are candidates
+  // [vmenu-grid] 统一列宽的量：作用域要覆盖下面「定位」与「设置 rect」两段 pass
+  const int kGridCols = 9;
+  const bool grid_multi_row = (candidates_count > kGridCols);
+  int col_width = 0;
   if (candidates_count) {
     w = offsetX + real_margin_x;
+    // [vmenu-grid] 「严格整齐」：网格态先量出**统一列宽**。
+    // 原版逐个累加每个候选的真实宽度 w，于是「这个」比「这」宽一格，
+    // 每行第 2 列的起点都不同，展开后的 9×4 网格参差不齐。
+    // 现在取所有候选里最宽的一格（标签 + 间距 + 词 + 注释）当所有列宽，
+    // 每个候选钉在「列号 × 列宽」上 → 每列严格对齐。
+    if (grid_multi_row) {
+      for (auto i = 0; i < candidates_count && i < MAX_CANDIDATES_COUNT; ++i) {
+        int cw = 0;
+        std::wstring lb =
+            GetLabelText(labels, i, _style.label_text_format.c_str());
+        GetTextSizeDW(lb, lb.length(), pDWR->pLabelTextFormat, pDWR, &size);
+        cw += size.cx * labelFontValid + _style.hilite_spacing;
+        GetTextSizeDW(candidates.at(i).str, candidates.at(i).str.length(),
+                      pDWR->pTextFormat, pDWR, &size);
+        cw += size.cx * textFontValid;
+        bool cmtOk =
+            (i == id && (_style.hilited_comment_text_color & 0xff000000)) ||
+            (i != id && (_style.comment_text_color & 0xff000000));
+        if (!comments.at(i).str.empty() && cmtFontValid && cmtOk) {
+          GetTextSizeDW(comments.at(i).str, comments.at(i).str.length(),
+                        pDWR->pCommentTextFormat, pDWR, &size);
+          cw += _style.hilite_spacing + size.cx * cmtFontValid;
+        }
+        col_width = max(col_width, cw);
+      }
+      col_width += _style.candidate_spacing;  // 列与列之间的间距
+    }
     for (auto i = 0; i < candidates_count && i < MAX_CANDIDATES_COUNT; ++i) {
       int current_cand_width = 0;
       if (i > 0)
         w += _style.candidate_spacing;
       if (id == i)
         w += base_offset;
+      const int vmenu_cell_start = w - (id == i ? base_offset : 0);
       /* Label */
       std::wstring label =
           GetLabelText(labels, i, _style.label_text_format.c_str());
@@ -153,17 +185,11 @@ void HorizontalLayout::DoLayout(CDCHandle dc, PDWR pDWR) {
       } else /* Used for highlighted candidate calculation below */
         _candidateCommentRects[i].SetRect(w, height, w, height + size.cy);
 
-      int base_left = (i == id) ? _candidateLabelRects[i].left - base_offset
-                                : _candidateLabelRects[i].left;
       // [vmenu-grid] 折行策略改为「按个数」，不再按宽度：
       //   * 候选数 <= 9：**无论如何都排成一行**（长词也不折行，窗口宽度随之变宽）。
       //     用户明确要求「无论如何都在一行显示」——按宽度折行时只要有一个词偏宽
       //     就会被挤到第二行，调 max_width 只能推后临界点，治不了本。
       //   * 候选数 >  9：每 9 个强制换行，即展开后的「每行严格 9 个」网格。
-      const int kGridCols = 9;
-      const bool grid_multi_row = (candidates_count > kGridCols);
-      // <=9 个候选：永远只排一行，窗口宽度随内容自适应（不看宽度、不丢候选）。
-      // >9 个候选（展开后的 9×4 网格）：每 9 个强制换行，严格每行 9 个。
       const bool vmenu_line_break =
           grid_multi_row && i > 0 && (i % kGridCols) == 0;
       if (vmenu_line_break) {
@@ -183,11 +209,17 @@ void HorizontalLayout::DoLayout(CDCHandle dc, PDWR pDWR) {
             max(max_width_of_rows, _candidateCommentRects[i].right);
         mintop_of_rows[row_cnt] = height;
         height += ofy;
-        // re calc rect position, decrease offsetX for origin
-        w += current_cand_width;
         row_cnt++;
-      } else
+      } else if (!grid_multi_row)
         max_width_of_rows = max(max_width_of_rows, w);
+
+      // [vmenu-grid] 把本格「补齐」到统一列宽：下一列必定从
+      //   cell_start + col_width 开始 —— 这是「每列严格对齐」的关键一步。
+      if (grid_multi_row) {
+        w = vmenu_cell_start + col_width - _style.candidate_spacing;
+        max_width_of_rows = max(
+            max_width_of_rows, offsetX + real_margin_x + kGridCols * col_width);
+      }
       // calculate height of current row is the max of three rects
       mintop_of_rows[row_cnt] = height;
       height_of_rows[row_cnt] =
@@ -205,10 +237,20 @@ void HorizontalLayout::DoLayout(CDCHandle dc, PDWR pDWR) {
     for (auto i = 0; i < candidates_count && i < MAX_CANDIDATES_COUNT; ++i) {
       int base_left = (i == id) ? _candidateLabelRects[i].left - base_offset
                                 : _candidateLabelRects[i].left;
-      _candidateRects[i].SetRect(base_left, mintop_of_rows[row_of_candidate[i]],
-                                 _candidateCommentRects[i].right,
-                                 mintop_of_rows[row_of_candidate[i]] +
-                                     height_of_rows[row_of_candidate[i]]);
+      if (grid_multi_row) {
+        // [vmenu-grid] 高亮块 = 完整一格（等宽），所有格子的选中块大小一致
+        const int cell_left =
+            offsetX + real_margin_x + (i % kGridCols) * col_width;
+        _candidateRects[i].SetRect(
+            cell_left, mintop_of_rows[row_of_candidate[i]],
+            cell_left + col_width - _style.candidate_spacing,
+            mintop_of_rows[row_of_candidate[i]] +
+                height_of_rows[row_of_candidate[i]]);
+      } else
+        _candidateRects[i].SetRect(base_left, mintop_of_rows[row_of_candidate[i]],
+                                   _candidateCommentRects[i].right,
+                                   mintop_of_rows[row_of_candidate[i]] +
+                                       height_of_rows[row_of_candidate[i]]);
       int ol = 0, ot = 0, oc = 0;
       if (_style.align_type == UIStyle::ALIGN_CENTER) {
         ol = (height_of_rows[row_of_candidate[i]] -
@@ -252,7 +294,8 @@ void HorizontalLayout::DoLayout(CDCHandle dc, PDWR pDWR) {
       if ((i < candidates_count - 1 &&
            row_of_candidate[i] < row_of_candidate[i + 1]) ||
           (i == candidates_count - 1))
-        _candidateRects[i].right = width - real_margin_x;
+        if (!grid_multi_row)
+          _candidateRects[i].right = width - real_margin_x;
     }
   }
   _highlightRect = _candidateRects[id];

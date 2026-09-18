@@ -26,10 +26,15 @@ STDMETHODIMP CCandidateList::QueryInterface(REFIID riid, void** ppvObj) {
       IsEqualIID(riid, IID_ITfCandidateListUIElement) ||
       IsEqualIID(riid, IID_ITfCandidateListUIElementBehavior)) {
     *ppvObj = (ITfCandidateListUIElementBehavior*)this;
-  } else if (IsEqualIID(riid, IID_IUnknown) ||
-             IsEqualIID(riid,
-                        __uuidof(ITfIntegratableCandidateListUIElement))) {
-    *ppvObj = (ITfIntegratableCandidateListUIElement*)this;
+  }
+  // ===== vmenu 补丁 4：故意不再暴露 ITfIntegratableCandidateListUIElement =====
+  // 暴露它的后果：Chrome / Edge / 微信 / Office / UWP 等支持「集成候选列表」的程序会
+  // **自己画候选**，而它们只能拿到 GetString() 给的候选文本 —— 标签槽里的 1-9 序号、
+  // 我们的 9×4 方格全都没有（只有记事本这类不支持集成的程序才退回我们的候选窗）。
+  // 不暴露它 → 这些程序退回「让输入法自己出候选窗」，序号与方格在所有程序里一致。
+  // 详见 repo 的 docs/GRID-CANDIDATE-DLL.md §2.4
+  else if (IsEqualIID(riid, IID_IUnknown)) {
+    *ppvObj = (ITfUIElement*)this;
   }
 
   if (*ppvObj) {
@@ -305,10 +310,12 @@ void CCandidateList::StartUI() {
     });
   pUIElementMgr->BeginUIElement(this, &_pbShow, &uiid);
   // pUIElementMgr->UpdateUIElement(uiid);
-  if (_pbShow) {
-    _ui->style() = _style;
-    _MakeUIWindow();
-  }
+  // ===== vmenu 补丁 4（保险）：不管应用要不要自己画，都坚持建我们自己的候选窗 =====
+  // _pbShow 同时决定 UpdateUI() 里的 Show(_pbShow)，所以必须强制置 TRUE，
+  // 否则即使窗口建出来也不会被显示、也不会刷新。
+  _pbShow = TRUE;
+  _ui->style() = _style;
+  _MakeUIWindow();
 }
 
 void CCandidateList::EndUI() {
