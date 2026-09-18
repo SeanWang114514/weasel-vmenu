@@ -137,8 +137,10 @@ end
 --   ctx.select_candidate / set_selected_candidate_index / highlight / move_selection
 --   / menu / get_menu / selected_candidate_index 全部 = nil（不存在）
 -- 所以这里绝不能再调用 ctx.select（否则第二次按 ↓ 就把候选打出去了）。
--- 现在的分工：↓ / ↑ 只负责「展开 / 收起」；← / → 直接放行给原生导航器，
--- 由它做一行内的左右移动（原生行为不会上屏）。
+-- 现在的分工：**Lua 只负责「展开 / 收起」与「+ 下翻页码」**；真正的「移动高亮」
+-- 由自编 Weasel 补丁做（RimeWithWeasel.cpp 把方向键转成 highlight_candidate_on_current_page，
+-- 见仓库 docs/GRID-CANDIDATE-DLL.md）。补丁处理掉的按键不会落到这里；落到这里只有三种情况：
+-- ① 还没展开（↓ 要展开）② 补丁越界放行（第一行按 ↑ 要收起）③ 跑的是原版 server（没有补丁）。
 function M.grid_key(ctx, repr)
   local is_arrow = (repr == "Down" or repr == "Up" or repr == "Left" or repr == "Right")
   if not is_arrow then
@@ -168,7 +170,7 @@ function M.grid_key(ctx, repr)
     end
     return false
   end
-  return false                -- ← / → 放行，交给原生导航器做行内左右移动
+  return false                -- ← / → 也由 Weasel 补丁做行内移动；落到这里说明没补丁，放行给原生导航器
 end
 function M.mode_of(code)
   if type(code) ~= "string" or code == "" then return nil end
