@@ -66,8 +66,10 @@ local function filter(input, env)
     -- 收起态一行只有 9 个，第 10 个以后够不着；按 +（下翻）就把可见窗口整体后移 9 个，
     -- 于是第二页显示第 10-18 个候选，序号仍是 1-9（序号由 Weasel 标签槽按当前可见行给）。
     -- 展开态一屏已有 36 个（9×4），不再叠加翻页。
-    local page = 0
-    if lim <= core.GRID_COLS then page = core.page_get(ctx) end
+    -- [按行滚动] 收起态与展开态都翻页；步长 = 一行 = GRID_COLS 个，
+    -- 所以新一屏的第 1 行正好是原来第 5 行（用户要求），窗口长度仍是 lim（9 或 36）。
+    local step = core.GRID_COLS
+    local page = core.page_get(ctx)
     -- 用户要求：**不许丢候选**，全部强制显示在一行（窗口宽度随内容变宽），绝不换行。
     -- 折行与否由 Weasel 侧补丁控制（候选 <=9 时完全不折行），这里只决定「取哪 9 个」。
     local buf = {}
@@ -76,7 +78,7 @@ local function filter(input, env)
       k = k + 1
       buf[k] = cand
     end
-    local start = page * lim
+    local start = page * step
     if start >= k then start = 0 end  -- 翻过头就回到第一页，绝不留空窗口
     for i = start + 1, math.min(k, start + lim) do
       yield(buf[i])

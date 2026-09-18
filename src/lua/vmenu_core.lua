@@ -107,7 +107,7 @@ end
 -- 与「序号按当前可见行重新编号」的标签槽实现天然配套。
 -- ctx 的 option 只能是布尔值，所以用 GRID_PAGES 个开关表示 0..GRID_PAGES-1 页。
 M.PAGE_OPTION = "vmenu_page"
-M.GRID_PAGES = 4
+M.GRID_PAGES = 16  -- [按行滚动] 4=整页翻(36)，16=按行翻(9)：最多 144 个候选 / 9 = 16 屏
 
 local function page_set(ctx, n)
   -- ⚠️ 关键性能点：只在**真的换页**时写 option。旧写法无条件写 4 个开关，

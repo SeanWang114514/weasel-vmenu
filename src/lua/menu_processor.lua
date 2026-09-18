@@ -48,8 +48,14 @@ local function handle(key, env)
     -- 「+ 号下翻」：用户要求保留这个功能 —— 收起态一行只有 9 个候选，按 + 把可见窗口
     -- 后移 9 个（第 10-18 个候选），配合 Weasel 标签槽的 1-9 序号即可直接选词。
     -- rime 默认把 KP_Add 绑成 plus（只当标点、会直接上屏），所以必须在这里拦下来。
-    if repr == "plus" then
+    -- 主键盘 +（shift+equal）与小键盘 +（KP_Add）在 librime 里都归一化成 plus；
+    -- 减号是 minus / KP_Subtract。两个方向都要接，「原来的 +- 翻页」才算回来。
+    if repr == "plus" or repr == "KP_Add" then
       pcall(core.page_next, ctx)
+      return 1
+    end
+    if repr == "minus" or repr == "KP_Subtract" then
+      pcall(core.page_set, ctx, (core.page_get(ctx) - 1) % core.GRID_PAGES)
       return 1
     end
     local ok_grid, handled = pcall(core.grid_key, ctx, repr)
