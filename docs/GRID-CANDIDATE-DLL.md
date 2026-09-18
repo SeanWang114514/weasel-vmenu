@@ -410,6 +410,39 @@ $log = Get-ChildItem "$env:LOCALAPPDATA\Temp\rime.weasel\*.log" | Sort LastWrite
 
 ---
 
+## 7.1 已写好、但**用户选择暂不部署**的补丁：候选方格「统一列宽」严格对齐
+
+**用户诉求**：「能不能让每个候选词严格地整齐地在一行」。
+
+**根因**：`WeaselUI/HorizontalLayout.cpp::DoLayout` 是**按每个候选的真实宽度逐个累加** `w`
+（`w += size.cx * textFontValid` 等），所以「这个」比「这」宽一格，**每行第 2 列的起点都不一样**，
+展开后的 9×4 网格参差不齐（收起态单行看不出来）。
+
+**补丁内容**（已提交在本地 `weasel-grid-build` 分支，commit `f0c47b6`，**未编入任何已部署的 DLL**）：
+
+1. 在候选循环**之前**先量出**统一列宽** `col_width`：遍历所有候选，取
+   「标签（`GetLabelText`）+ `hilite_spacing` + 候选词 +（注释）」里最宽的一格，再加 `candidate_spacing`；
+2. 循环里记录 `vmenu_cell_start`，每个候选走完后把 `w` **补齐**到 `cell_start + col_width` ——
+   下一列必从固定 x 开始，这是「每列严格对齐」的关键一步；
+3. 高亮块 `_candidateRects[i]` 在网格态 = **完整一格**（等宽等高），不再被末尾那段
+   「把最后一个候选拉到窗口右缘」的代码拉伸（那句已加 `!grid_multi_row` 保护）；
+4. `grid_multi_row` / `kGridCols` / `col_width` 提到 `if (candidates_count)` 之外，让两段 pass 都能用。
+
+**为什么没部署**：本机 VS18 **缺 ATL 组件**（`atlmfc` 不存在）→ `WeaselTSF`/`WeaselUI` **编不出来**✗；
+本地从零编还要先编 Boost（约 40 分钟）+ librime，且仍会卡在 ATL；用户明确要求**不要推 GitHub**，
+因此 2026-09-18 决定**保持现状**（源码留档，随时可编）。
+
+**要启用时怎么做**（二选一）：
+* 用 Visual Studio Installer 勾上「**C++ ATL for latest v143 build tools**」（Microsoft 官方源，非上传），
+  然后在 `D:\weasel-build` 跑本地构建脚本（`local-build.ps1` 的流程：MSBuild 上 PATH → ATL 注入 →
+  `ci/build-boost.ps1` → `cmd /c ".\build.bat data opencc rime weasel"`），出 `output\weasel*.dll` 与
+  `WeaselServer.exe`，再按 §4.2 换 5 个文件；
+* 或者推一次 `weasel-grid-build` 触发 CI（用户当前明确禁止）。
+
+**验收方法**（编好后）：展开态截图，量**每行第 2 列的左边缘 x 坐标是否完全一致**（改前会差几十像素）。
+
+---
+
 ## 7. 未做 / 待确认
 
 | 项 | 说明 |
