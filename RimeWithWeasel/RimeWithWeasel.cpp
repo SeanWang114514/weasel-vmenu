@@ -321,6 +321,13 @@ BOOL RimeWithWeaselHandler::ProcessKeyEvent(KeyEvent keyEvent,
   if (!(keyEvent.mask & ibus::Modifier::RELEASE_MASK) &&
       rime_api->get_option(session_id, "vmenu_grid")) {
     const int kGridColumns = 9;  // 与主题 style/layout/max_width = 530（正好 9 个一行）一致
+    // [vmenu-grid] 翻页键：+ / -。
+    // 主键盘 + = shift+equal，客户端 ConvertKeyEvent 经 ToUnicodeEx 转成 XK_plus(0x2b)、
+    // 主键盘 - = XK_minus(0x2d)；小键盘 + / - = KP_Add / KP_Subtract。
+    const bool kPageFwdKey = (keyEvent.keycode == 0x2b ||
+                             keyEvent.keycode == ibus::Keycode::KP_Add);
+    const bool kPageBackKey = (keyEvent.keycode == 0x2d ||
+                              keyEvent.keycode == ibus::Keycode::KP_Subtract);
     int delta = 0;
     switch (keyEvent.keycode) {
       case ibus::Keycode::Down:
@@ -338,7 +345,7 @@ BOOL RimeWithWeaselHandler::ProcessKeyEvent(KeyEvent keyEvent,
       default:
         break;
     }
-    if (delta != 0 &&
+    if ((delta != 0 || kPageFwdKey || kPageBackKey) &&
         RIME_API_AVAILABLE(rime_api, highlight_candidate_on_current_page)) {
       RIME_STRUCT(RimeContext, ctx);
       if (rime_api->get_context(session_id, &ctx)) {
@@ -346,12 +353,33 @@ BOOL RimeWithWeaselHandler::ProcessKeyEvent(KeyEvent keyEvent,
         const int count = ctx.menu.num_candidates;
         rime_api->free_context(&ctx);
         const int target = current + delta;
-        if (target >= 0 && target < count) {
+        // 普通方向键：目标下标没越界 → 直接移动高亮（候选窗口不变）。
+        if (!kPageFwdKey && !kPageBackKey && target >= 0 && target < count) {
           DLOG(INFO) << "vmenu-grid: move highlight " << current << " -> "
                      << target;
           HighlightCandidateOnCurrentPage((size_t)target, ipc_id, eat);
           m_active_session = ipc_id;
           return TRUE;
+        }
+        // [vmenu-grid] 翻页路径：
+        //   * + / -（主键盘与小键盘）→ 把键交给 rime（Lua 处理器用选项整屏翻页，一页 36 个，
+        //     于是新一屏的第 1 行 = 原来的第 5 行，「以此类推」逐页继续）；
+        //   * 已展开时按 ↓ 且「越界向下」（＝高亮已在最后一行）→ 同样按继续翻页处理。
+        // 翻页会重建候选菜单，高亮随之落回第 1 格；这里再把高亮放回**同一列的第一行**
+        // （用户要求「光标停在同一纵列的最上方」）：col = 原高亮 % 9 即它所在的列。
+        if (kPageFwdKey || kPageBackKey ||
+            (delta > 0 && keyEvent.keycode == ibus::Keycode::Down)) {
+          const int col = current % kGridColumns;
+          DLOG(INFO) << "vmenu-grid: page " << (kPageBackKey ? "back" : "fwd")
+                     << ", keep col " << col;
+          Bool handled = rime_api->process_key(
+              session_id, keyEvent.keycode, expand_ibus_modifier(keyEvent.mask));
+          if (col >= 0 && col < 9)
+            rime_api->highlight_candidate_on_current_page(session_id, col);
+          _Respond(ipc_id, eat);
+          _UpdateUI(ipc_id);
+          m_active_session = ipc_id;
+          return handled;
         }
       }
     }

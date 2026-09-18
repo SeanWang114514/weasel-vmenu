@@ -58,3 +58,14 @@ arm64x_wrapper/*.lib
 arm64x_wrapper/*.exp
 # 本地构建产物（由 GitHub Actions 在 CI 上重建）
 lib/
+include\afxres.h
+
+include/afxres.h
+ci-user-config.jam
+rime.def
+rime_exports.txt
+lib64/
+ci-boost-local*.out
+ci-boost-local*.bat
+msb-build/
+output/
