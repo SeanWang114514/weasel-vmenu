@@ -82,9 +82,11 @@ Get-ChildItem "$env:TEMP\rime.weasel\*.log" | Sort-Object LastWriteTime -Descend
 > 同一份配置要一起改的地方：`weasel.custom.yaml`（`patch`）+ `build/weasel.yaml`。
 > `page_size` 对应 `rime_ice.custom.yaml` + `build/rime_ice.schema.yaml`；
 > 序号对应主题的 `style/label_format`（见「候选框里第 2–4 行也有序号」那节）。
-> 现在的值是 **`max_width: 530` + `label_format` 留空 + `page_size: 36`**
-> （默认单行 9 个、按 `↓` 展开 4 行 × 9 列、只有第一行有 1–9 序号，见 `ARCHITECTURE.md` §3.6）；
-> 回退 = `max_width` 回 `0`、`page_size` 回 `9`、`label_format` 回 `"%s"`，重启服务。
+> 现在的值是 **`label_format` 留空 + `page_size: 36`**（默认单行 9 个、按 `↓` 展开 4 行 × 9 列、
+> 序号在候选词前面并按高亮行 1–9，见 `ARCHITECTURE.md` §3.6）；
+> ⚠️ **换行规则、序号位置、方向键移动已经不归 YAML 管**，它们在**自己编译的 `WeaselServer.exe`** 里
+> （见 `GRID-CANDIDATE-DLL.md`）；`style/layout/max_width` 现在只是兜底（`1100`）。
+> 回退 = `page_size` 回 `9`、`label_format` 回 `"%s"`，并把 **5 个文件**换回备份（同文档 §6）。
 >
 > ⚠️ 本机 `%APPDATA%\Rime\build\weasel.yaml` 是**旧副本，不生效**（实测那里还是
 > `max_width: 300` + `label_format: "%s"`）—— 当前生效目录是 `D:\rime-sandbox`，
@@ -94,8 +96,9 @@ Get-ChildItem "$env:TEMP\rime.weasel\*.log" | Sort-Object LastWriteTime -Descend
 
 按顺序查这四条：
 
-1. **配置生效了吗**：`build\weasel.yaml` 要是 `max_width: 530`、`build\rime_ice.schema.yaml`
-   要是 `menu/page_size: 36`（改完**必须重启 `WeaselServer`**，见上一节）。
+1. **是不是自编的 server**：`WeaselServer.exe` 应是 2755584 字节（原版 2243072，**没有换行补丁**），
+   并且 `System32` / `SysWOW64` 的 `weasel.dll` 也换过、测试程序重启过（`GRID-CANDIDATE-DLL.md` §4.2）；
+   `build\rime_ice.schema.yaml` 要是 `menu/page_size: 36`（改完**必须重启 `WeaselServer`**，见上一节）。
 2. **lua 是不是两份不一样**：`D:\rime-sandbox\lua\` 与 `%APPDATA%\Rime\lua\` 的
    `vmenu_core.lua` / `menu_filter.lua` / `menu_processor.lua` 必须 **MD5 一致**
    （`TESTING.md` §4 第 4 条）。
@@ -147,8 +150,9 @@ Get-ChildItem "$env:TEMP\rime.weasel\*.log" | Sort-Object LastWriteTime -Descend
 
 1. **主题留空了吗**：`weasel.custom.yaml` 里要有 `"style/label_format": " "`（或 `""`），
    且 `build\weasel.yaml` 里同样是空/空格 —— 若还是 `label_format: "%s"`，那是原生序号列还在画。
-2. **lua 是新版吗**：`src\lua\menu_filter.lua` 里要有 `number_row1`，并且正常打字分支与
-   常用语插位分支都调用了它；v 菜单分支也要写注释。改完同步两处 lua 目录 + 重启 `WeaselServer`。
+2. **server 是自编的吗**：`WeaselServer.exe` 应为 2755584 字节（序号由 DLL 的 `GetLabelText` 覆写画，
+   **不再由 `menu_filter.lua` 写注释**——那个函数已经删掉了）。原版 server 是 2243072 字节，
+   没有任何序号补丁。
 3. **重启了吗**：lua 是启动时加载，不重启看不到效果。
 4. **日志有没有 YAML 报错**：`Error parsing` → schema 整个失效，先修缩进（见下一节）。
 
@@ -332,9 +336,10 @@ Get-Item "$d\WeaselDeployer.exe", "$d\WeaselDeployer.real.exe" -ErrorAction Sile
 
 **不会。** 实测：经代理转发的 `WeaselDeployer.exe /deploy`（= 托盘菜单里的「重新部署 (R)」）
 会重新生成 `D:\rime-sandbox\build\weasel.yaml` 与 `build\rime_ice.schema.yaml`，
-日志只有 INFO 没有 Error，而 **`max_width: 530`、`label_format`（留空）、`page_size: 36` 都还在** ——
+日志只有 INFO 没有 Error，而 **`label_format`（留空）、`page_size: 36` 都还在** ——
 因为它们写在 `weasel.custom.yaml` / `rime_ice.custom.yaml` 的 `patch` 里，重新部署会重新应用。
-（序号文字在 lua 里，跟部署无关；重新部署**不会**把第一行的 1–9 弄丢。）
+（序号文字在**自编 DLL** 里，跟部署无关；重新部署**不会**把 1–9 弄丢，也不会把
+`WeaselServer.exe` 换回原版——除非你自己重装了小狼毫。）
 
 ### 升级 / 修复安装小狼毫之后，托盘项变回「输入法设定」了
 
