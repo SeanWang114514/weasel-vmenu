@@ -3,6 +3,36 @@
 
 using namespace weasel;
 
+// [vmenu-grid] 候选序号：画在「当前高亮那一行」每个候选的**前面**。
+//
+// 为什么必须放在标签槽：
+//   * Weasel 的水平布局里，一格候选是「标签 → 候选词 → 注释」，只有标签槽在词的左侧。
+//     之前把序号塞进候选注释（menu_filter.lua 的 number_row1），渲染出来是
+//     「这个1 这股2」—— 数字跟在词**后面**，不符合「数字在词前」。
+//   * 注释是**翻译阶段**由过滤器生成的，移动高亮不会重新跑过滤器，所以注释里的序号
+//     永远钉在第一行，不可能「按高亮行重新编号」。标签槽是**每次绘制**都重算的，天然
+//     跟随高亮。
+//
+// 为什么跳过 style/label_format 模板：
+//   本机主题把 label_format 设成 " "（只有空格、没有 %s），模板会把标签文字整个吃掉，
+//   所以这里对网格态直接返回 "数字+空格"，不再走模板。
+//
+// 编号规则：
+//   * 本候选所在行 (id / 9) == 高亮所在行 (this->id / 9) 时，显示列号 1-9；
+//   * 其余行返回两个空格 —— 宽度与「数字+空格」接近，保证各行候选词左边缘对齐，
+//     同时满足「下面几行不带序号」。
+//   * 收起态只有一行（候选数 <= 9），此时整行就是高亮行，所以序号照样是 1-9。
+std::wstring HorizontalLayout::GetLabelText(const std::vector<Text>& labels,
+                                            int id,
+                                            const wchar_t* format) const {
+  const int kGridCols = 9;
+  const int hl_row = this->id / kGridCols;
+  const int row = id / kGridCols;
+  if (row == hl_row)
+    return std::to_wstring(id % kGridCols + 1) + L" ";
+  return L"  ";
+}
+
 void HorizontalLayout::DoLayout(CDCHandle dc, PDWR pDWR) {
   CSize size;
   int width = offsetX + real_margin_x, height = offsetY + real_margin_y;
