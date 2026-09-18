@@ -1,5 +1,12 @@
 # 重编 librime + Weasel 的可行性评估
 
+> ## ✅ 已实施（2026-09-18，0.2.5）
+> 这份评估的结论**已经落地**：没有改 librime，只改了 Weasel 前端，方向键翻译成
+> `highlight_candidate_on_current_page`（正是本文预判的做法）。本机补不齐 Windows SDK + Boost，
+> 所以改用 **GitHub Actions** 编。施工单与实测结果见
+> [`GRID-CANDIDATE-DLL.md`](GRID-CANDIDATE-DLL.md)。
+> 下面保留评估原文（含当时的判断与缺口清单），只作背景参考 —— **别再按它去本机装工具链**。
+
 > 结论先说：**不需要改 librime，只需要改 Weasel**，改动量约 20–40 行 C++；
 > 但本机**缺 Windows SDK 和 Boost**，要先把构建环境补齐。
 > 本文件是评估，不是施工单 —— 在用户明确同意前不要动现有安装。
