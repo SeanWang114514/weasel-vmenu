@@ -1,12 +1,15 @@
-# 把 CI 编出来的 weasel.dll / weaselx64.dll / WeaselServer.exe 装进小狼毫安装目录。
+# 把 CI 编出来的 weasel.dll / weaselx64.dll / WeaselServer.exe 装进小狼毫安装目录，
+# **并同步换掉系统目录里那两个 TSF 客户端 DLL**。
 #
-# 网格布局（WeaselUI/HorizontalLayout）和方向键导航（RimeWithWeasel）都编译在
-# WeaselServer.exe 里（它持有 UI host 和 RimeWithWeaselHandler），所以三个文件必须一起换，
-# 否则界面上什么都不会变。
+# 网格布局（WeaselUI/HorizontalLayout）、序号（GetLabelText 覆写）和方向键导航
+# （RimeWithWeasel）都编译在 WeaselServer.exe 里（它持有 UI host 和 RimeWithWeaselHandler），
+# 所以安装目录那三个文件必须一起换；而**应用真正加载的 weasel.dll 在系统目录**
+# （注册表 InprocServer32 指向 System32 / SysWOW64），只换安装目录等于没换。
 #
 # 安全约定（血泪教训）：
 #   * 三个文件必须同时存在，缺一个就整体拒绝（半套会让输入法直接不工作）。
-#   * 先备份到 BackupRoot\<时间戳>，再改名（已被加载的文件不能覆盖、但可以改名），最后复制新的进来。
+#   * 先备份到 BackupRoot\<时间戳>（系统目录那两个放进 system-dlls 子目录），
+#     再改名（已被加载的文件不能覆盖、但可以改名），最后复制新的进来。
 #   * 绝不碰 rime.dll（那是 librime 引擎，本项目不改它）。
 #   * 旧 WeaselServer.exe 会先备份（包括它旁边可能存在的 .vmenu-bak 标记）。
 param(
@@ -14,7 +17,8 @@ param(
   [string]$SourceDir,
   [string]$InstallDir = 'C:\Program Files\Rime\weasel-0.17.4',
   [string]$BackupRoot = 'D:\weasel-build\dll-backup',
-  [switch]$Force
+  [switch]$Force,
+  [switch]$SkipSystemDlls      # 只换安装目录（一般不要用：应用侧不会变）
 )
 
 $ErrorActionPreference = 'Stop'
@@ -89,4 +93,49 @@ foreach ($n in $targets) {
 Start-Process (Join-Path $InstallDir 'WeaselServer.exe')
 Start-Sleep -Seconds 3
 Write-Host ("WeaselServer 运行中: {0}" -f [bool](Get-Process WeaselServer -ErrorAction SilentlyContinue))
-Write-Host '完成。如果输入法表现异常，把备份目录里的同名文件复制回去再重启 WeaselServer 即可回滚。'
+
+# ============================================================================
+# ★ 第 2 步：TSF 客户端 DLL **不在安装目录**，必须同时换系统目录里那两个 ★
+#   HKLM\SOFTWARE\Classes\CLSID\{A3F4CDED-B1E9-41EE-9CA6-7B4D0DE6CB0A}\InprocServer32
+#     → C:\Windows\System32\weasel.dll      （x64，来自 weaselx64.dll）
+#     → WOW6432Node\...\InprocServer32      （x86，来自 weasel.dll）
+#       …实际文件在 C:\Windows\SysWOW64\weasel.dll
+#   只换安装目录 = 应用侧**一点变化都没有**（实测 md5 对比确认过），会误判成「补丁没生效」。
+# ============================================================================
+if (-not $SkipSystemDlls) {
+  $sysPairs = @(
+    @{ Dst = Join-Path $env:WINDIR 'System32\weasel.dll'; Src = 'weaselx64.dll'; Arch = 'x64' },
+    @{ Dst = Join-Path $env:WINDIR 'SysWOW64\weasel.dll'; Src = 'weasel.dll';    Arch = 'x86' }
+  )
+  $sysBackup = Join-Path $backup 'system-dlls'
+  New-Item -ItemType Directory -Force -Path $sysBackup | Out-Null
+
+  foreach ($p in $sysPairs) {
+    if (-not (Test-Path $p.Dst)) { Write-Host ("跳过 {0}（不存在）" -f $p.Dst); continue }
+    $before = (Get-FileHash $p.Dst -Algorithm MD5).Hash
+    Copy-Item $p.Dst (Join-Path $sysBackup ("weasel-{0}.dll" -f $p.Arch)) -Force
+    # 已被无数进程加载的 DLL 不能直接覆盖，但可以改名
+    $old = "$($p.Dst).grid-old"
+    Remove-Item $old -Force -ErrorAction SilentlyContinue
+    try {
+      Move-Item $p.Dst $old -Force
+    } catch {
+      Write-Host ("⚠️ 无法改名 {0}（{1}）—— 可能需要管理员权限；跳过" -f $p.Dst, $_.Exception.Message)
+      continue
+    }
+    Copy-Item $src.Files[$p.Src].FullName $p.Dst -Force
+    $after = (Get-FileHash $p.Dst -Algorithm MD5).Hash
+    Write-Host ("装入 {0}  [{1}]  {2} bytes  md5={3}（原 md5={4}）" -f `
+        $p.Dst, $p.Arch, (Get-Item $p.Dst).Length, $after, $before)
+    if ($after -ne (Get-FileHash $src.Files[$p.Src].FullName -Algorithm MD5).Hash) {
+      Write-Host '  ⚠️ md5 与新文件不一致，请人工确认！'
+    }
+  }
+  Write-Host ''
+  Write-Host '★ 换了 weasel.dll：**必须重启要用输入法的程序**（记事本等）才会加载新 DLL。'
+}
+
+Write-Host ''
+Write-Host '完成。回滚：把备份目录里的同名文件复制回去（安装目录 3 个 + system-dlls 里 2 个），再重启 WeaselServer。'
+Write-Host '⚠️ 重启服务后确认没被微信输入法抢走活动权：'
+Write-Host '   (Get-Process notepad).Modules | ? ModuleName -match "weasel|wetype"   # 只应有 weasel.dll'
