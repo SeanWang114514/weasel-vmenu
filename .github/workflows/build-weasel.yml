@@ -161,9 +161,12 @@ jobs:
           $cand | Select-Object FullName,Length,LastWriteTime | Format-Table -AutoSize | Out-String | Write-Host
           # 网格布局 + 方向键补丁编译进 WeaselServer.exe（它持有 UI host 和 RimeWithWeaselHandler），
           # 所以必须一起打进发布包，否则只换两个 DLL 界面上什么都不会变。
-          $srv = Get-ChildItem $env:GITHUB_WORKSPACE\output -File -ErrorAction SilentlyContinue -Include WeaselServer.exe |
+          # 注意：-Include 不带 -Recurse 时匹配不到任何子项（run#22 就栽在这），所以用 -Filter。
+          $srv = Get-ChildItem $env:GITHUB_WORKSPACE\output -File -Filter 'WeaselServer.exe' -ErrorAction SilentlyContinue |
                  Where-Object { $_.LastWriteTime -gt $cut } | Select-Object -First 1
+          if (-not $srv) { $srv = Get-ChildItem $env:GITHUB_WORKSPACE -Recurse -File -ErrorAction SilentlyContinue -Include WeaselServer.exe | Where-Object { $_.LastWriteTime -gt $cut } | Select-Object -First 1 }
           if ($srv) { Write-Host "== WeaselServer.exe =="; $srv | Select-Object FullName,Length,LastWriteTime | Format-Table -AutoSize | Out-String | Write-Host }
+          else { Write-Host "::warning::没找到新编的 WeaselServer.exe，包将只有 DLL（方向键/网格布局不会生效）" }
           if ($cand.Count -ge 2) {
             foreach ($f in $cand) { Copy-Item $f.FullName -Destination (Join-Path $env:GITHUB_WORKSPACE $f.Name) -Force }
             $names = @($cand.Name | Sort-Object -Unique)
