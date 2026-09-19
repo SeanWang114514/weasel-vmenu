@@ -467,6 +467,47 @@ Lua `src/lua/vmenu_core.lua` / `menu_filter.lua` / `menu_processor.lua`（三份
 **未做**：打包（等用户审核）；用户自己浏览器的重启（进程内 DLL）。
 
 ---
+
+### 1.30 剪贴板 / 常用语「固定格宽 + `…` 截断」，格宽上限 = 屏宽 27%（第十九轮，2026-09-19）
+
+用户四句话定了这一轮：①「剪切板改为一行2个 默认显示3行 用正常候选词的逻辑进行选择
+（但是拓展栏默认展开）」；②「和选项a差不多 但按上键不要收起 默认就是展开态」；
+③「这个剪贴板和常用词的候选词的框框长度固定 不能显示完全的候选词用....代替 然后继续解决问题」；
+④「剪切板和常用于的候选词长度上限缩短至27% 然后继续」。
+
+**结果**（细节与实测矩阵见 `docs/GRID-CANDIDATE-DLL.md` §7.5、实现摘要见 `CHANGELOG.md` 0.2.15）：
+
+* 剪贴板 / 常用语 = **2 列 × 3 行 = 一屏 6 条**，**永远展开**，`↑` 在第 1 行被吞掉，
+  `+`/`-` 按 6 翻页，数字键**只选高亮那一行**（与正常打字同构：`↓` 后按 `2` 上屏第 4 条 ✅）。
+* 格宽固定 = `min(屏宽 27%, 可用宽度/列数)`（`HorizontalLayout.cpp` 里的 `kVMenuFixedCellPercent`）：
+  高亮格蓝块实测 683 物理 = **455 虚拟 ≈ 屏宽 27%**；面板宽度恒定 ——
+  剪贴板第 1/2/3 页都是 `945x144`（改之前是 1008 / 1053 / 945 抖动）。
+* 超长候选由 DirectWrite 裁成 `…`（像素级确认末尾 3 个基线小点）；
+  **候选文本不动** → 上屏仍是完整内容（数字键选第 2 条上屏 3000+ 字全文 ✅）。
+* 回归全绿：普通打字 `660x49` / `↓` `660x189`、原符号 `690x49` → `852x191` → `690x49`、
+  `v` 主菜单 `861x95`、`v3` `808x96`。
+
+**这一轮真正的坑（都是「光标 w」的账，靠临时探针两分钟定位）**：
+
+1. `HorizontalLayout.cpp` 的换行回退 `w = offsetX + real_margin_x` 写在**算完本候选 rect 之后**，
+   于是每行第一个候选（第 3、5 条）用上一行行尾的光标量宽度 → 固定格宽下
+   `cell_right - 注释 - w ≤ 0` → 那一格的候选词和注释都成了 **0 宽矩形**
+   （现象：只剩一个「…」，右侧注释整块不见）。**修法**：循环体开头就回退光标，
+   且行首那格不再加 `candidate_spacing`（否则该行右移 22px、注释列错开一格）。
+2. `w += text_natural_w` 用**未裁剪**的自然宽度 → 注释 rect 被顶出格子 →
+   `max_width_of_rows` 跟着涨 → 面板宽度随内容抖动。
+   **修法**：固定格宽时 `w = min(w + text_natural_w, cell_right - cmt_block)`。
+
+**取证手段**：客户端临时写 `D:\weasel-build\tst\client-draw.log`（逐条 `DRAW i=N TEXT/CMT rect=… cch=… t=…`
+与每次 `UPDATE` 的候选文本），直接读出 `i=2 … w=0` → 立刻定位。**验证完已全部删除**
+（`Test-Path client-draw.log = False`、`vmenu-canary.txt` 已删、`vmenu_core.DEBUG_CAND = false`）。
+
+**部署**：`WeaselServer.exe` 2695168 B `B69578DA…`、`weaselx64.dll` 1182208 B `2936549A…`
+（→ `System32`）、`weasel.dll` 1038848 B `15E27D9A…`（→ `SysWOW64`）；
+旧文件备份 `D:\weasel-build\dll-backup\20260919-164421\`；**没有推 GitHub**。
+**未做**：打包（等用户审核）、用户自己浏览器进程的重启。
+
+---
 ## 2. 时间线（2026-09-13）
 
 | 时间 | 事件 |
@@ -594,12 +635,12 @@ Lua `src/lua/vmenu_core.lua` / `menu_filter.lua` / `menu_processor.lua`（三份
 
 | 组件 | 状态 |
 | --- | --- |
-| `WeaselServer.exe` | **自己编的网格版**在运行：2684928 字节，md5 `C31A89D6BC598227236CEDFE6E68B864`（本机自编：标签槽序号 + 翻页/同列光标 + §1.21 数字键按标签行重映射）；上一版 `1D87C729…` 备份在 `dll-backup\server-20260919-102400\`；`weasel.dll` 1034752 = `60B0F018D85B7DE1322A332E31657D11`、`weaselx64.dll` 1180672 = `8245FED5FF4983FA43436FF495B1172E`（第九轮：统一列宽严格对齐 +「满页才等宽」保护）；`C:\Windows\System32\weasel.dll` = 1180672 = `8245FED5…`（= x64，已含对齐补丁）、`C:\Windows\SysWOW64\weasel.dll` = 1037312 = `D5FE2EF7…`（= x86，**本轮也换成对齐版**）✅ 5 个文件都对上了。**后缀 `-patch4` 的 md5 是在 run#24 基础上改了集成 IID 一个字节**（见 §1.18 与 `GRID-CANDIDATE-DLL.md` §2.4；未打补丁前的 md5 是 `79E43332…` / `993E74EC…`） |
+| `WeaselServer.exe` | **自己编的网格版**在运行（第十九轮）：2695168 字节，md5 `B69578DADF037BE844E4D5A55B93E8FF`；`C:\Windows\System32\weasel.dll`（x64）= 1182208 = `2936549A6E8036090CF2274E0631618B`、`C:\Windows\SysWOW64\weasel.dll`（x86）= 1038848 = `15E27D9AEB64A1F5BB22AE2EC72496DA` ✅ 5 个文件都对上了（旧文件备份 `D:\weasel-build\dll-backup\20260919-164421\`）。本版本含：统一列宽严格对齐（第九轮）、数字键按标签行重映射（第十轮）、v 功能一行 4 个 + 加减号翻页 + `↓` 展开（第十八轮）、**剪贴板 / 常用语固定格宽（屏宽 27%）+ `…` 截断（第十九轮）**。历史 md5 见 §1.29 / §1.30 与 `GRID-CANDIDATE-DLL.md` §7.1–§7.5 |
 | `clipboard-sync.ps1` | 1 个实例 |
 | `vmenu-watcher.ps1` | 1 个实例（监督常驻窗口） |
 | `vmenu-settings-gui.ps1` | 1 个实例（常驻，未打开时是隐藏窗口） |
 | `open-settings.flag` | 稳态下**不存在** |
-| Lua 双目录一致性 | `D:\rime-sandbox\lua\` 与 `%APPDATA%\Rime\lua\` 三处（+ 仓库 `src/lua/`）MD5 必须一致：`vmenu_core.lua` = `C470A5CDC741440AEE6F631BCF8FFBBB`、`menu_filter.lua` = `C8AC1959697256782A57BB2664DB6639`、`menu_processor.lua` = `19D26F7167BDB1180A6BF4FD646850B2`、`lua_menu.lua` = `3A424586D41B2DEB8457F3D709C764CD` |
+| Lua 双目录一致性 | `D:\rime-sandbox\lua\` 与 `%APPDATA%\Rime\lua\` 三处（+ 仓库 `src/lua/`）MD5 必须一致（第十九轮实测 25 个 `.lua` 文件两两相同）：`vmenu_core.lua` = `FB95A258600185581751B455A4BA4265`、`menu_filter.lua` = `4D94845784A4221AD350FE5CC8E0AAE4`、`menu_processor.lua` = `92F24442D885AA50E5C136D3158CB195`、`lua_menu.lua` = `0D1D142FF19D5EB6A79657730955D7D9` |
 | `style/layout/max_width` | 1100（只是兜底）——**换行已经不归它管**：自编 DLL 的 `HorizontalLayout.cpp` 按「候选 > 9 时每 9 个换行、≤9 绝不换行」硬编码（用户要求「不许丢候选、必须一行」） |
 | `style/label_format` | 留空（`weasel.custom.yaml` 写 `" "`）→ 不画原生序号；序号改由**自编 DLL 的 `GetLabelText` 覆写**写进标签槽（旧做法 `menu_filter.number_row1` 写注释已删除） |
 | `menu/page_size` | 36（`rime_ice.custom.yaml` + `build/rime_ice.schema.yaml`；= 9 × 4，按 `↓` 展开后的条数） |

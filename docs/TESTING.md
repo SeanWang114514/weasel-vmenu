@@ -590,3 +590,52 @@ CI + `tools/deploy-grid-dlls.ps1`（5 个文件）。
 
 > 工具（都在 `D:\weasel-build\tst\`，不入库）：`align-strict.ps1`（逐像素比 + 差异 x 段起点）、
 > `align-profile.ps1`（白色文字段左边缘）、`panel-real-rect.ps1`（像素扫描找面板真实矩形）。
+
+## 14. 第十九轮（固定格宽 / `…` 截断）的取证方法：**先拿客户端日志，再谈像素**
+
+这一轮的现象是「候选词显示不全、注释不出现、面板宽度抖」，看截图只能猜。
+真正两分钟定位的是一个**临时**探针：在客户端 `WeaselUI.cpp`（`UI::Update`）与
+`WeaselPanel.cpp`（`_DrawCandidates` 的 TEXT / CMT 两处）里 `fopen` 追加一行日志：
+
+```
+pid=14608 UPDATE abbrev=30 n=6
+    i=0 cch=33 text=# 雾凇拼音  ![demo](./others/asse.   ← 客户端**实际拿到**的文本
+pid=14608 DRAW i=2 TEXT rect=52,89,52,127 w=0 cch=33 t=502 <!DOCTYPE html> <html lan.
+                     ↑ 行首那格宽度 = 0（就是 bug 本体）
+```
+
+**永久经验**：`_DrawCandidates` 用的是 `m_layout->GetCandidate*Rect(i)`，
+**rect 是排版算的、文字是上下文给的** —— 「文字显示不全」先分清是
+①上下文文本本来就短（本轮发现是主题 `candidate_abbreviate_length: 30` 在**客户端**缩写，
+只影响显示，上屏仍是全文），还是 ②排版给的 rect 太窄（本轮两个 bug）。
+日志比截图快一个数量级。**排查完必须删掉**（本轮已删，`Test-Path client-draw.log = False`）。
+
+**本轮可直接照抄的验收命令**（`D:\weasel-build\tst\probe-fixed.ps1`，
+按一串键 → 量候选窗矩形 → 截图 + 裁面板 → 可选 `↓`/`↑`/数字 → `WM_GETTEXT` 读回上屏，
+**全程不碰剪贴板**）：
+
+```powershell
+# 1) 先杀旧记事本再开新的：客户端 DLL 是进程内加载，不重启看不到新 DLL
+Get-Process notepad | Stop-Process -Force; Start-Process notepad.exe -ArgumentList '"D:\weasel-build\tst\IME LAYOUT TEST.txt"'
+# 2) 剪贴板：2 列 × 3 行、面板恒宽（应 945x144，三页都一样）
+pwsh -NoProfile -File probe-fixed.ps1 -Keys 'v,2'            -Out c1
+pwsh -NoProfile -File probe-fixed.ps1 -Keys 'v,2,equal'      -Out c2
+pwsh -NoProfile -File probe-fixed.ps1 -Keys 'v,2,equal,equal'-Out c3
+# 3) 选择逻辑与按键：↓ 后数字选「高亮那一行」；↑ 不许收起
+pwsh -NoProfile -File probe-fixed.ps1 -Keys 'v,2' -Down -Digit 2 -Out c4   # 期望上屏 URL（第 4 条）
+pwsh -NoProfile -File probe-fixed.ps1 -Keys 'v,2' -Up           -Out c5   # 期望仍是 945x144
+# 4) 常用语 / 原符号 / 回归
+pwsh -NoProfile -File probe-fixed.ps1 -Keys 'v,4' -Digit 1 -Out f1        # 期望上屏第 1 条常用语
+pwsh -NoProfile -File probe-fixed.ps1 -Keys 'v,5' -Down -Up    -Out r1    # 690x49 → 852x191 → 690x49
+pwsh -NoProfile -File probe-fixed.ps1 -Keys 's,h,i'            -Out s1    # 660x49（无回归）
+```
+
+**几何怎么量**（不要靠看图）：
+
+| 量什么 | 命令 | 本轮结果 |
+| --- | --- | --- |
+| 高亮格（蓝块）宽度 | 逐像素找 `B > R + 15` 的 x 范围 | x 36..718 物理 = **455 虚拟 ≈ 屏宽 27%** ✅ |
+| 文字块 / 注释块位置 | `ink.ps1 -In <crop> -Y0 a -Y1 b -Cells @(20,720,1400)` | 每格「文字块 → 右对齐注释块」，注释右缘两列各自对齐 ✅ |
+| 末尾有没有 `…` | `inkmap.ps1 -In <crop> -X0 470 -X1 545 -Y0 112 -Y1 150 -ColStep 1 -RowStep 1` | 基线处 **3 个小点** ✅ |
+| 面板宽度稳不稳 | `probe-fixed.ps1` 打印的 `panel WxH` | 剪贴板三页 **945x144 / 945x144 / 945x144** ✅ |
+

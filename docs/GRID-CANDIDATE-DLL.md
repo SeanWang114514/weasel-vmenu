@@ -653,6 +653,103 @@ if ((i % kGridCols) >= draw_cols) { SetRectEmpty(&_candidateRects[i]); … conti
 > 验证网页通路时用了独立 profile 的 Chrome：`chrome.exe --user-data-dir=D:\weasel-build\chrome-ime-profile
 > --new-window file:///D:/weasel-build/tst/ime-web-test.html`（不动用户的浏览器会话）。
 
+## 7.5 ✅ 已部署（第十九轮，2026-09-19）：剪贴板 / 常用语「固定格宽 + `…` 截断」，格宽上限 = 屏宽 27%
+
+**用户诉求（原话）**：
+「剪切板改为一行2个 默认显示3行 用正常候选词的逻辑进行选择（但是拓展栏默认展开）」、
+「和选项a差不多 但按上键不要收起 默认就是展开态」、
+「这个剪贴板和常用词的候选词的框框长度固定 不能显示完全的候选词用....代替 然后继续解决问题」、
+随后追加「剪切板和常用于的候选词长度上限缩短至27% 然后继续」。
+
+**定下来的语义**（剪贴板 `v`→`2`、常用语 `v`→`4`，两者同构）：
+
+| 项 | 行为 |
+| --- | --- |
+| 网格 | 一行 **2 个** × **3 行** = 一屏 6 条；`menu/page_size` 仍是 36，由 `menu_filter.lua` 用 `lim = core.grid_limit(ctx, code) = 6` 切片 |
+| 默认态 | **永远展开**（不需要按 `↓`），`↑` 在第 1 行**被吞掉**（绝不收起） |
+| 数字键 | 与正常打字同构：**只选「高亮那一行」里的第 N 个**（`row = current/2; target = row*2 + digit`） |
+| `+` / `-` | 按 **6** 翻页（`page_next` / `page_prev`，步长 = 本屏条数） |
+| 格宽 | **固定**：`col_width = min(屏宽 27%, 可用宽度/列数)`（此前是「可用宽度的一半」≈ 屏宽 50%），再与 `120 + candidate_spacing` 取大保底 |
+| 超长候选 | 绘制阶段裁掉并以 **`…`** 结尾；**候选文本本身不动** → 选中后上屏的仍是完整内容（实测：数字键选第 2 条 → 上屏 3000+ 字全文） |
+
+**客户端改动（本轮真正的工作量在这里）**：
+
+```cpp
+// HorizontalLayout.cpp —— 固定格宽（服务端下发 grid_cols == 2 的列表模式才启用）
+const int kVMenuFixedCellPercent = 27;           // ← 想调宽调窄只改这一个数字
+const int kScreenW  = GetSystemMetrics(SM_CXSCREEN);
+const int grid_budget = kScreenW - offsetX - 2*real_margin_x - 16;
+const bool fixed_cells = (explicit_cols && kGridCols == 2 && grid_budget > 0);
+int fixed_col_width = 0;
+if (fixed_cells)
+  fixed_col_width = max(min((int)((long long)kScreenW * kVMenuFixedCellPercent / 100),
+                            grid_budget / kGridCols),
+                        120 + _style.candidate_spacing);
+```
+
+```cpp
+// WeaselUI.h —— 新增两个 setter（DirectWrite 文本布局）
+SetLayoutWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+SetLayoutEllipsisTrimming(pTextFormat);   // CreateEllipsisTrimmingSign + DWRITE_TRIMMING_GRANULARITY_CHARACTER
+// WeaselPanel.cpp/_TextOut(..., trim = true) 只给「候选词」和「注释」传 true
+```
+
+**⚠️ 本轮踩的两个坑（都是「光标 w」的账，靠临时探针才定位）**：
+
+1. **每行第一个候选的 rect 宽度算成 0**。`HorizontalLayout.cpp` 里换行块的
+   `w = offsetX + real_margin_x` 是在**本候选画完之后**才执行的，而候选词 / 注释的 rect
+   是在它之前算的 —— 于是第 3、5 个候选（每行第一格）用的是**上一行行尾**的光标，
+   固定格宽下 `cell_right - 注释 - w ≤ 0` → 候选词和注释都成了 0 宽矩形
+   （现象：第 2、4 条只剩一个「…」，右侧注释整块消失）。
+   **修法**：在循环体**开头**就把光标拉回行首，并且行首那一格**不再**加 `candidate_spacing`
+   （加了会让该行整体右移 22px，且换行块把 `offsetX` 记成 -22，注释列跟着错开）。
+2. **面板宽度随内容抖动**（实测同一天 1008 / 1053 / 945）。
+   `w += text_natural_w` 用的是**未裁剪**的自然宽度（剪贴板长句上千像素），
+   注释 rect 被顶到格子外面（`right` 远超 `cell_right`），
+   而 `max_width_of_rows = max(..., _candidateCommentRects[i].right)` → 面板宽度跟着涨。
+   **修法**：固定格宽时 `w = min(w + text_natural_w, cell_right - cmt_block)`。
+
+**定位手段（已删除，记录备查）**：客户端 `WeaselUI.cpp` / `WeaselPanel.cpp` 里临时写
+`D:\weasel-build\tst\client-draw.log`，逐条打印
+`DRAW i=N TEXT/CMT rect=l,t,r,b w=… cch=… t=…` 与每次 `UPDATE` 拿到的候选文本 ——
+正是这条日志直接读出「`i=2 … w=0`」，两分钟定位，省掉盲猜。**验证完必须删掉**（本轮已删干净，
+`Test-Path client-draw.log = False`）。
+
+**实测矩阵**（记事本前台 + `probe-fixed.ps1`，全部通过）：
+
+| 操作 | 候选窗（虚拟像素） | 读出 / 判定 |
+| --- | --- | --- |
+| `v`→`2` 第 1 页 | `945x144` | 2 列 × 3 行；高亮格蓝块 x 36..718 物理 = **455 虚拟 ≈ 屏宽 27%**；6 条都画出文字，注释「剪贴板 N/29」右对齐成两列 |
+| `v`→`2` 第 2 / 第 3 页（`=`、`==`） | `945x144` / `945x144` | **面板宽度恒定**（修坑 2 之前是 1053 / 945） |
+| `v`→`2` → `↓` → 数字 `2` | — | 上屏 `http://127.0.0.1:5173/` = 第 2 行第 2 格（第 4 条）✅ |
+| `v`→`2` → `↑` | `945x144`（不收起） | 高亮停在第 1 行，候选窗不收缩 ✅ |
+| `v`→`4`（常用语 2 条） | `945x49` | 两条各占固定一格，注释「常用语 wsl / 131」右对齐 ✅ |
+| `v`→`4` → 数字 `1` | — | 上屏 `wslzhenshuai@163.com` ✅ |
+| `v`→`5`（原符号）/ `↓` / `↑` | `690x49` → `852x191` → `690x49` | 与正常打字完全一致（9 列 1 行 → 4 行 → 收起）✅ |
+| `v`→`5` → 数字 `4` | — | 上屏 `vat` = `vac/van/var/vat/…` 的第 4 个 ✅ |
+| 普通打字 `shi` / `↓` | `660x49` / `660x189` | **无回归** ✅ |
+| `v` 主菜单 / `v`→`3` | `861x95` / `808x96` | 静态菜单不变（4 列、顺序序号、自然宽度）✅ |
+
+**`…` 到底是谁画的**：主题里 `candidate_abbreviate_length: 30`（`%APPDATA%\Rime\weasel.yaml`）
+本来就会把 >30 字的候选**在客户端**缩成「前 29 字 + `...` + 末字」，而且**只影响显示**
+（`UI::Update` 改的是 `ctx_` 副本，上屏文本不受影响）；本轮新增的 DirectWrite 裁剪是**第二道保险**，
+在格宽 27% 之后真正开始生效（像素级确认：候选词末尾有 3 个基线小点）。
+
+**部署记录**（`tools\deploy-grid-dlls.ps1 -SourceDir D:\weasel-build\weasel\output`）：
+
+| 文件 | 大小 | md5 |
+| --- | --- | --- |
+| `WeaselServer.exe` | 2695168 B | `B69578DADF037BE844E4D5A55B93E8FF` |
+| `weaselx64.dll` → `C:\Windows\System32\weasel.dll` | 1182208 B | `2936549A6E8036090CF2274E0631618B` |
+| `weasel.dll` → `C:\Windows\SysWOW64\weasel.dll` | 1038848 B | `15E27D9AEB64A1F5BB22AE2EC72496DA` |
+
+旧文件备份：`D:\weasel-build\dll-backup\20260919-164421\`。
+重编：`pwsh -NoProfile -File D:\weasel-build\build-vmenu.ps1 -Only all`（server 20 s / x64 10 s / x86 12 s）。
+
+> ⚠️ 客户端 DLL 是**进程内**加载：记事本、Chrome、微信…**必须重启进程**才会用上新 DLL。
+> 在浏览器里复核时请开一个独立 profile（`--user-data-dir=D:\weasel-build\chrome-ime-profile`），
+> 别动用户自己的浏览器会话。
+
 ## 7. 未做 / 待确认
 
 | 项 | 说明 |

@@ -241,6 +241,22 @@ request_gui()  ──写──► open-settings.flag ──轮询 60 ms──►
 > 现在这份判断由**服务端自己按输入前缀算**（`_VMenuListCode`：`vclip*` / `vfav*` / `vsetc*` / `vsetf*`），
 > 不经过 option；`menu_processor.lua`（**processor**，在管线之前跑）里该改 option 的照旧。
 
+**列表型 v 功能（剪贴板 `v`→`2` / 常用语 `v`→`4`）是「固定格宽」的另一套排版**（第十九轮）：
+服务端下发 `ctx.grid_cols = 2` 时，客户端 `HorizontalLayout` 走 `fixed_cells` 分支 ——
+
+* 一屏固定 **2 列 × 3 行 = 6 条**（`vmenu_core.LIST_LIMIT`），**永远展开**，`↑` 在第 1 行被吞掉；
+* 格宽钉死为 **`min(屏宽 27%, 可用宽度/列数)`**（`kVMenuFixedCellPercent = 27`），
+  面板宽度因此与内容无关（剪贴板三页实测都是 `945x144`；`v`→`4` 两条也是 `945x49`）；
+* 每格 = `[序号槽][候选词][右对齐的注释]`，候选词可用宽度 = 格右缘 − 注释 − 间距，
+  放不下的文字由 DirectWrite 画成 `…`（`SetLayoutWordWrapping(NO_WRAP)` +
+  `SetLayoutEllipsisTrimming`）——**只裁绘制，候选文本不动，上屏仍是完整内容**；
+* 数字键与正常打字同构：只选**高亮那一行**的第 N 个（`row = current/2; target = row*2 + digit`），
+  `+` / `-` 按 6 翻页。
+* ⚠️ 两个必须记住的坑：换行时**光标必须在算本行第一个候选的 rect 之前**就回到行首
+  （否则那一格的宽度是 0），以及固定格宽下**光标只能走到本格文字区右缘**
+  （否则注释 rect 被顶出格子，`max_width_of_rows` 跟着涨 → 面板宽度抖动）。
+  详见 `docs/GRID-CANDIDATE-DLL.md` §7.5。
+
 ### 3.7 设置窗口里的双击编辑
 
 ```

@@ -33,7 +33,13 @@
    * 改了 **托盘入口**（`tools/vmenu-tray-setup.ps1` / `src/windows/vmenu-deployer-wrapper.cs`）
      → 重跑一次 `tools/vmenu-tray-setup.ps1`（它会重新编译并覆盖代理、按需改菜单文字）。
 4. 验证一律用**截图 + 真按键**（`tools/` 里现成的脚本），不要靠「读代码觉得对」。
-5. 当前状态与开放问题见 [`PROGRESS.md`](PROGRESS.md) 第 4、5 节。
+   * 「候选词显示不全」这类问题**先加客户端日志再谈像素**：在 `WeaselUI.cpp` 的 `UI::Update`
+     与 `WeaselPanel.cpp` 的 `_DrawCandidates` 里临时 `fopen` 追加
+     `DRAW i=N TEXT/CMT rect=… cch=… t=…`，能一眼看出是「上下文文本短」还是「排版 rect 窄」。
+     第十九轮两个 bug 都是这么两分钟定位的（方法见 `TESTING.md` §14，**排查完必须删掉探针**）。
+5. 当前状态与开放问题见 [`PROGRESS.md`](PROGRESS.md) 第 4、5 节；
+   第十九轮（剪贴板 / 常用语固定格宽 = 屏宽 27% + `…` 截断）见 `PROGRESS.md` §1.30
+   与 `GRID-CANDIDATE-DLL.md` §7.5。
 
 ---
 
