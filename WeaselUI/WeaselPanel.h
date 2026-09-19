@@ -95,11 +95,13 @@ class WeaselPanel
                       const BackType& type,
                       const IsToRoundStruct& rd,
                       const COLORREF& bordercolor);
+  // [vmenu-fixed] trim = true 时：文本比 rect 宽就裁掉并以「…」收尾（固定格宽用）。
   void _TextOut(const CRect& rc,
                 const std::wstring& psz,
                 const size_t& cch,
                 const int& inColor,
-                IDWriteTextFormat1* const pTextFormat = NULL);
+                IDWriteTextFormat1* const pTextFormat = NULL,
+                const bool& trim = false);
 
   void _LayerUpdate(const CRect& rc, CDCHandle dc);
 

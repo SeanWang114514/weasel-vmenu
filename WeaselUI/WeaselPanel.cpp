@@ -885,7 +885,7 @@ bool WeaselPanel::_DrawCandidates(CDCHandle& dc, bool back) {
         if (m_istorepos)
           rect.OffsetRect(0, m_offsetys[i]);
         _TextOut(rect, text.c_str(), text.length(), candidate_text_color,
-                 txtFormat.Get());
+                 txtFormat.Get(), true);
       }
       // Draw comment
       std::wstring comment = comments.at(i).str;
@@ -894,7 +894,7 @@ bool WeaselPanel::_DrawCandidates(CDCHandle& dc, bool back) {
         if (m_istorepos)
           rect.OffsetRect(0, m_offsetys[i]);
         _TextOut(rect, comment.c_str(), comment.length(), comment_text_color,
-                 commenttxtFormat.Get());
+                 commenttxtFormat.Get(), true);
       }
       drawn = true;
     }
@@ -1226,7 +1226,8 @@ void WeaselPanel::_TextOut(const CRect& rc,
                            const std::wstring& psz,
                            const size_t& cch,
                            const int& inColor,
-                           IDWriteTextFormat1* const pTextFormat) {
+                           IDWriteTextFormat1* const pTextFormat,
+                           const bool& trim) {
   if (pTextFormat == NULL)
     return;
   float r = (float)(GetRValue(inColor)) / 255.0f;
@@ -1241,6 +1242,12 @@ void WeaselPanel::_TextOut(const CRect& rc,
 
   HR(pDWR->CreateTextLayout(psz.c_str(), (int)cch, pTextFormat,
                             (float)rc.Width(), (float)rc.Height()));
+  // [vmenu-fixed] 固定格宽：候选词长度超过格子可用宽度 → 单行不折行 + 末尾「…」。
+  //   DirectWrite 的 trimming 只在文本放不下时生效，放得下时与原行为完全一致。
+  if (trim) {
+    HR(pDWR->SetLayoutWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP));
+    HR(pDWR->SetLayoutEllipsisTrimming(pTextFormat));
+  }
   if (m_style.layout_type == UIStyle::LAYOUT_VERTICAL_TEXT) {
     DWRITE_FLOW_DIRECTION flow = m_style.vertical_text_left_to_right
                                      ? DWRITE_FLOW_DIRECTION_LEFT_TO_RIGHT

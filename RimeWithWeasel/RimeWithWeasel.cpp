@@ -397,11 +397,19 @@ BOOL RimeWithWeaselHandler::ProcessKeyEvent(KeyEvent keyEvent,
       //     数字键必须继续交给 Lua 顺序选，按二维换算会选错。
       const bool grid_open =
           !!(rime_api->get_option(session_id, "vmenu_grid"));
+      // [vmenu-grid] 原符号模式（v 主菜单第 5 项 = vraw_mode）例外：那里的 v 开头是用户
+      //   自己敲的符号编码（vfh / vbd / va…），但候选窗是照**普通打字**的网格画的
+      //   （_VMenuLabel 在 vraw 下返回 false → 9 列、按高亮行画 1-9），所以数字键必须
+      //   和普通打字一样接管，否则就是「序号画着却按不动、按 3 反而把编码补成 v3」——
+      //   用户反馈的「v5 的候选词选择逻辑没有和正常的候选词选择逻辑同步」正是这里。
+      //   ★ 代价（用户已确认）：v3 / v10 这类「数字编码」不再能当编码输入。
+      const bool vraw_mode =
+          !!(rime_api->get_option(session_id, "vraw_mode"));
       const bool v_grid_digits =
           v_prefix && grid_open &&
           _VMenuList(rime_api, session_id, input_str.c_str());
-      if ((!digits_only && !v_prefix && !has_upper && !has_other &&
-           !date_prefix) ||
+      if ((!digits_only && (!v_prefix || vraw_mode) && !has_upper &&
+           !has_other && !date_prefix) ||
           v_grid_digits) {
         RIME_STRUCT(RimeContext, ctx);
         if (rime_api->get_context(session_id, &ctx)) {
@@ -1033,13 +1041,8 @@ inline bool _IsVMenu(RimeApi* api, RimeSessionId session_id, const char* code) {
   return _VMenuLabel(api, session_id, code, &label);
 }
 
-// [vmenu-grid] 一行几列（4 = v 功能菜单 / 9 = 普通打字）。
-inline int _VMenuCols(RimeApi* api, RimeSessionId session_id, const char* code) {
-  return _IsVMenu(api, session_id, code) ? 4 : 9;
-}
-
 // [vmenu-grid] 「这次是不是列表型 v 功能」（剪贴板 / 常用语 / 管理列表）。
-// 列表：一屏 4 / 16 个，序号按「行 × 列」算，展开态数字键由服务端按二维接管。
+// 列表：一屏 6 个（2 列 × 3 行），序号按「行 × 列」算，数字键由服务端按二维接管。
 // 静态菜单（v 主菜单 5 项、v3 快捷输入 7 项）：全部一次显示，序号按 1..N 顺序算，
 // 数字键永远交给 Lua 顺序选。
 // 前缀表必须与 src/lua/vmenu_core.lua 的 mode_of / parse_sub 一致：
@@ -1056,6 +1059,17 @@ inline bool _VMenuListCode(const char* code) {
       (s[4] == 'c' || s[4] == 'f'))
     return true;
   return false;
+}
+
+// [vmenu-grid] 一行几列（9 = 普通打字 / 2 = 剪贴板·常用语 / 4 = 其它 v 功能菜单）。
+// [一行 2 个] 用户要求：剪贴板与常用语「一行 2 个、默认显示 3 行、默认就是展开态」，
+//   所以**列表型** v 功能一律 2 列；其余 v 功能菜单仍是 4 列（「v 的功能一行显示 4 个」）。
+// 前端 WeaselUI/HorizontalLayout.cpp 按这个列号钉格子，收起态那一行与展开后每一行的
+// 同一列逐像素对齐；万一某个格子实在太宽（很长的剪贴板条目），前端会少画 1 格
+// （2 → 1），但仍保住列位置，不重排候选。
+inline int _VMenuCols(RimeApi* api, RimeSessionId session_id, const char* code) {
+  if (!_IsVMenu(api, session_id, code)) return 9;
+  return _VMenuListCode(code) ? 2 : 4;
 }
 
 inline bool _VMenuList(RimeApi* api, RimeSessionId session_id, const char* code) {

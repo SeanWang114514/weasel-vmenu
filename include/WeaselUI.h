@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 
 #include <WeaselIPCData.h>
 #include <vector>
@@ -131,6 +131,21 @@ class DirectWriteResources {
   }
   HRESULT SetLayoutFlowDirection(const DWRITE_FLOW_DIRECTION& direct) {
     return pTextLayout->SetFlowDirection(direct);
+  }
+  // [vmenu-fixed] 固定格宽：候选词装不下时按**字符**裁掉，并以「…」收尾。
+  //   只在「文本比 rect 宽」时生效 —— 装得下的文本渲染结果与原来完全一致，
+  //   所以普通打字的候选词、以及各处按自己真实宽度给出的 rect 都不受影响。
+  HRESULT SetLayoutWordWrapping(const DWRITE_WORD_WRAPPING& wrapping) {
+    return pTextLayout->SetWordWrapping(wrapping);
+  }
+  HRESULT SetLayoutEllipsisTrimming(IDWriteTextFormat* const pFormat) {
+    ComPtr<IDWriteInlineObject> sign;
+    HRESULT hr = pDWFactory->CreateEllipsisTrimmingSign(
+        pFormat, sign.ReleaseAndGetAddressOf());
+    if (FAILED(hr))
+      return hr;
+    DWRITE_TRIMMING trimming = {DWRITE_TRIMMING_GRANULARITY_CHARACTER, 0, 0};
+    return pTextLayout->SetTrimming(&trimming, sign.Get());
   }
   void DrawTextLayoutAt(const D2D1_POINT_2F& point) {
     pRenderTarget->DrawTextLayout(point, pTextLayout.Get(), pBrush.Get(),

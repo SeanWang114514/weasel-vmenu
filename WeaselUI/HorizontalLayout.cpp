@@ -126,12 +126,39 @@ void HorizontalLayout::DoLayout(CDCHandle dc, PDWR pDWR) {
   const bool explicit_cols = (_context.grid_cols > 0);
   // [vmenu-grid] 只有「排满一页」才强制等宽（收起 = 9、展开 = 36）。见下面 grid_uniform 的注释。
   const int kGridUniformMin = 8;
+  // [vmenu-fixed] 剪贴板 / 常用语「固定格宽」占屏幕宽度的百分比：用户要求 27%。
+  //   改这一个数字就能整体调宽/调窄（往下还有 120px 的字宽保底）。
+  const int kVMenuFixedCellPercent = 27;
   const bool grid_multi_row = (candidates_count > kGridCols);
   int col_width = 0;
   int grid_label_w = 0;                // 网格态统一序号槽宽（见下面注释）
   int draw_cols = kGridCols;           // 本行实际画几格（<= kGridCols，见下面「少放几个」）
   int& cols_per_row = cols_per_row_;   // 换行 / 编号的步长：普通 9、v 功能菜单 4
   cols_per_row = kGridCols;
+  // [vmenu-fixed] 「固定格宽」= 剪贴板 / 常用语（服务端下发 grid_cols == 2 的列表模式）。
+  //   用户要求：「候选词的框框长度固定，装不下的候选词用 … 代替」。
+  //   这类模式的格宽**不再由内容决定**。原来的做法是「取最宽候选当统一列宽」：
+  //   一行剪贴板长句（70~120 字）会把列宽顶到 1400px 以上，2 列放不进屏幕 →
+  //   触发「少放几格」，实测只剩 1 列，而且面板宽度随剪贴板内容跳来跳去。
+  //   现在改成把可用屏幕宽度**按列数等分**并钉死：
+  //     * 面板宽度恒定（同一模式永远一样宽），换页 / 换内容都不抖；
+  //     * 每格等宽，超长候选词在绘制阶段被裁掉并以「…」结尾（WeaselPanel::_TextOut，
+  //       候选词文本本身不动 → 选中后上屏的仍是完整内容）。
+  const int kScreenW = GetSystemMetrics(SM_CXSCREEN);
+  const int grid_budget =
+      (kScreenW > 0) ? (kScreenW - offsetX - 2 * real_margin_x - 16) : 0;
+  const bool fixed_cells = (explicit_cols && kGridCols == 2 && grid_budget > 0);
+  // 固定格宽（含列间距）。上限 = **屏幕宽度的 27%**（用户指定：剪贴板 / 常用语每个候选框
+  //   的长度上限就从原来的「可用宽度一半（≈ 屏幕 50%）」缩到 27% —— 格子更短、更整齐，
+  //   装不下的候选词照样由绘制阶段裁成「…」，上屏内容仍是完整的一句）。
+  //   120px 保底：极端小屏 / 高 DPI 下别窄到看不见字；再与「可用宽度按列数均分」取小。
+  int fixed_col_width = 0;
+  if (fixed_cells) {
+    const int screen_limit = (int)((long long)kScreenW * kVMenuFixedCellPercent / 100);
+    fixed_col_width =
+        max(min(screen_limit, grid_budget / kGridCols),
+            120 + _style.candidate_spacing);
+  }
   // [vmenu-grid] 序号算法由服务端下发：1 = 行 × 列（列表 / 普通打字的展开网格），
   // 0 = 顺序 1..N（静态 v 菜单）。这里先记下来，GetLabelText 会在下面各次调用里用它。
   grid_2d_ = (_context.grid_2d != 0);
@@ -171,14 +198,15 @@ void HorizontalLayout::DoLayout(CDCHandle dc, PDWR pDWR) {
       }
       col_width += _style.candidate_spacing;  // 列与列之间的间距
     }
+    // [vmenu-fixed] 固定格宽：覆盖上面「按最宽候选」量出来的列宽（本身只当兜底）。
+    if (fixed_cells)
+      col_width = fixed_col_width;
     // [vmenu-grid] 统一列宽的另一面：万一有**超长候选**（例如很长的常用语 / 剪贴板长句），
     // N 列 × 那个宽度会把面板撑得比屏幕还宽。用户允许「实在太长就少放 1-3 个」：
     // 从基准列数往下减（9→8/7/6，v 菜单 4→3/2/1），减到这一行能完整放进屏幕为止。
     // 减掉的那几格**不画**（visible_cols_），但列位置仍钉在「列号 × 列宽」上，
     // 于是收起态那一行与展开后每一行同一列严格对齐（用户要求「上下对齐」）。
-    const int kScreenW = GetSystemMetrics(SM_CXSCREEN);
-    const int grid_budget =
-        (kScreenW > 0) ? (kScreenW - offsetX - 2 * real_margin_x - 16) : 0;
+    // 注意：固定格宽（剪贴板 / 常用语）的列宽已经 ≤ budget/列数，这里不会触发裁列。
     draw_cols = kGridCols;
     if (col_width > 0 && grid_budget > 0) {
       const int min_cols = (kGridCols > 3) ? (kGridCols - 3) : 1;  // 最多少放 3 个
@@ -213,7 +241,17 @@ void HorizontalLayout::DoLayout(CDCHandle dc, PDWR pDWR) {
         continue;
       }
       int current_cand_width = 0;
-      if (i > 0)
+      // [vmenu-fixed] ★ 每行第一个候选必须**先把光标拉回行首**再量尺寸。
+      //   原来只有下面的换行块在「本候选画完之后」才回退光标，于是行首那个候选
+      //   是用上一行行尾的光标量出来的：固定格宽下 cell_right - 注释 - w 直接 ≤ 0，
+      //   候选词和注释都被画成 0 宽（实测第 2、4 个候选 rect 宽度 = 0）。
+      //   这里提前回退，下面的换行块算出的 ofx 就变成 0，行高/行数统计不受影响。
+      if (grid_multi_row && i > 0 && (i % cols_per_row) == 0) {
+        w = offsetX + real_margin_x +
+            ((i == id && !grid_multi_row) ? base_offset : 0);
+        // 行首**不再**加列间距：加了以后行首格会比第 1 行右移 22px，
+        // 后面换行块又会把 offsetX 记成 -22，注释列就会跟着错开一格间距。
+      } else if (i > 0)
         w += _style.candidate_spacing;
       // [vmenu-grid] 等宽网格不给高亮格加 base_offset：高亮块本来就是整格，
       //   加了会让那一格的文字比其他格右移几个像素，「严格对齐」就破了。
@@ -234,26 +272,65 @@ void HorizontalLayout::DoLayout(CDCHandle dc, PDWR pDWR) {
       w += _style.hilite_spacing;
       const std::wstring& text = candidates.at(i).str;
       GetTextSizeDW(text, text.length(), pDWR->pTextFormat, pDWR, &size);
-      _candidateTextRects[i].SetRect(w, height, w + size.cx * textFontValid,
-                                     height + size.cy);
-      w += size.cx * textFontValid;
-      current_cand_width += (size.cx + _style.hilite_spacing) * textFontValid;
+      const int text_natural_w = size.cx * textFontValid;
+      const int text_h = size.cy;
 
       /* Comment */
+      // [vmenu-fixed] 注释要在**放候选词之前**量出来：固定格宽下注释右对齐到格子右缘，
+      //   候选词只能用「注释左边」为止的那段宽度，超出部分由 DirectWrite 画成「…」。
       bool cmtFontNotTrans =
           (i == id && (_style.hilited_comment_text_color & 0xff000000)) ||
           (i != id && (_style.comment_text_color & 0xff000000));
-      if (!comments.at(i).str.empty() && cmtFontValid && cmtFontNotTrans) {
+      const bool cmt_drawn =
+          (!comments.at(i).str.empty() && cmtFontValid && cmtFontNotTrans);
+      int cmt_adv = 0, cmt_h = 0;
+      if (cmt_drawn) {
+        GetTextSizeDW(comments.at(i).str, comments.at(i).str.length(),
+                      pDWR->pCommentTextFormat, pDWR, &size);
+        cmt_adv = size.cx * cmtFontValid;
+        cmt_h = size.cy;
+      }
+      // 本格的右缘（= 下一格左缘 - 列间距），与下面 grid_uniform 的「钉列号」算法一致。
+      const int cell_right = offsetX + real_margin_x +
+                             ((i % cols_per_row) + 1) * col_width -
+                             _style.candidate_spacing;
+      int draw_text_w = text_natural_w;
+      // 注释占位宽度（注释 + 与候选词之间的间距）：固定格宽下文字区与光标都要让出这块。
+      const int cmt_block = cmt_drawn ? cmt_adv + _style.hilite_spacing : 0;
+      if (fixed_cells) {
+        draw_text_w = min(text_natural_w, max(0, cell_right - cmt_block - w));
+      }
+      _candidateTextRects[i].SetRect(w, height, w + draw_text_w, height + text_h);
+      if (fixed_cells) {
+        // [vmenu-fixed] 固定格宽下光标只走到「本格文字区右缘」为止。
+        //   原来无条件 w += text_natural_w：剪贴板长句的自然宽度上千像素，
+        //   注释 rect 就被顶到格子外面（right 远超 cell_right），
+        //   max_width_of_rows 跟着它涨 → **面板宽度随内容/翻页变**（实测 1008 / 1053 抖动）。
+        //   夹到 cell_right - cmt_block 之后，注释正好右对齐到格右缘，面板宽度恒定。
+        w = min(w + text_natural_w, cell_right - cmt_block);
+      } else {
+        w += text_natural_w;
+      }
+      current_cand_width += (text_natural_w + _style.hilite_spacing) * textFontValid;
+
+      if (cmt_drawn) {
         const std::wstring& comment = comments.at(i).str;
-        GetTextSizeDW(comment, comment.length(), pDWR->pCommentTextFormat, pDWR,
-                      &size);
-        w += _style.hilite_spacing;
-        _candidateCommentRects[i].SetRect(w, height, w + size.cx * cmtFontValid,
-                                          height + size.cy);
-        w += size.cx * cmtFontValid;
-        current_cand_width += (size.cx + _style.hilite_spacing) * cmtFontValid;
+        if (fixed_cells) {
+          // [vmenu-fixed] 注释右对齐到格子右缘：所有行的注释排成整齐的一列。
+          //   注释自己放不下时（格子太窄 / 注释太长）同样裁成「…」。
+          int cx = max(w, cell_right - cmt_adv);
+          const int cw = max(0, min(cmt_adv, cell_right - cx));
+          _candidateCommentRects[i].SetRect(cx, height, cx + cw, height + cmt_h);
+          w = cx + cmt_adv;
+        } else {
+          w += _style.hilite_spacing;
+          _candidateCommentRects[i].SetRect(w, height, w + cmt_adv,
+                                            height + cmt_h);
+          w += cmt_adv;
+        }
+        current_cand_width += (cmt_adv + _style.hilite_spacing) * cmtFontValid;
       } else /* Used for highlighted candidate calculation below */
-        _candidateCommentRects[i].SetRect(w, height, w, height + size.cy);
+        _candidateCommentRects[i].SetRect(w, height, w, height + text_h);
 
       // [vmenu-grid] 折行策略改为「按个数」，不再按宽度：
       //   * 候选数 <= 9：**无论如何都排成一行**（长词也不折行，窗口宽度随之变宽）。
@@ -378,10 +455,12 @@ void HorizontalLayout::DoLayout(CDCHandle dc, PDWR pDWR) {
       if ((i % kGridCols) >= draw_cols)
         continue;
       // make rightest candidate's rect right the same for better look
+      // [vmenu-fixed] 固定格宽下**不做**这个「末格拉到右缘」的美化：格子本来就等宽，
+      //   拉一下会让最后一格比其他格宽几像素，高亮块大小就不一致了。
       if ((i < candidates_count - 1 &&
            row_of_candidate[i] < row_of_candidate[i + 1]) ||
           (i == candidates_count - 1))
-        if (!grid_multi_row)
+        if (!grid_multi_row && !fixed_cells)
           _candidateRects[i].right = width - real_margin_x;
     }
   }
