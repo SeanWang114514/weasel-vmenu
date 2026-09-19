@@ -50,18 +50,23 @@ local function handle(key, env)
     -- rime 默认把 KP_Add 绑成 plus（只当标点、会直接上屏），所以必须在这里拦下来。
     -- 主键盘 +（shift+equal）与小键盘 +（KP_Add）在 librime 里都归一化成 plus；
     -- 减号是 minus / KP_Subtract。两个方向都要接，「原来的 +- 翻页」才算回来。
-    if repr == "plus" or repr == "KP_Add" then
-      -- [同列光标] 「翻页后光标停在原列最上方」不在这里做：
-      --   本机 librime 没有「读/写当前选中下标」的 API（get_selected_candidate_index /
-      --   set_selected_candidate_index / selected_candidate_index 全部不存在，实测探针结果），
-      --   原来那两段 pcall 每次按 + 都必定抛错（错误对象本身也是开销），是纯死代码。
-      --   现在由自编 Weasel 补丁完成：RimeWithWeasel.cpp 在翻页后调
-      --   highlight_candidate_on_current_page(session_id, col)，col = 原高亮 % 9。
+    -- ★ 还必须连 equal / Next / Prior 一起接：
+    --   主键盘 `=`/`-` 在 rime 的 **默认 key_binder** 里被映射成 Page_Down/Page_Up
+    --   （实测日志：key repr=equal → key repr=Next），键先被 key_binder 抢走，
+    --   我们的页码根本不前进 —— 用户看到的就是「+= 翻页没反应」。
+    --   `=` 是「下一页」、`-` 是「上一页」，和原版横向候选窗的翻页键一致。
+    local is_next = (repr == "plus" or repr == "KP_Add" or repr == "equal"
+      or repr == "KP_Equal" or repr == "Next" or repr == "Page_Down")
+    local is_prev = (repr == "minus" or repr == "KP_Subtract" or repr == "Prior"
+      or repr == "Page_Up")
+    if is_next then
+      -- [同列光标] 「翻页后光标停在原列最上方」不在这里做：本机 librime 没有
+      --   「读/写当前选中下标」的 API，由自编 Weasel 补丁完成（RimeWithWeasel.cpp）。
       pcall(core.page_next, ctx)
       return 1
     end
-    if repr == "minus" or repr == "KP_Subtract" then
-      pcall(core.page_set, ctx, (core.page_get(ctx) - 1) % core.GRID_PAGES)
+    if is_prev then
+      pcall(core.page_prev, ctx)
       return 1
     end
     local ok_grid, handled = pcall(core.grid_key, ctx, repr)

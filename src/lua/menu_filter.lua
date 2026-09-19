@@ -90,12 +90,32 @@ local function filter(input, env)
       if k >= need then break end
     end
     -- 只在真的翻过头时才回到第一页；早停时 k 就是「候选总数不足 need」，判定不变。
-    if start >= k then start = 0 end
+    -- ★ 顺手把**页码也复位**：否则页码会停在一个「空页」上（例如第 15 页），
+    --   表现是①按了翻页画面没变化（用户以为键坏了）②下一页要多遍历上百个候选（翻页卡顿）。
+    if start >= k then
+      if page > 0 then pcall(core.page_reset, ctx) end
+      start = 0
+    end
     do
       local dt = (os.clock() - t0) * 1000
       if dt > 15 then
         core.debug_log(("[vmenu] 候选遍历偏慢 %.1fms (k=%d lim=%d page=%d)"):format(dt, k, lim, page))
       end
+    end
+    -- [诊断] 每次 filter 运行都把本页候选打一行到 vmenu-debug.log。
+    -- 默认关闭：这是**每个按键一次文件写入**，开着会影响按键手感；
+    -- 排查「显示的顺序和选中的不是同一个」这类问题时把 core.DEBUG_CAND 改成 true。
+    if core.DEBUG_CAND then
+      local dbg = {}
+      for i = start + 1, math.min(k, start + lim) do
+        local c = buf[i]
+        if c then
+          dbg[#dbg + 1] = ("%d[%s]{%s}%s"):format(i - start, tostring(c.text),
+            tostring(c.comment), tostring(c.type))
+        end
+      end
+      core.debug_log(("[vmenu] 本页 page=%d k=%d lim=%d :: %s"):format(page, k, lim,
+        table.concat(dbg, " ")))
     end
     for i = start + 1, math.min(k, start + lim) do
       yield(buf[i])

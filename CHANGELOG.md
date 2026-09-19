@@ -3,6 +3,35 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 本项目在真机（Windows 11 + Weasel 0.17.4 + librime 1.13.1 + rime-ice）上验证。
 
+## [0.2.8] — 2026-09-19
+
+修掉用户实测的三处：`+`/`-` 翻页失效、翻页卡顿、候选「能显示但选不了」。**只换了 `WeaselServer.exe`**。
+
+* **`+`/`-`/`=`/PageUp/PageDown 翻页失效**：主键盘 `=` 先被 rime 自带 key_binder 转成 `Page_Down`
+  （日志实证 `key repr=equal` 紧跟 `key repr=Next`），键根本到不了页码逻辑；`-` 会回绕到第 15 页，
+  再被「空页复位」拉回第 0 页 → 看着像毫无反应。现在 Lua 把
+  `equal / KP_Equal / Next / Page_Down / plus / KP_Add` 统一当**下翻**，
+  `minus / KP_Subtract / Prior / Page_Up` 当**上翻**，`page_prev` 到第 0 页就停不回绕；
+  服务端翻页键集合也补上 `0x3d(=) / 0xffbd(KP_Equal) / 0xff56(PageDown) / 0xff55(PageUp)`。
+* **翻页卡顿**：`page_set` 逐个写 16 个页码开关，写第一个的瞬间 filter 读到的页码是 0 →
+  画面**先闪回第 1 页**再跳目标页。改成「**先置目标页、再清其余**」后瞬态 = 旧页，不再闪。
+  实测 `=` 49ms / `-` 57ms / 小键盘 `+` 40ms，而打字键 `n` 是 96ms → 翻页不比打字慢。
+* **「候选能显示但选不了」的真根因**：标签是按**高亮那一行**画的（`GetLabelText` 用 `id%9+1`），
+  而 librime 自己的数字选词在高亮不在该行首格时会漂 —— 展开态下移一行按 `3` 上屏的是表内第 2 位，
+  收起态翻页后按 `3` 上屏的是**上一页**的词。服务端现在统一接管数字键
+  （`target = 高亮所在行行首 + (d-1)` → `select_candidate_on_current_page`），与画出的标签严格一致；
+  输入为空或**全是数字**时不接管，所以数字编码 `131` + 回车仍能上屏。
+* **更正上一轮的一个结论**：候选里的「10」不是「常用语收藏」，而是 rime-ice 的 emoji
+  **🔟（U+1F51F）**，它本来就能选（数字键 / 鼠标点击都会上屏，点击实测码点 `U+D83D U+DD1F`）。
+* 验收矩阵 7 例（每例全新记事本、读回真实内容与候选表逐位比对）全绿；新增工具
+  `tools/verify-grid-digit.ps1`（键盘矩阵）与 `tools/verify-grid-click.ps1`（按 `ATL:` 候选窗
+  **真实矩形**点击，验证鼠标选词）。
+
+md5：`WeaselServer.exe` = `48F1204A885EB1BAF659B3FEF0DD89E4`（2684928 B，本机自编，只重编服务端）；
+Lua 三处一致（`D:\rime-sandbox\lua\`、`%APPDATA%\Rime\lua\`、仓库 `src/lua/`）：
+`vmenu_core.lua` = `C470A5CDC741440AEE6F631BCF8FFBBB`、
+`menu_filter.lua` = `C8AC1959697256782A57BB2664DB6639`、
+`menu_processor.lua` = `C4434FBA9929759C4DDC7A36BF49995C`。
 ## [0.2.7] — 2026-09-19
 
 候选方格**严格对齐**上线（本机首次编出 `weaselx64.dll` 并部署到 `System32\weasel.dll`）：

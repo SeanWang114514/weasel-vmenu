@@ -28,6 +28,10 @@ function M.gui_flag_path() return user_dir() .. "/open-settings.flag" end
 -- 所以卡顿诊断统一写到用户目录下的 vmenu-debug.log，便于用文件计数取证。
 -- 正式使用时可把 DEBUG_LOG 置 false 彻底关掉。
 M.DEBUG_LOG = true
+-- 【诊断·按需】把「每次 filter 运行时的本页候选表」也写日志（menu_filter 里用）。
+-- 默认 false：那是**每个按键一次文件写入**，排查「画面显示的顺序 / 选中的候选对不上」
+-- 这类问题时才临时改 true（配合 tools\verify-grid-digit.ps1）。
+M.DEBUG_CAND = false
 local function debug_log(msg)
   if not M.DEBUG_LOG then return end
   local f = io.open(user_dir() .. "/vmenu-debug.log", "a")
@@ -128,11 +132,18 @@ local function page_set(ctx, n)
   --    而 page_reset 在每个按键上都会被调用 → 每个键都让 rime 重翻译一整份候选，
   --    表现就是「打字卡顿」（实测：按键时日志里成片刷 updated option: vmenu_page_*）。
   if M.page_get(ctx) == n then return end
+  -- ★ 写入顺序也关键：**先把目标页置 true，再清掉其余页**。
+  --   反过来（i 从 0 顺着写）会出现「page_0 已清、page_n 还没置」的瞬间，
+  --   这一瞬间 rime 就会重翻译一次，filter 读到的页码是 0 →
+  --   画面先回到第 1 页再跳到目标页，用户看到的就是**翻页时闪一下/卡一下**。
+  --   实测日志：同一次按 = 出现「本页 page=0」紧跟「本页 page=2」两条。
+  pcall(function() ctx:set_option(M.PAGE_OPTION .. "_" .. n, true) end)
   for i = 0, M.GRID_PAGES - 1 do
-    local want = (i == n)
-    local ok, cur = pcall(function() return ctx:get_option(M.PAGE_OPTION .. "_" .. i) end)
-    if not (ok and (cur and true or false) == want) then
-      pcall(function() ctx:set_option(M.PAGE_OPTION .. "_" .. i, want) end)
+    if i ~= n then
+      local ok, cur = pcall(function() return ctx:get_option(M.PAGE_OPTION .. "_" .. i) end)
+      if ok and cur then
+        pcall(function() ctx:set_option(M.PAGE_OPTION .. "_" .. i, false) end)
+      end
     end
   end
 end
@@ -152,6 +163,18 @@ function M.page_next(ctx)
   local n = (M.page_get(ctx) + 1) % M.GRID_PAGES
   page_set(ctx, n)
   return n
+end
+
+--- 翻回上一页：**不环绕**（第 0 页再按就停在 0）。
+--- 环绕会很怪：第 0 页按 - 跳到第 15 页，而候选常常不足 135 条 →
+--- menu_filter 的 start>=k 又把它拉回第 0 页显示，用户看到的就是「按了没反应」。
+function M.page_prev(ctx)
+  local n = M.page_get(ctx)
+  if n > 0 then
+    page_set(ctx, n - 1)
+    return n - 1
+  end
+  return 0
 end
 
 function M.page_reset(ctx)

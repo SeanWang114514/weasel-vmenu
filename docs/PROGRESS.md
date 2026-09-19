@@ -317,6 +317,27 @@
 | ⑨ 32 位也编出来了 | 卡了很久的 x86 终于解决：`deps\boost_1_84_0\stage\lib` 里**早就躺着一批名字叫 `-x32-` 但内容是 x64 的库**（早先几次失败的 b2 运行留下的），x86 链接先在该目录命中它们 → boost 的 `__thiscall` 符号一个都解不出（LNK2001）。用**真 x86 库**（`vcvarsall x86` + user-config 指向 `Hostx86\x86\cl.exe`，dumpbin 实测 `14C`）覆盖那 9 个文件后，`WeaselTSF` Win32 **一次链接通过** → `output\weasel.dll` 1037312 B（`D5FE2EF7…`）。32 位宿主（`SysWOW64\WindowsPowerShell` + WinForms 文本框）里实测 4×9 网格与 x64 **逐列一致**（漂移 ≤5px）✅ |
 
 ---
+
+### 1.21 三连修复：`+`/`-` 翻页、翻页卡顿、展开态数字选词（第十轮，2026-09-19）
+
+**用户诉求**（原话）：「这个候选词可以显示但是无法实际意义上选择 同时向下翻页有卡顿
+还有这个加减（去翻页（原版的横向））无法正常使用」
+
+| 环节 | 内容 |
+| --- | --- |
+| ① 先更正上一轮的一个说法 | 上一轮把候选里的「10」说成「常用语收藏带出来的」——**错了**。打开候选表诊断后看清：那是 rime-ice 的 emoji 候选 **🔟（U+1F51F）**，字形本来就是蓝底「10」，看着像序号串位；同一排还有 ⬆️ / 💩 / 🦁 等 emoji。它本身**能选**：数字键与鼠标点击都能上屏（点击实测记事本里出现码点 `U+D83D U+DD1F` = 🔟）|
+| ② `+`/`-` 翻页为什么失效 | 探针日志实证：主键盘 `=` 先被 **rime 自带 key_binder** 抢走并转成 `Page_Down`（日志里 `key repr=equal` 紧跟 `key repr=Next`），键根本到不了我们的页码逻辑；`-` 则回绕到第 15 页（`GRID_PAGES=16`），而候选常常不足 135 条 → 又被 `start>=k` 拉回第 0 页 → **看着就是「按了没反应」** |
+| ③ 修复（Lua 侧） | `menu_processor`：`equal / KP_Equal / Next / Page_Down / plus / KP_Add` 统一当**下翻**，`minus / KP_Subtract / Prior / Page_Up` 当**上翻**（与原版横向候选窗的 `-`/`=` 一致）；`vmenu_core` 新增 `page_prev`（**到第 0 页就停，不回绕**）；`menu_filter` 在 `start>=k` 时**连页码一起复位**，不再留下「空页」 |
+| ④ 翻页卡顿的真根因 | `page_set` 逐个写 16 个开关，**第一个写下去**（把 page_0 置 false）就触发一次重翻译，那一刻 filter 读到的页码是 0 → **画面先闪回第 1 页再跳到目标页**（日志实证：一次按 `=` 出现「本页 page=0」紧跟「本页 page=2」）。改成**先置目标页、再清其余**后，瞬态显示的是**旧的一页**（和屏幕上正显示的一致）→ 不再闪 |
+| ⑤ 延迟实测 | `=` **49ms**、`-` **57ms**、小键盘 `+` **40ms**；同法测打字键 `n` 是 **96ms** → **翻页并不比打字慢**。之前感到的「卡顿」就是 ④ 的闪回 + ③ 的空页多遍历（第 15 页要遍历 119~144 个候选）|
+| ⑥ 「能显示但选不了」的真根因 | 标签是客户端按**高亮那一行**画的（`GetLabelText` 用 `id%9+1`），而 librime 自己的数字选词**不是「本页第 d 个」**：高亮不在该行第 1 格时就会漂。实测：展开态高亮下移到第 2 行按 `3` → 上屏「🔟」（表内第 2 位）而不是第 12 位；收起态翻页后按 `3` → 上屏「屎」（**上一页**的词）|
+| ⑦ 修复（服务端补丁） | `RimeWithWeasel.cpp` 的 `ProcessKeyEvent` **统一接管数字键**：`target = 高亮所在行行首 + (d-1)` → `select_candidate_on_current_page`，与画出来的标签严格一致（不再依赖 `vmenu_grid`）；**闸门**：输入为空或**全是数字**时不接管，把数字留给 Lua 的数字编码（实测敲 `131` + 回车仍上屏 `13122500717` ✅）|
+| ⑧ 顺带扩展 | 服务端翻页键集合补上 `0x3d(=)` / `0xffbd(KP_Equal)` / `0xff56(PageDown)` / `0xff55(PageUp)`，展开态按 `=` 也能享受「翻页后光标回到同列最上方」|
+| ⑨ 验收矩阵（每例**全新记事本** + 读回记事本真实内容比对候选表） | A 收起按 `3` → 识 ✅；B 展开按 `3` → 🔟 ✅；C 展开+`↓`到第 2 行按 `3` → 是（表内第 12 位 = 第 2 行第 3 列）✅；D 展开+`=`翻页按 `1` → 食（新页第 1 位）✅；E 展开+`=`翻页按 `3` → 尸（新页第 3 位）✅；G **收起**+`=`翻页按 `1` → 💩（新页第 1 位）✅；H 收起+`=`翻页按 `3` → 尸 ✅ |
+| ⑩ 仍存疑一例 | F「展开+`↓`一行+`=`翻页 按 `2`」：脚本按「高亮留在第 2 行」算期望值 → 对不上；按设计翻页后高亮回到**同列最上方**（第 1 行），所以应当选新页第 2 个。行为自洽但**复合操作**（先下移→再翻页→再按数字）建议人类实测一次，见 §5 第 6 条 |
+| ⑪ 只换服务端 | 本轮改的是 `RimeWithWeasel.cpp`（服务端）→ **只重建/部署 `WeaselServer.exe`**：`msbuild weasel.sln /t:WeaselServer /p:Configuration=Release /p:Platform=x64`（**20~27 秒**，客户端 DLL 完全不动）；旧 server 备份在 `dll-backup\server-20260919-102400\` |
+| ⑫ 新增工具 / 诊断开关 | `tools/verify-grid-digit.ps1`（跑 A–H 全矩阵：注入按键 → 读回记事本真实内容 → 与候选表逐位比对）、`tools/verify-grid-click.ps1`（**枚举 `ATL:` 候选窗真实矩形**再按格点击，验证鼠标选词；顺带证明点击坐标必须按窗口矩形算，按「面板 y≈250」猜会点到记事本正文里，被当成「点空白 = 原样上屏」）；`vmenu_core.DEBUG_CAND` 默认 `false`（那是**每个按键一次写盘**），排查「显示顺序 / 选中候选对不上」时才临时改 `true` |
+---
 ## 2. 时间线（2026-09-13）
 
 | 时间 | 事件 |
@@ -405,7 +426,7 @@
 | 20:0x | 用户反馈「没显示数字 + 有卡顿」：查日志发现**每个按键连刷约 30 条 `updated option`**（一事一链的级联）→ 修成「值没变不写 option」，同样操作从 **410 行 → 2 行** ✅；「没数字」是 19:2x–19:52 的中间态（旧 server + 已删注释序号） |
 | 20:1x | 修 `tools/verify-grid.ps1` 的三个坑（数组展平 / 首图没焦点 / 无 BOM 解析失败），重跑 **10 项全 PASS**（`+` 下翻 1739/1528 点、循环回首页 0 点） |
 | 20:2x | 用户报「**只有记事本有数字**」→ 复查源码发现 CCandidateList 把 ITfIntegratableCandidateListUIElement 暴露给应用，Chrome/微信/Office 因此**自己画候选**（无序号/无方格）；记事本不支持集成才用我们的窗 → 这就是「一直只在记事本里验收」漏掉的盲区 |
-| 20:4x | 本机 VS18 **缺 ATL**（本地编译修不了）；改用**一字节常量补丁**（IID 末字节  x7B→0x7A）打已部署 DLL，4 份文件部署完毕（60B0F018…/ B130749…）|
+| 20:4x | 本机 VS18 **缺 ATL**（本地编译修不了）；改用**一字节常量补丁**（IID 末字节 x7B→0x7A）打已部署 DLL，4 份文件部署完毕（60B0F018…/B130749…）|
 | 20:5x | 在 **Chrome**（原本会自己画候选的程序）里视觉验收：补丁后读出 1 这个 … 9 这跟（数字在词左边），按 ↓ 展开后**只有第 1 行**带 1–9 ✅ 修复确认 |
 
 ---
@@ -444,12 +465,12 @@
 
 | 组件 | 状态 |
 | --- | --- |
-| `WeaselServer.exe` | **自己编的网格版**在运行：2684416 字节，md5 `1D87C729A92FCD8336A62C814CBD7B87`（本机自编：标签槽序号 + 翻页/同列光标 + §2.5 补丁）；`weasel.dll` 1034752 = `60B0F018D85B7DE1322A332E31657D11`、`weaselx64.dll` 1180672 = `8245FED5FF4983FA43436FF495B1172E`（第九轮：统一列宽严格对齐 +「满页才等宽」保护）；`C:\Windows\System32\weasel.dll` = 1180672 = `8245FED5…`（= x64，已含对齐补丁）、`C:\Windows\SysWOW64\weasel.dll` = 1037312 = `D5FE2EF7…`（= x86，**本轮也换成对齐版**）✅ 5 个文件都对上了。**后缀 `-patch4` 的 md5 是在 run#24 基础上改了集成 IID 一个字节**（见 §1.18 与 `GRID-CANDIDATE-DLL.md` §2.4；未打补丁前的 md5 是 `79E43332…` / `993E74EC…`） |
+| `WeaselServer.exe` | **自己编的网格版**在运行：2684928 字节，md5 `48F1204A885EB1BAF659B3FEF0DD89E4`（本机自编：标签槽序号 + 翻页/同列光标 + §1.21 数字键按标签行重映射）；上一版 `1D87C729…` 备份在 `dll-backup\server-20260919-102400\`；`weasel.dll` 1034752 = `60B0F018D85B7DE1322A332E31657D11`、`weaselx64.dll` 1180672 = `8245FED5FF4983FA43436FF495B1172E`（第九轮：统一列宽严格对齐 +「满页才等宽」保护）；`C:\Windows\System32\weasel.dll` = 1180672 = `8245FED5…`（= x64，已含对齐补丁）、`C:\Windows\SysWOW64\weasel.dll` = 1037312 = `D5FE2EF7…`（= x86，**本轮也换成对齐版**）✅ 5 个文件都对上了。**后缀 `-patch4` 的 md5 是在 run#24 基础上改了集成 IID 一个字节**（见 §1.18 与 `GRID-CANDIDATE-DLL.md` §2.4；未打补丁前的 md5 是 `79E43332…` / `993E74EC…`） |
 | `clipboard-sync.ps1` | 1 个实例 |
 | `vmenu-watcher.ps1` | 1 个实例（监督常驻窗口） |
 | `vmenu-settings-gui.ps1` | 1 个实例（常驻，未打开时是隐藏窗口） |
 | `open-settings.flag` | 稳态下**不存在** |
-| Lua 双目录一致性 | `D:\rime-sandbox\lua\` 与 `%APPDATA%\Rime\lua\` 三处（+ 仓库 `src/lua/`）MD5 必须一致：`vmenu_core.lua` = `38902B9BF764B5953DE3A683BF40FA3A`、`menu_filter.lua` = `2C6E9BA46FB1A7EB369A80B00AC96610`、`menu_processor.lua` = `0DCF9BA831ACDA530272234A6BE562F2` |
+| Lua 双目录一致性 | `D:\rime-sandbox\lua\` 与 `%APPDATA%\Rime\lua\` 三处（+ 仓库 `src/lua/`）MD5 必须一致：`vmenu_core.lua` = `C470A5CDC741440AEE6F631BCF8FFBBB`、`menu_filter.lua` = `C8AC1959697256782A57BB2664DB6639`、`menu_processor.lua` = `C4434FBA9929759C4DDC7A36BF49995C` |
 | `style/layout/max_width` | 1100（只是兜底）——**换行已经不归它管**：自编 DLL 的 `HorizontalLayout.cpp` 按「候选 > 9 时每 9 个换行、≤9 绝不换行」硬编码（用户要求「不许丢候选、必须一行」） |
 | `style/label_format` | 留空（`weasel.custom.yaml` 写 `" "`）→ 不画原生序号；序号改由**自编 DLL 的 `GetLabelText` 覆写**写进标签槽（旧做法 `menu_filter.number_row1` 写注释已删除） |
 | `menu/page_size` | 36（`rime_ice.custom.yaml` + `build/rime_ice.schema.yaml`；= 9 × 4，按 `↓` 展开后的条数） |
@@ -551,3 +572,9 @@
     并**先清空**，或改用 `using msvc : 14.3x86 : <x86 cl>` 另起一个 toolset 名（库名会变成
     `-vc143x86-`，需要在 weasel.props 里对上 auto-link 名）。
     影响面：只影响 32 位程序（记事本/Chrome/微信 等都是 64 位，已生效）。
+
+6. **复合操作「展开 → ↓ 下移一行 → +/= 翻页 → 再按数字」的行为需要人类确认一次。**
+   实测（§1.21 第 ⑩ 条）：翻页后高亮按设计回到**同一纵列的最上方**（第 1 行），所以此时按 `1`–`9`
+   选的是**新一页第 1 行**的第 d 个；而如果期望「高亮留在原来那一行不动」，现在不是这样。
+   要改的点在 `RimeWithWeasel.cpp` 的翻页分支（`const int col = current % kGridColumns;` 后那句
+   `highlight_candidate_on_current_page`）——把它删掉就不再同列回位，高亮会留在原行号。

@@ -482,6 +482,50 @@ md5 `D5FE2EF773540AD78DA5EDE7A2D9DA7A`、`14C machine (x86)`，已部署到安�
 实测展开态 4×9：逐列起点差 0–5px、第 1 行对末行漂移 ≤5px，与 x64 完全一致 ✅
 
 ---
+## 7.2 ✅ 已部署（第十轮，2026-09-19）：数字键按「标签那一行」选词（只重编服务端）
+
+**问题**：用户报「候选词可以显示但是无法实际意义上选择」。根因不在绘制，而在**选谁来上屏**：
+标签是客户端 `HorizontalLayout::GetLabelText` 按**高亮那一行**画的（`id % 9 + 1`，只有高亮行
+画数字），而 librime 自己的数字选词**不是「本页第 d 个」**——高亮不在该行首格时会漂：
+
+| 实测 | 现象 |
+| --- | --- |
+| 展开态、`↓` 把高亮移到第 2 行，按 `3` | 上屏「🔟」= 候选表**第 2 位**（正确应是第 12 位 = 第 2 行第 3 列）|
+| **收起态**、按 `=` 翻页后按 `3` | 上屏「屎」= **上一页**的词（正确应是新页第 3 个）|
+
+**补丁**（`RimeWithWeasel/RimeWithWeasel.cpp`，`ProcessKeyEvent` 内、网格分支**之前**）：
+统一接管数字键 `1`–`9`（主键盘 `0x31`–`0x39` 与小键盘 `KP_1`–`KP_9`），
+`target = (高亮索引 / 9) * 9 + (d - 1)` → `SelectCandidateOnCurrentPage(target)`，
+与画出来的标签严格一致，不再依赖是否展开。
+
+**闸门（重要，别删）**：先 `rime_api->get_input(session_id)`，若输入为空或**全是数字**
+（允许 `'` 音节分隔符）就**不接管**，把数字留给 Lua 的数字编码逻辑 —— 否则
+「收藏编码 = 131」这种功能会被吃掉。实测敲 `1` `3` `1` + 回车仍上屏 `13122500717` ✅。
+
+**只重编服务端的命令**（客户端 DLL 完全不动，20~27 秒）：
+
+```bat
+set "ATL=C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.51.36231"
+set "BOOST_ROOT=D:\weasel-build\weasel\deps\boost_1_84_0"
+msbuild weasel.sln /t:WeaselServer /p:Configuration=Release /p:Platform=x64 /m /nologo /v:m
+:: 产出 output\WeaselServer.exe（2684928 B）
+:: 部署：停 WeaselServer → 覆盖 C:\Program Files\Rime\weasel-0.17.4\WeaselServer.exe → 启动
+```
+
+> ATL 的头/库要进 `INCLUDE` / `LIB`（`…\atlmfc\include`、`…\atlmfc\lib\x64`），
+> 否则 `atlbase.h` 找不到；Boost 头只要存在即可（本轮不改依赖）。
+
+**验收矩阵**（`tools/verify-grid-digit.ps1`，每例全新记事本、读回真实内容与候选表逐位比对）：
+
+| 例 | 操作 | 结果 |
+| --- | --- | --- |
+| A | 收起态按 `3` | 识（第 3 个）✅ |
+| B | 展开后按 `3` | 🔟（第 3 个）✅ |
+| C | 展开 + `↓` 到第 2 行按 `3` | 是 = 表内第 12 位 ✅ |
+| D | 展开 + `=` 翻页按 `1` | 食 = 新页第 1 位 ✅ |
+| E | 展开 + `=` 翻页按 `3` | 尸 = 新页第 3 位 ✅ |
+| G/H | **收起** + `=` 翻页按 `1` / `3` | 💩 / 尸 = 新页第 1 / 第 3 位 ✅ |
+| F | 展开 + `↓` 一行 + `=` 翻页按 `2` | 翻页后高亮按设计回到**同列最上方**，故应选新页第 2 个；脚本按「留在第 2 行」算期望值故对不上，行为自洽（见 PROGRESS §5.6 待人类确认）|
 ## 7. 未做 / 待确认
 
 | 项 | 说明 |
