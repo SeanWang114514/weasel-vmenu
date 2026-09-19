@@ -7,6 +7,7 @@
 #include <boost/algorithm/string.hpp>
 #include <vector>
 
+#include <cstring>
 #include <filesystem>
 #include <map>
 #include <regex>
@@ -344,6 +345,13 @@ BOOL RimeWithWeaselHandler::ProcessKeyEvent(KeyEvent keyEvent,
       bool digits_only = true;
       bool v_prefix = false;
       bool first_char = true;
+      // ⚠️ 闸门三：输入里出现**大写字母**或**非字母字符**时不接管。
+      //   雾凇拼音的快捷输入前缀都带大写字母（cC 计算 / U Unicode / N 农历 / R 数字大写），
+      //   这些模式后面必须还能继续敲数字（cC1+2*3、U4E00、R123）—— 用户实测的
+      //   「用了 cC 之后无法输入数字、一按数字就变成选词」就是这个。
+      //   输入里已经有数字或符号（cC1+2）时同样不接管，否则后面的数字全被吃掉。
+      bool has_upper = false;
+      bool has_other = false;
       for (const char* p = input ? input : ""; *p != '\0'; ++p) {
         if (*p == '\'' || *p == ' ') continue;
         if (first_char) {
@@ -351,8 +359,24 @@ BOOL RimeWithWeaselHandler::ProcessKeyEvent(KeyEvent keyEvent,
           v_prefix = (*p == 'v');
         }
         if (*p < '0' || *p > '9') digits_only = false;
+        if (*p >= 'A' && *p <= 'Z')
+          has_upper = true;
+        else if (*p < 'a' || *p > 'z')
+          has_other = true;
       }
-      if (!digits_only && !v_prefix) {
+      // ⚠️ 闸门四：日期/时间类前缀（rq / sj / xq / dt，全小写）后面也可以跟数字
+      //   （例如指定某天），这些前缀还在输入框里时不接管数字。
+      bool date_prefix = false;
+      if (input && *input) {
+        const char* kDatePrefixes[] = { "rq", "sj", "xq", "dt" };
+        for (size_t i = 0; i < sizeof(kDatePrefixes) / sizeof(kDatePrefixes[0]); ++i) {
+          if (strncmp(input, kDatePrefixes[i], strlen(kDatePrefixes[i])) == 0) {
+            date_prefix = true;
+            break;
+          }
+        }
+      }
+      if (!digits_only && !v_prefix && !has_upper && !has_other && !date_prefix) {
         RIME_STRUCT(RimeContext, ctx);
         if (rime_api->get_context(session_id, &ctx)) {
           const int current = ctx.menu.highlighted_candidate_index;
