@@ -374,6 +374,18 @@
 | ③ 候选窗尺寸 = 「现在是什么」的快速判据（很省时间） | 主菜单 **842x49**；常用语 / 剪贴板这类横排列表 **583x49**；方格或原版 v 候选 **高 191** |
 | ④ 原符号（raw）状态机（复现测试必读） | `set_raw(true)` 同时写「Lua 模块级 `raw_flag`」+「会话 option `vraw_mode`」；两种复位时机：处理器看到 `ctx.input == ""`（输入已清空）或切到英文（`ascii_mode`）。**如果上一次测试把会话留在原符号状态，之后敲 `v` 会被原样上屏，看起来就像「v 菜单坏了」** —— 先按 Esc 清空输入、或重启 `WeaselServer.exe` 即可（本次排查就撞上过这个假故障） |
 | ⑤ 文档同步 | README（英文摘要 + 主菜单表 + 截图说明）/ ARCHITECTURE（§2 流程、§3.4 标题改 `v`→`5`）/ AGENT-HANDOFF / TESTING（用例改 `esc,v,3`、新增 4/5 两行 + §11 截图坑）/ CHANGELOG / PROGRESS（本轮 + §4 的 md5 表） |
+### 1.25 快捷输入模式下数字被当成选词（「用了 cC 后无法输入数字」）（第十四轮，2026-09-19）
+
+**用户诉求**（原话）：「用用cC后无法输入数字 输入就变成预选词了」
+
+| 环节 | 内容 |
+| --- | --- |
+| ① 根因 | 第十一轮为了修「数字选词漂移」在服务端接管了数字键，闸门只看了「是否纯数字」「是否 `v` 开头」。而雾凇拼音的快捷输入前缀是 `cC`（计算）/`U`/`N`/`R`，它们后面**必须继续敲数字**（`cC1+2*3`、`U4E00`、`R123`）—— 输入 `cC` 之后按数字，就被当成「选中本页第 d 个候选」上屏了 |
+| ② 修复（新增两道闸门） | **闸门三**：输入里出现**大写字母**或**非字母字符**时不接管（`cC`/`U`/`N`/`R` 都带大写字母；`cC1+2` 这类已经含数字的也不再接管）。**闸门四**：输入以 `rq`/`sj`/`xq`/`dt` 开头时不接管（日期时间前缀后面也能跟数字）。改动点：`RimeWithWeasel.cpp` 的 `ProcessKeyEvent` 数字接管块（+ `#include <cstring>`） |
+| ③ 验收（`tools/verify-quick-digits.ps1`，数值 + 截图双证据） | 计算 `v`→`3`→`1` + `1+2*3` + 空格 → 候选 `1 7 / 2 1+2*3=7`，**上屏 7** ✅；数字大写 `v`→`3`→`7` + `123` → 候选 `一百二十三 / 壹佰贰拾叁 / 一百二十三元整…`，**上屏 一百二十三** ✅；Unicode `v`→`3`→`8` + `4E00` → 正常出候选 ✅ |
+| ④ 回归（必须同时保住） | `131` + 回车 → **13122500717** ✅；`shi` + `3` → **识**（数字选词与行内映射照旧）✅；v 菜单照旧（842x49 / 583x49 / 高 191 三档）✅ |
+| ⑤ 新工具（以后测输入法别再动记事本） | `tools/ime-test-pad.ps1`：一个自带 `TextChanged` 落盘的测试窗口（`tst\typed.txt`），用它当输入目标就不必 Ctrl+A/C 读回，也不会碰到用户自己的文档；`tools/verify-quick-digits.ps1` 是这套用例。**为什么要这个**：Win11 记事本是「多标签单进程」，`Start-Process notepad` 拿不到新进程；而 Ctrl+N 有可能顶掉用户未保存的内容，不能碰 |
+| ⑥ 部署 | 只重编服务端：`msbuild weasel.sln /t:WeaselServer /p:Configuration=Release /p:Platform=x64`（`MSBuild.exe` 全路径 `C:\Program Files\Microsoft Visual Studio\18\Enterprise\MSBuild\Current\Bin\MSBuild.exe`，`BOOST_ROOT` 指向 `deps\boost_1_84_0`）→ `WeaselServer.exe` = `BDF332243AD1B407EDC1F712C357ED8A`（2685440 B）；客户端 DLL 完全没动。旧 server 备份在 `dll-backup\server-20260919-114523\`。**部署小坑**：运行中的 exe 不能被覆盖，但**可以先改名**（`Rename-Item` 允许）再放新文件，不必和自动重启的 server 抢时间 |
 ---
 ## 2. 时间线（2026-09-13）
 
