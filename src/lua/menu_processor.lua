@@ -126,19 +126,20 @@ local function handle(key, env)
   end
 
   -- ===== 快捷输入：选中后把触发前缀直接写进输入框，之后的按键交给原方案 =====
-  -- 这些前缀都是雾凇拼音自带的（recognizer/patterns + lua_translator）：
-  --   cC 计算器 / rq 日期 / sj 时间 / xq 星期 / dt 日期时间 / N 公历转农历 / R 数字大写 / U Unicode
+  -- 菜单保留 6 项，快捷键是「v3 + 字母」：c 计算 / r 日期 / s 时间 / u Unicode /
+  -- n 农历输入 / h 数字货币转写。候选窗口上画出来的标签是数字，所以 1-6 也一并保留，
+  -- 两个键位等价（字母是主推的快捷键）。
+  -- 这些前缀都是雾凇拼音自带的（recognizer/patterns + lua_translator），
+  -- 原来直接输入这些前缀的方式全部保留：cC / rq / sj / U / N / R。
   if cur == "vqi" then
-    if repr == "1" then replace_input(ctx, "cC") return 1 end
-    if repr == "2" then replace_input(ctx, "rq") return 1 end
-    if repr == "3" then replace_input(ctx, "sj") return 1 end
-    if repr == "4" then replace_input(ctx, "xq") return 1 end
-    if repr == "5" then replace_input(ctx, "dt") return 1 end
-    if repr == "6" then replace_input(ctx, "N" .. os.date("%Y%m%d")) return 1 end
-    if repr == "7" then replace_input(ctx, "R") return 1 end
-    if repr == "8" then replace_input(ctx, "U") return 1 end
-    if repr == "9" then replace_input(ctx, "u") return 1 end
-    if repr == "q" then ctx:clear() return 1 end
+    local k = string.lower(repr or "")
+    if k == "1" or k == "c" then replace_input(ctx, "cC") return 1 end
+    if k == "2" or k == "r" then replace_input(ctx, "rq") return 1 end
+    if k == "3" or k == "s" then replace_input(ctx, "sj") return 1 end
+    if k == "4" or k == "u" then replace_input(ctx, "U") return 1 end
+    if k == "5" or k == "n" then replace_input(ctx, "N" .. os.date("%Y%m%d")) return 1 end
+    if k == "6" or k == "h" then replace_input(ctx, "R") return 1 end
+    if k == "q" then ctx:clear() return 1 end
     return 2
   end
   -- ===== 设置根菜单 =====

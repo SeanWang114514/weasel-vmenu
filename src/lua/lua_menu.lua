@@ -32,19 +32,19 @@ local function yield_menu(seg)
 end
 
 -- ===== 快捷输入（对应雾凇拼音自带的前缀）=====
--- 按下数字后直接把触发前缀写进输入框，之后的按键完全交给原方案：
---   1 计算 cC（接着输入算式，如 1+2*3）  2 日期 rq  3 时间 sj  4 星期 xq
---   5 日期时间 dt  6 农历 N+今天  7 数字大写 R  8 Unicode U
+-- 快捷键 = 「v3 + 字母」：进子菜单后按 c/r/s/u/n/h 即可（数字 1-6 同样有效，
+-- 候选窗口上画出来的标签就是 1-6）。选中后把触发前缀写进输入框，之后的按键交给原方案：
+--   c 计算 cC（接着输入算式，如 1+2*3）   r 日期 rq   s 时间 sj
+--   u Unicode U（如 4e2d）               n 农历 N+今天   h 数字货币转写 R（如 R1234）
+-- 原来直接输入这些前缀的方式全部保留：cC / rq / sj / U / N / R。
+-- 星期 xq、日期时间 dt、部件拆字 uU 不在这 6 项里（不再从菜单进入），但方案里仍可直接输入。
 local function yield_quick(seg)
-  yield(item(seg, "vqi", "计算", "按 1 · 接着输入算式"))
-  yield(item(seg, "vqi", "日期", "按 2 · 今天的日期"))
-  yield(item(seg, "vqi", "时间", "按 3 · 现在的时间"))
-  yield(item(seg, "vqi", "星期", "按 4 · 今天星期几"))
-  yield(item(seg, "vqi", "日期时间", "按 5 · ISO 格式"))
-  yield(item(seg, "vqi", "农历", "按 6 · 今天的农历"))
-  yield(item(seg, "vqi", "数字大写", "按 7 · 如 R1234"))
-  yield(item(seg, "vqi", "Unicode", "按 8 · 如 U4e2d"))
-  yield(item(seg, "vqi", "部件拆字", "按 9 · 如 nvzi = 女+子"))
+  yield(item(seg, "vqi", "计算", "按 c"))
+  yield(item(seg, "vqi", "日期", "按 r"))
+  yield(item(seg, "vqi", "时间", "按 s"))
+  yield(item(seg, "vqi", "Unicode", "按 u"))
+  yield(item(seg, "vqi", "农历输入", "按 n"))
+  yield(item(seg, "vqi", "数字货币转写", "按 h"))
   yield(item(seg, "vqi", "返回", "按 q"))
 end
 -- ===== 设置根菜单 =====

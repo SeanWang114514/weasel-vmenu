@@ -386,6 +386,19 @@
 | ④ 回归（必须同时保住） | `131` + 回车 → **13122500717** ✅；`shi` + `3` → **识**（数字选词与行内映射照旧）✅；v 菜单照旧（842x49 / 583x49 / 高 191 三档）✅ |
 | ⑤ 新工具（以后测输入法别再动记事本） | `tools/ime-test-pad.ps1`：一个自带 `TextChanged` 落盘的测试窗口（`tst\typed.txt`），用它当输入目标就不必 Ctrl+A/C 读回，也不会碰到用户自己的文档；`tools/verify-quick-digits.ps1` 是这套用例。**为什么要这个**：Win11 记事本是「多标签单进程」，`Start-Process notepad` 拿不到新进程；而 Ctrl+N 有可能顶掉用户未保存的内容，不能碰 |
 | ⑥ 部署 | 只重编服务端：`msbuild weasel.sln /t:WeaselServer /p:Configuration=Release /p:Platform=x64`（`MSBuild.exe` 全路径 `C:\Program Files\Microsoft Visual Studio\18\Enterprise\MSBuild\Current\Bin\MSBuild.exe`，`BOOST_ROOT` 指向 `deps\boost_1_84_0`）→ `WeaselServer.exe` = `BDF332243AD1B407EDC1F712C357ED8A`（2685440 B）；客户端 DLL 完全没动。旧 server 备份在 `dll-backup\server-20260919-114523\`。**部署小坑**：运行中的 exe 不能被覆盖，但**可以先改名**（`Rename-Item` 允许）再放新文件，不必和自动重启的 server 抢时间 |
+### 1.26 快捷输入子菜单改版：只留 6 项 + 「v3 + 字母」快捷键（第十五轮，2026-09-19）
+
+**用户诉求**（原话）：「把v3后面的计算 日期 时间 Unicode 农历输入 数字货币转写（只保留这些）的快捷键全部分别改为v3 加c/r/s/u/n/h 的快捷键 但是原来的rq cC sj Unicode （改为大写的U）nl R 都要保留」
+
+| 环节 | 内容 |
+| --- | --- |
+| ① 改法 | `lua_menu.lua` 的 `yield_quick` 由 9 项砍到 6 项 + 返回：**计算 · 日期 · 时间 · Unicode · 农历输入 · 数字货币转写**（原「星期 xq / 日期时间 dt / 部件拆字 uU」三项移出菜单）。`menu_processor.lua` 的 `vqi` 分支里每个项目现在**字母与数字两种键位等价**：`c`/`1`→`cC`、`r`/`2`→`rq`、`s`/`3`→`sj`、`u`/`4`→`U`、`n`/`5`→`N`+今天、`h`/`6`→`R`、`q`→清空 |
+| ② 为什么留数字 | 候选窗口上画出来的标签是数字（客户端 `HorizontalLayout::GetLabelText` 按位置画 1..N），只认字母会跟屏幕上的标签对不上，所以两个键位都留：**字母是主推快捷键（与顺序无关）**，数字按屏幕标签走 |
+| ③ 原前缀全部保留 | `cC` / `rq` / `sj` / `U` / `N` / `R` 直输照旧（它们本来就是雾凇拼音 `recognizer/patterns` 里的，本次改动一行都没碰）。实测：直输 `cC`+`1*2`→`2`、`R`+`123`→`一百二十三`、`U`+`4e2d`→`中`、`rq`→`2026-09-19`、`sj`→`12:01` ✅。**`nl` 不是雾凇拼音的前缀**（`nl` 是正常拼音「努力」），农历的官方前缀是 `N`，所以「保留 nl」改成了保留 `N` —— 真加 `nl` 会让「努力」打不出来。`xq`/`dt`/`uU` 仍可直接输入，只是不再从菜单进入 |
+| ④ 踩到的坑：注释写太长会把菜单撑出屏幕 | 第一版注释写成「按 c · 接着输入算式」，7 项横排实测 **1598px**，而候选条起点 x=109、屏幕（虚拟）只有 1707px → 第 5 项起就被裁掉看不见（OCR 只读得到前 4 项才发现）。注释缩成「按 c」「按 r」… 后宽度降到 **997px**，一条放得下 ✅。**以后往这个子菜单加项/加注释都要先量宽度** |
+| ⑤ 实测（`tools/verify-v3-quick.ps1`，数值 + OCR 双证据） | `v`→`3`→`c` + `1+2*3` + 空格 → **7**；`h` + `123` → **一百二十三**；`u` + `4e2d` → **中**；`n` → **丙午马年八月初九**；`r` → **2026-09-19**；`s` → **12:00** ✅ |
+| ⑥ 视觉验收（这次视觉模型挂了，改用系统 OCR） | 本轮三路视觉（`read_image` / modlens / vision.js）全部报上游 `500`，改用 **Windows 自带 OCR**（`Windows.Media.Ocr`，PS 5.1 调 WinRT）直接读截图文字，比模型描述更硬：子菜单整条读出来 = `1 计算 按c / 2 日期 / 3 时间 按s / 4 农历输入 / 5 数字货币转写 按h / 6 Unicode 按u / 7 返回` ✅。工具已存 `tools/ime-ocr.ps1`（纯文本）与 `tools/ime-ocr-boxes.ps1`（带每行坐标，用来定位候选条在哪一行 —— 这台机器上 `GetWindowRect` 拿到的 y 与截图里的 y 差约 100px，别硬算，用 OCR 坐标反查） |
+| ⑦ 部署 | 只改 Lua（`lua_menu.lua` = `E1D7C5A4E77058EFBA7854568CBACA25`、`menu_processor.lua` = `6F4A890BDD0D4F7F673E8AC729B3C2ED`），三处同步 + 重启 `WeaselServer.exe` 即可，客户端 DLL 与服务端 exe 都不用重编。**注意**：重启服务端时可能被客户端立刻拉起 → 出现两个实例，收尾时要确认只剩 1 个 |
 ---
 ## 2. 时间线（2026-09-13）
 
