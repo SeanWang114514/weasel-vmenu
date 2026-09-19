@@ -51,7 +51,7 @@
 
 1. 输入为空时按下 `v`：`menu_processor` → `ctx:push_input("v")`，返回 1（已处理）。
 2. `lua_menu` 看到输入 `v` → 产出 **5 个** `vmenu` 候选
-   （设置 / 剪贴板 / 快捷输入 / 原符号 / 常用语）。
+   （设置 / 剪贴板 / 快捷输入 / 常用语 / 原符号）。
 3. `menu_filter` 看到 `core.mode_of("v") == "menu"` → 只保留 `vmenu` + `vact`，其余全丢。
 4. 按 `1`..`5`：`menu_processor` 的 `cur == "v"` 分支写标记文件（设置窗口）或改写输入
    （`vclip` / `vfav` / 原符号模式 / `vqi` 快捷输入，见 §3.9）；**其余按键 `return 2` 放行** ——
@@ -82,7 +82,7 @@
 `fav_hit`（前缀，用于预览）与 `fav_exact`（完全一致，用于回车）**故意分开**：
 预览要「早」（3 位就出现），回车要「准」（不能抢走正常的原始输入）。
 
-### 3.4 原符号模式（`v`→`4`）
+### 3.4 原符号模式（`v`→`5`）
 
 `v`→`4` 把输入改回 `v` 并写模块级标记 + context option（`vraw_mode`）双写，
 之后 `menu_processor` 直接 `return 2`，让 `speller`/`punctuator` 按原版行为处理，

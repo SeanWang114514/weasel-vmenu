@@ -27,8 +27,8 @@ local function yield_menu(seg)
   yield(item(seg, "vmenu", "设置", "图形窗口"))
   yield(item(seg, "vmenu", "剪贴板", "历史"))
   yield(item(seg, "vmenu", "快捷输入", "计算 · 日期"))
-  yield(item(seg, "vmenu", "原符号", "原版 v"))
   yield(item(seg, "vmenu", "常用语", "快捷内容"))
+  yield(item(seg, "vmenu", "原符号", "原版 v"))
 end
 
 -- ===== 快捷输入（对应雾凇拼音自带的前缀）=====

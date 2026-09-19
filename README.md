@@ -15,8 +15,8 @@
 > **English TL;DR** — A Lua + PowerShell extension pack for the
 > [Weasel](https://github.com/rime/weasel) IME on Windows (built and verified against
 > Weasel 0.17.4 + librime 1.13.1 + [rime-ice](https://github.com/iDvel/rime-ice)):
-> press `v` for a menu (`1` 设置 / `2` 剪贴板 / `3` 快捷输入 / `4` 原符号 /
-> `5` 快捷输入 = calculator, date/time, lunar date, number-to-Chinese, Unicode, radical lookup).
+> press `v` for a menu (`1` 设置 / `2` 剪贴板 / `3` 快捷输入 / `4` 常用语 /
+> `3` 快捷输入 = calculator, date/time, lunar date, number-to-Chinese, Unicode, radical lookup; `5` 原符号 = native `v` mode).
 > Includes a **resident WinForms settings GUI** that opens in ~0.1 s, a clipboard-history
 > quick picker, favourite snippets that appear as **candidate #2 while you type their code**
 > (Enter invokes them), a **candidate grid** (a single row of 9 by default; press `↓` to expand
@@ -35,11 +35,11 @@
 | --- | --- | --- |
 | `1 设置` | 可视化设置窗口 | 常驻进程，`v`→`1` 后约 **0.1 秒**出现窗口 |
 | `2 剪贴板` | 剪贴板快查 | 后台脚本同步系统剪贴板到文本文件，Lua 只读文件 |
-| `3 常用语` | 常用语快查 | 可继续输入编码过滤（注释显示「快捷内容」） |
-| `4 原符号` | 还原原版 `v` 模式 | 之后直接输入符号编码（`2` → 二 贰 ² ₂ Ⅱ …） |
-| `5 快捷输入` | 计算 / 日期 / 时间 / 星期 / 日期时间 / 农历 / 数字大写 / Unicode / 部件拆字 | 按 `5` 进子菜单（9 项 + 返回），**选中一项就直接启用，接着输入即可** |
+| `3 快捷输入` | 计算 / 日期 / 时间 / 星期 / 日期时间 / 农历 / 数字大写 / Unicode / 部件拆字 | 按 `3` 进子菜单（9 项 + 返回），**选中一项就直接启用，接着输入即可** |
+| `4 常用语` | 常用语快查 | 可继续输入编码过滤（注释显示「快捷内容」） |
+| `5 原符号` | 还原原版 `v` 模式 | 之后直接输入符号编码（`2` → 二 贰 ² ₂ Ⅱ …） |
 
-> 原来的第 5 项「文字设置」（`vset` 纯键盘设置）已从菜单**去掉**（现在第 5 项是**快捷输入**）：
+> 原来的第 5 项「文字设置」（`vset` 纯键盘设置）已从菜单**去掉**（现在第 3 项是**快捷输入**，第 4 项是**常用语**）：
 > `vset` / `vsetc` / `vsetf` / `vsetn` / `vsetx` 的 Lua 代码**保留但不再能从菜单进入**，
 > 只有手打 `vset` 才进得去。设置一律走第 1 项的可视化窗口。
 
@@ -89,7 +89,7 @@
 
 | 截图 | 说明 |
 | --- | --- |
-| ![v 菜单](screenshots/ime-01-menu.png) | 按 `v`：短候选（设置 / 剪贴板 / 快捷输入 / 原符号；**第 5 项「快捷输入」是后加的，这张图是 4 项时的样子**） |
+| ![v 菜单](screenshots/ime-01-menu.png) | 按 `v`：短候选（设置 / 剪贴板 / 快捷输入 / 常用语 / 原符号；**这张图是早期 4 项时的样子**） |
 | ![常用语候选](screenshots/ime-02-favorite-inline.png) | 打字时输入编码前 3 位 `you`，候选第 2 位就是常用语内容 `alice@example.com`（注释「常用语」） |
 | ![回车调用](screenshots/ime-03-favorite-enter.png) | 编码打完按回车，内容直接上屏 |
 | ![数字编码常用语](screenshots/ime-04-digit-favorite.png) | **纯数字编码**：输入 `138` → 候选直接显示 `13800138000`，回车调用 |
