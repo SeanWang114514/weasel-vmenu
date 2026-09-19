@@ -318,16 +318,74 @@ BOOL RimeWithWeaselHandler::ProcessKeyEvent(KeyEvent keyEvent,
   // WeaselTSF/CandidateList.cpp:409、:427），这里沿用同一套做法。
   // 是否处于展开状态由 Lua 处理器维护的 vmenu_grid 选项表示（前端与 Lua 不用新增协议）；
   // 目标下标越界时不拦截，交回 rime 处理，从而保留「第一行按 ↑ 收起」等原有行为。
+  // [vmenu-grid] 数字键：与**画出来的标签**严格一致，不依赖是否展开。
+  // 标签由 HorizontalLayout::GetLabelText 按「高亮那一行」画 id%9+1；而 librime 自己的
+  // selector 并不是「本页第 d 个」——高亮不在该行第 1 格时它会漂：
+  //   实测① 展开态、高亮下移到第 2 行后按 3 → 上屏「🔟」（表内第 2 位）而不是第 12 位；
+  //   实测② 收起态按 = 翻页后按 3 → 上屏「屎」（第 1 页的词），而不是第 2 页第 3 个。
+  // 所以这里统一接管数字键：target = 高亮所在行行首 + (d-1)，再走「选中并上屏」。
+  // 收起态 / v 菜单里高亮在第 1 行 → 等价于原来的「本页第 d 个」，行为不变。
+  {
+    int digit = -1;
+    if (keyEvent.keycode >= 0x31 && keyEvent.keycode <= 0x39)
+      digit = (int)keyEvent.keycode - 0x31;
+    else if (keyEvent.keycode >= ibus::Keycode::KP_1 &&
+             keyEvent.keycode <= ibus::Keycode::KP_9)
+      digit = (int)keyEvent.keycode - (int)ibus::Keycode::KP_1;
+    if (digit >= 0 && !(keyEvent.mask & ibus::Modifier::RELEASE_MASK) &&
+        RIME_API_AVAILABLE(rime_api, select_candidate_on_current_page)) {
+      // ⚠️ 闸门：输入为空或**全是数字**时不接管，把数字留给 Lua 的「数字编码」逻辑
+      //   （收藏可以设成 131 这种纯数字编码，用户逐位敲 1→3→1 时要能建码，
+      //    不能被我们当成选词键吃掉）。只有「正在打拼音」时才做标签重映射。
+      const char* input = rime_api->get_input(session_id);
+      bool digits_only = true;
+      for (const char* p = input ? input : ""; *p != '\0'; ++p) {
+        if (*p == '\'' || *p == ' ') continue;
+        if (*p < '0' || *p > '9') {
+          digits_only = false;
+          break;
+        }
+      }
+      if (!digits_only) {
+        RIME_STRUCT(RimeContext, ctx);
+        if (rime_api->get_context(session_id, &ctx)) {
+          const int current = ctx.menu.highlighted_candidate_index;
+          const int count = ctx.menu.num_candidates;
+          rime_api->free_context(&ctx);
+          const int row = (current > 0) ? (current / 9) : 0;
+          const int target = row * 9 + digit;
+          if (target < count) {
+            DLOG(INFO) << "vmenu-grid: digit " << (digit + 1) << " -> row " << row
+                       << ", select " << target << " (highlight was " << current
+                       << ")";
+            SelectCandidateOnCurrentPage((size_t)target, ipc_id);
+            _Respond(ipc_id, eat);
+            _UpdateUI(ipc_id);
+            m_active_session = ipc_id;
+            return TRUE;
+          }
+        }
+      }
+    }
+  }
   if (!(keyEvent.mask & ibus::Modifier::RELEASE_MASK) &&
       rime_api->get_option(session_id, "vmenu_grid")) {
     const int kGridColumns = 9;  // 与主题 style/layout/max_width = 530（正好 9 个一行）一致
     // [vmenu-grid] 翻页键：+ / -。
     // 主键盘 + = shift+equal，客户端 ConvertKeyEvent 经 ToUnicodeEx 转成 XK_plus(0x2b)、
     // 主键盘 - = XK_minus(0x2d)；小键盘 + / - = KP_Add / KP_Subtract。
+    // ★ 还要接「主键盘 = / -」与 PageDown / PageUp（0x3d / 0xffbd / 0xff56 / 0xff55）：
+    //   原版横向候选窗的翻页键就是 -/=，rime 默认 key_binder 也会把它们映射成
+    //   Page_Up/Page_Down。不接的话展开态按 = 会走 librime 自己的分页，和我们 Lua 的
+    //   整屏翻页（36 个/页）打架，用户看到的就是「+- 翻页不正常」。
     const bool kPageFwdKey = (keyEvent.keycode == 0x2b ||
-                             keyEvent.keycode == ibus::Keycode::KP_Add);
+                              keyEvent.keycode == 0x3d ||
+                              keyEvent.keycode == 0xffbd ||
+                              keyEvent.keycode == 0xff56 ||
+                              keyEvent.keycode == ibus::Keycode::KP_Add);
     const bool kPageBackKey = (keyEvent.keycode == 0x2d ||
-                              keyEvent.keycode == ibus::Keycode::KP_Subtract);
+                               keyEvent.keycode == 0xff55 ||
+                               keyEvent.keycode == ibus::Keycode::KP_Subtract);
     int delta = 0;
     switch (keyEvent.keycode) {
       case ibus::Keycode::Down:
