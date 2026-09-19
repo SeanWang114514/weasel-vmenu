@@ -547,6 +547,56 @@ msbuild weasel.sln /t:WeaselServer /p:Configuration=Release /p:Platform=x64 /m /
 | E | 展开 + `=` 翻页按 `3` | 尸 = 新页第 3 位 ✅ |
 | G/H | **收起** + `=` 翻页按 `1` / `3` | 💩 / 尸 = 新页第 1 / 第 3 位 ✅ |
 | F | 展开 + `↓` 一行 + `=` 翻页按 `2` | 翻页后高亮按设计回到**同列最上方**，故应选新页第 2 个；脚本按「留在第 2 行」算期望值故对不上，行为自洽（见 PROGRESS §5.6 待人类确认）|
+## 7.3 ✅ 已部署（第十七轮，2026-09-19）：v 功能不再显示内部编码（只重编服务端）
+
+**问题**：`v` 功能的输入编码（`v` / `vclip` / `vqi` / `vfav` / `vset*`）会原样出现在**行内预编辑**里，
+用户看到的是「神秘字符 `vclip`」（截图里那个小方块就是行内预编辑本身）。
+
+**为什么必须改服务端**：`vclip` 不是任何候选的正文（`lua_menu.lua` 里候选正文全是中文/剪贴板条目），
+它是 **composition 的 preedit**。librime 的 Lua API 没有「改 preedit」的接口，而 Weasel 服务端在
+把上下文交给前端之前有两次落笔机会：
+
+| 通路 | 位置 | 谁在用 |
+| --- | --- | --- |
+| 字符串协议 | `_Respond()` → `ctx.preedit=` / `ctx.preedit.cursor=` 消息 | 自己画候选的客户端（TSF：Chrome / 记事本 等） |
+| 结构体 | `_GetContext()` → `weasel_context.preedit.str` | 非 TSF 客户端（服务端面板 `m_ui`，如 WinForms） |
+
+**补丁**：新增文件内静态函数 `_VMenuLabel(api, session_id, code, &label)`：
+
+```cpp
+if (!code || code[0] != 'v') return false;            // 普通拼音一律不动
+if (api->get_option(session_id, "vraw_mode")) return false;  // 原符号模式一律不动
+// v → 功能菜单 · vclip → 剪贴板 · vqi → 快捷输入 · vfav → 常用语 · vset* → 设置
+```
+
+命中时：`ctx.preedit=` 换成中文名、`ctx.preedit.cursor=` 写「长度,长度,长度」（**不下发高亮范围**，
+避免用旧编码偏移去高亮新文案）；`_GetContext()` 里换成 `u8tow(label)` 并跳过 attribute。
+
+> ⚠️ **中文文案必须写成宽字符 `\u` 转义 + `wtou8()`**：本工程没有 `/utf-8`，直接写中文窄字符串会被
+> MSVC 按系统代码页（GBK）编码，前端显示乱码。编完可用「在 exe 里按 UTF-16LE 搜 `6a52348d`（剪）」
+> 快速自检。
+
+**实测**（`tst/preedit-label-verify2.ps1` + Windows OCR，2026-09-19）：
+
+| 操作 | 行内预编辑 OCR 读出 | 候选窗 |
+| --- | --- | --- |
+| `v` | 功能菜单 | `842x49` |
+| `v`→`2` | 剪贴板 | `3921x49` |
+| `v`→`3` | 快捷输入 | `987x49` |
+| `v`→`4` | 常用语 | `583x49` |
+| `v`→`5`（原符号） | `v`（**故意保留**） | `687x191` |
+| 普通拼音 `shi` | `shi`（回归） | `587x49` |
+| WinForms 测试窗 `v` / `v`→`2`（服务端面板通路） | 功能菜单 / 剪贴板 | — |
+
+**同轮 Lua 改动**：`menu_processor.lua` 的退格判断从「只有 `vclip`」扩大到**所有 v 功能**
+（`is_v_func()`：`v` / `vclip*` / `vqi*` / `vfav*` / `vset*`），一按退格整条输入作废；
+实测四种功能 candidates 面板 `842x49`/`3921x49`/`987x49`/`583x49` → 全部 `none`，
+日志四行 `[vmenu] 退格取消整条输入 <vclip>|<vqi>|<vfav>|<v>`。
+
+**部署记录**：`WeaselServer.exe` 2685440 → **2688512 B**，md5 `BDF332243AD1B407EDC1F712C357ED8A`
+→ `493D4A5CAC45BE0B0A2BE00260579504`；旧文件备份 `WeaselServer.exe.bak-preedit-09191251`；
+重编命令同 §7.2（24 秒）。**客户端 DLL 未动。**
+
 ## 7. 未做 / 待确认
 
 | 项 | 说明 |

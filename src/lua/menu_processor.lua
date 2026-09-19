@@ -12,6 +12,19 @@ local function is_more_key(repr)
   return repr == "m" or repr == "plus"
 end
 
+-- 「这个输入是不是 v 功能」：菜单 v / 剪贴板 vclip / 快捷输入 vqi / 常用语 vfav / 设置 vset…
+-- 用来把「退格 = 整条取消」的作用范围限制在 v 功能里，不影响普通打字和原符号编码。
+local function is_v_func(s)
+  if s == "v" then return true end
+  return s:sub(1, 5) == "vclip" or s:sub(1, 3) == "vqi"
+    or s:sub(1, 4) == "vfav" or s:sub(1, 4) == "vset"
+end
+
+local function is_back_key(repr)
+  local rp = string.lower(repr or "")
+  return rp == "backspace" or rp == "back_space" or rp == "back"
+end
+
 local function handle(key, env)
   if key:release() then return 2 end
 
@@ -38,6 +51,17 @@ local function handle(key, env)
   end
   -- 原符号模式：完全不拦截，让 speller / punctuator 按原版行为处理
   if core.raw(ctx) then return 2 end
+
+  -- ===== v 功能里「退格 = 整条输入全部丢掉」=====
+  -- 用户诉求：「back 键全部删除 不显示」：不管当前是 v 菜单、v2 剪贴板、v3 快捷输入、
+  -- 常用语还是设置，一按退格这条输入就整条作废 —— ctx:clear() 之后输入为空，
+  -- 候选窗与输入框里什么都不剩（内部编码也随之消失）。
+  -- 原符号模式在上面已经 return 2：那里 v 开头是用户自己敲的符号编码，退格仍然只删一个字。
+  if cur ~= "" and is_v_func(cur) and is_back_key(repr) then
+    core.debug_log("[vmenu] 退格取消整条输入 <" .. cur .. ">")
+    ctx:clear()
+    return 1
+  end
 
   -- 收藏编码「打完 + 回车」= 直接调用收藏内容。
   -- 纯数字编码（如 131）本来靠「整屏只有一个候选时回车上屏」这个巧合生效，
@@ -181,20 +205,6 @@ local function handle(key, env)
     end
     if repr == "2" or repr == "n" then replace_input(ctx, "vset") return 1 end
     return 2
-  end
-
-  -- ===== v2（剪贴板）列表：退格 = 取消这次输入 =====
-  -- 用户诉求：「按 v2 后按 back（删除），去除所有的输入，也就是这次输入不算，去除 v2 的输入」。
-  -- 注意：v2 列表的输入是 vclip…，它**不走**下面的 vsetc/vsetf 子模式分支
-  -- （parse_sub 只匹配 ^vset([cf])…），所以这条判断必须放在子模式分支之前才会被执行。
-  -- 只作用于 v2 这一路；设置窗口里的剪贴板管理列表（vsetc…）不受影响，退格仍照原样删一个字。
-  if cur:sub(1, 5) == "vclip" and not core.parse_sub(cur) then
-    local rp = string.lower(repr or "")
-    if rp == "backspace" or rp == "back_space" or rp == "back" then
-      core.debug_log("[vmenu] v2 退格取消：丢掉输入 <" .. cur .. ">")
-      ctx:clear()
-      return 1
-    end
   end
 
   -- ===== 剪贴板 / 收藏 的子模式 =====

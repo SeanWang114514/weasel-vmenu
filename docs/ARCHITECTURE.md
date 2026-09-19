@@ -340,6 +340,38 @@ vmenu-tray-setup.ps1 -Revert
 `D:\rime-sandbox\lua\` 与 `%APPDATA%\Rime\lua\` 两处文件要 **MD5 一致**
 （`lua_filter` / `lua_processor` / `lua_translator` 各 require 一份，不一致会出现「菜单有、按键没反应」这类怪现象）。
 
+### 3.10 v 功能的**显示层**：内部编码 → 中文名（服务端 `_VMenuLabel`）
+
+v 功能的输入编码（`v` / `vclip` / `vqi` / `vfav` / `vset*`）是给 Lua 判断分支用的**内部约定**，
+不该出现在用户眼前。但**行内预编辑显示的就是 composition 的 preedit**，而 librime 的 Lua API
+没有「改 preedit」的接口 —— 所以只能在**服务端把上下文交给前端之前**改写，位置有两条：
+
+| 通路 | 代码位置 | 谁在用 |
+| --- | --- | --- |
+| 字符串协议（逐行消息） | `RimeWithWeasel.cpp` `_Respond()` 里 `ctx.preedit=` / `ctx.preedit.cursor=` | 自己画候选窗的客户端，**TSF 全走这条**（Chrome / 记事本 等） |
+| 结构体 | `RimeWithWeasel.cpp` `_GetContext()` → `weasel_context.preedit.str`（由 `_UpdateUI()` 调） | **非 TSF** 客户端（服务端面板 `m_ui`，如 WinForms 程序） |
+
+映射表（`_VMenuLabel()`，任一不满足就原样下发）：
+
+| 输入 | 显示 | 条件 |
+| --- | --- | --- |
+| `v` | 功能菜单 | 首字母必须 `v` |
+| `vclip…` | 剪贴板 | 且 `vraw_mode` 为**假** |
+| `vqi…` | 快捷输入 | 且 `vraw_mode` 为**假** |
+| `vfav…` | 常用语 | 且 `vraw_mode` 为**假** |
+| `vset…` | 设置 | 且 `vraw_mode` 为**假** |
+| 其它（`shi`、`cC1+2*3`、原符号的 `v…`） | 原样 | — |
+
+要点：
+
+* **原符号模式必须排除**（`vraw_mode`，菜单第 5 项）—— 那里 `v` 开头是用户自己敲的符号编码，
+  改掉会让用户看不见自己在打什么。
+* 命中时**不下发高亮范围**（`ctx.preedit.cursor` 写「长度,长度,长度」），否则会拿旧编码的偏移
+  去高亮新文案。
+* 中文文案写成宽字符 `\uXXXX` + `wtou8()`：工程无 `/utf-8`，中文窄字符串会被按 GBK 编码输出。
+* 同一套判断也决定**退格**行为：v 功能里按 Backspace = 整条输入作废（Lua 侧 `is_v_func()`），
+  输入一空，显示层自然什么都不剩。
+
 ## 4. 结构性配置（`build/rime_ice.schema.yaml`）
 
 ```yaml
