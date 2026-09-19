@@ -7,7 +7,8 @@
 
 大部分功能用 **librime-lua + PowerShell 5.1** 实现，**不改输入法源码**；
 但**候选方格那几项做不到只靠配置**（换行、序号位置、方向键移动选中项都发生在
-`WeaselServer.exe` 里），所以那一部分**改了 Weasel 源码、用 GitHub Actions 重新编译**，
+`WeaselServer.exe` 里），所以那一部分**改了 Weasel 源码、重新编译**（最早走 GitHub Actions；
+> 2026-09-19 起本机也能编，见 `docs/AGENT-HANDOFF.md` 约束 32），
 跑的是自己编的 `weasel.dll` / `weaselx64.dll` / `WeaselServer.exe`
 （分支 [`weasel-grid-build`](https://github.com/SeanWang114514/weasel-vmenu/tree/weasel-grid-build)，
 完整记录见 [`docs/GRID-CANDIDATE-DLL.md`](docs/GRID-CANDIDATE-DLL.md)）。

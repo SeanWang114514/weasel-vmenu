@@ -1,6 +1,12 @@
 # 重编 librime + Weasel 的可行性评估
 
 > ## ✅ 已实施（2026-09-18，0.2.5）
+> ⚠️ **2026-09-19（第十八轮）再更正一次**：文中「本机补不齐 Windows SDK + Boost」不再成立 ——
+> VS Enterprise 里有 ATL（在 `VC\Tools\MSVC\14.51.36231\atlmfc\`），Windows SDK 与 Boost/librime
+> 也已经齐了，**本机可以直接编 `WeaselServer.exe` + 两个客户端 DLL**（前台约 80 秒）：
+> `pwsh -NoProfile -File D:\weasel-build\build-vmenu.ps1 -Only all`。
+> 需要 push/CI 的场景只剩「没有这套本机工具链的机器」。
+>
 > 这份评估的结论**已经落地**：没有改 librime，只改了 Weasel 前端，方向键翻译成
 > `highlight_candidate_on_current_page`（正是本文预判的做法）。本机补不齐 Windows SDK + Boost，
 > 所以改用 **GitHub Actions** 编。施工单与实测结果见

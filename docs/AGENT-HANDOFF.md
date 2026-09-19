@@ -20,7 +20,7 @@
    **需要编译的东西有两处**：① 托盘入口的 C# 代理（`src/windows/vmenu-deployer-wrapper.cs`，
    由安装脚本用系统自带的 `csc.exe` 自动编译，只需要.NET Framework 的 csc（无需 SDK））；
    ② **Weasel 本体**（`WeaselUI/HorizontalLayout.cpp` + `RimeWithWeasel/RimeWithWeasel.cpp` 三个补丁，
-   **本机编不了**，走 GitHub Actions 出包，见 `GRID-CANDIDATE-DLL.md` §4）。
+   **本机编得了**（第十八轮起：把 VS 的 `atlmfc\include` / `atlmfc\lib\*` 塞进 `INCLUDE`/`LIB` 即可，见约束 32 与 §4「本机全量重编」）；历史做法是走 GitHub Actions 出包，见 `GRID-CANDIDATE-DLL.md` §4）。
 3. 改动之后通常要做这几件事，否则看不到效果：
    * 改了 **lua** → 把文件同步到两个 lua 目录（**MD5 必须一致**），然后**重启 `WeaselServer.exe`**；
    * 改了 **`.ps1`** → 结束对应的常驻进程，让 `vmenu-watcher.ps1` 用新脚本重新拉起。
@@ -124,7 +124,11 @@ librime 的 `DetectModifications` 判定「无改动」后会**直接中止整�
 | 28 | PowerShell 函数里 **`return $array` 会被展平** | `tools/verify-grid.ps1` 曾返回「深底横带数组」，调用方拿到的是散开的整数 → 算出的高度**恒为 0**、四条几何断言误报 FAIL。返回 hashtable（或 `,$array`）才安全 |
 | 29 | **验收候选窗必须在「会自己画候选」的程序里也测一遍** —— 记事本一类程序不支持「集成候选列表」，走的路径和其它程序**完全不同** | 小狼毫 WeaselTSF/CandidateList.cpp 把 ITfIntegratableCandidateListUIElement 暴露给应用后，Chrome / Edge / 微信 / Office / UWP 会**自己画候选**（只拿到 GetString() 的候选文本 → **没有标签槽序号、没有 9×4 方格**），只有记事本这类程序才 _pbShow = TRUE 退回我们的窗。症状是「只有记事本有数字」；修法见 GRID-CANDIDATE-DLL.md §2.4。**只在新开记事本里验收会 100% 漏掉这个 bug** |
 | 30 | 改了 weasel.dll / weaselx64.dll 之后，**所有客户端程序都要重启**才会加载新代码 | TSF 是**进程内** DLL：WeaselServer.exe 只管服务端 UI（网格/序号/方向键），客户端 DLL 管按键与「要不要让应用自己画候选」。用户说「只有记事本有数字」时，第一件事就是让他在目标程序里**重开窗口**再试 |
-| 31 | 本机**没有 ATL**（tlmfc/tlbase.h 不存在，swhere -requires VC.ATL 为空）→ WeaselTSF **本地编不出来** | 本地从零编还要先编 Boost（约 40 分钟）+ librime，**且仍会卡在 ATL**。要出 DLL 只能走 CI（需要 push），或对已部署 DLL 做等效的**二进制常量补丁**（改 __uuidof 那个 16 字节 IID 的最后一字节 → IsEqualIID 永不匹配；先确认该常量在目标 DLL 里只出现 1 次、且 server 里 0 次） |
+| 31 | ~~本机没有 ATL → WeaselTSF 本地编不出来~~ **已推翻，见约束 32** | 原结论来自「`atlbase.h` 找不到 + `swhere -requires VC.ATL` 为空」，但 ATL 其实**随 VC 工具集装在 VS Enterprise 里**，只是没进默认搜索路径 |
+| 32 | ✅ **本机可以编 WeaselTSF**（客户端 DLL）：把 VS 的 ATL 目录塞进 `INCLUDE` / `LIB` 再调 MSBuild | 实测一次编出 3 个产物（前台，共约 80 秒），**不需要 push、不需要 CI**。命令见 §4「本机全量重编」；ATL 路径 `C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Tools\MSVC\14.51.36231\atlmfc\{include,lib\x64,lib\x86}`，另需 `BOOST_ROOT=D:\weasel-build\weasel\deps\boost_1_84_0`（依赖已编好，别再重编 Boost） |
+| 33 | ⚠️⚠️ **`lua_filter` 里绝对不能调 `ctx:set_option()`**（要写 option 就写到 `menu_processor` 里） | `set_option` 会通知引擎**重跑候选管线** → 管线又进过滤器 → 过滤器又 `set_option` → **无限递归 → 服务端栈溢出崩溃**（第十八轮实测：`WeaselServer.exe` 每次按键崩一次，事件日志 `APPCRASH` / `ntdll.dll` / **`0xc00000fd`**，`%TEMP%\rime.weasel\*.dmp` 每半分钟一个；症状是「在记事本里打字完全没反应」，极易误判成焦点问题）。跨 `processor`/`filter` 共享状态走 option 是**对的**（约束 17），但**只能由 processor 写**；纯「这次是什么模式」的判断可以让服务端按输入前缀自己算（`_VMenuListCode`） |
+| 34 | 候选窗**宽度不够时少画 1–3 列**，**不要重排**（`WeaselUI/HorizontalLayout.cpp` 的 `visible_cols_`） | 重排会让「收起那一行」和「展开后的每一行」**列位置对不上**（用户明确要求对齐）。做法：保留列槽位、把被省掉的尾部格子 `SetRectEmpty`（点不到、也不画序号），三处循环（`DoLayout` / `_candidateRects` 重排 / 拉伸到右边缘）都要判。已知代价：被省掉的格子**仍能被数字键选中**（选词按下标算，前端只是没画） |
+| 35 | v 功能与普通打字的**列数 / 序号算法由服务端下发**：`ctx.grid_cols`（4 / 9）与 `ctx.grid_2d`（1 = 行×列，0 = 顺序 1..N） | 前端 `HorizontalLayout` 只认这两条协议，缺省值是**老行为**（`grid_cols` 缺省 0 → 当 9；`grid_2d` 缺省 1），新旧文件混装也不会错乱。判断「是不是列表型 v 功能」的**唯一权威**是服务端 `_VMenuListCode`（前缀 `vclip*` / `vfav*` / `vsetc*` / `vsetf*`），它同时管序号算法与「数字键要不要在展开态接管」，两边不会打架 |
 
 ---
 
@@ -225,9 +229,35 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\src\windows\patch-build-sc
 
 * `menu/page_size`（**36** = 9 × 4）：一页候选上限，写在 `rime_ice.custom.yaml` + `build/rime_ice.schema.yaml`；
 * `style/label_format` 留空（`" "`）：关掉 Weasel **原生**序号列（序号改由 DLL 的标签槽画，见 §1）；
-* `src/lua/menu_filter.lua`：`core.grid_limit(ctx)` 决定「这一屏放几个」（9 / 36），
-  `core.page_get(ctx)` 决定 `+` 下翻取哪 9 个；
-* `src/lua/vmenu_core.lua`：`GRID_COLS = 9` / `GRID_ROWS = 4` / `GRID_PAGES = 4`，改了要跟上面同步。
+* `src/lua/menu_filter.lua`：`core.grid_limit(ctx, code)` 决定「这一屏放几个」——
+  **普通打字 9 / 36，v 列表 4 / 16，静态 v 菜单 36（全部）**；`core.page_get(ctx)` 决定 `+` 取哪一屏；
+* `src/lua/vmenu_core.lua`：`GRID_COLS = 9` / `V_COLS = 4` / `V_ROWS = 4` / `GRID_PAGES = 4`
+  / `is_list_code()`（判断列表型 v 功能），改了要跟上面同步。
+
+**v 功能的格子（第十八轮起）**：一行 **4** 个（普通打字 9 个），由服务端下发
+`ctx.grid_cols`；序号算法由 `ctx.grid_2d` 决定（列表 / 普通打字 = 按「行 × 列」，
+静态 v 菜单 = 顺序 `1..N`）；`+` / `-` = 按「这一屏的条数」翻页，`↓` = 展开 4 行
+（列表型 v 功能 4 × 4 = 16 个）。前端一行放不下时**少画 1–3 列**（保留列槽位，
+保证收起态与展开态逐像素对齐）——细节与实测见
+[`ARCHITECTURE.md`](ARCHITECTURE.md) §3.6.1 与 [`GRID-CANDIDATE-DLL.md`](GRID-CANDIDATE-DLL.md) §7.4。
+
+**本机全量重编（不用 push、不用 CI，前台约 80 秒）**：
+
+```powershell
+# 一个脚本干完三件事：server x64 + WeaselTSF x64 + WeaselTSF Win32
+pwsh -NoProfile -File D:\weasel-build\build-vmenu.ps1 -Only all
+# 日志 D:\weasel-build\build-vmenu.log；产物在 D:\weasel-build\weasel\output\
+# 再换 5 个文件（自动备份旧文件 + 重启 WeaselServer）：
+pwsh -NoProfile -ExecutionPolicy Bypass -File `
+  'D:\VibeCoding\输入法\repo\weasel-vmenu\tools\deploy-grid-dlls.ps1' `
+  -SourceDir 'D:\weasel-build\weasel\output'
+```
+
+脚本内部的关键三点（要手敲 MSBuild 时照抄）：`INCLUDE` 前面塞
+`...\VC\Tools\MSVC\14.51.36231\atlmfc\include`，`LIB` 前面塞 `...\atlmfc\lib\x64`
+（Win32 用 `lib\x86`），并设 `BOOST_ROOT=D:\weasel-build\weasel\deps\boost_1_84_0`；
+然后 `MSBuild.exe weasel.sln /t:WeaselServer|WeaselTSF /p:Configuration=Release /p:Platform=x64|Win32 /m`。
+⚠️ 客户端 DLL 编完**必须重启目标程序**（记事本 / 浏览器 / 微信）才会生效（约束 30）。
 
 **必须用 UTF-8 读写**，绝不能用 `Get-Content`/`Set-Content`（会把 YAML 写坏，
 后果是候选窗口完全不显示）：
@@ -256,7 +286,7 @@ Start-Process 'C:\Program Files\Rime\weasel-0.17.4\WeaselServer.exe'
 
 1. 改**源码**：`WeaselUI/HorizontalLayout.cpp` 的 `GetLabelText` 覆写（§2.2），
    同步改 `.h` 里的声明；
-2. 推到 `weasel-grid-build` → 等 CI → 下载 `weasel-grid-dlls.zip`；
+2. ⚠️ **现在不用推、不用等 CI**：本机 `pwsh -NoProfile -File D:\weasel-build\build-vmenu.ps1 -Only all`（前台约 80 秒；旧的「推到 `weasel-grid-build` → 等 CI → 下载 `weasel-grid-dlls.zip`」只在没有本机工具链时才需要）；
 3. `tools/deploy-grid-dlls.ps1`（**5 个文件**：安装目录三件套 + `System32` / `SysWOW64` 的 `weasel.dll`）
    → 重启 `WeaselServer` → **重启记事本**（TSF 是进程内 DLL）；
 4. 确认活动输入法没被微信输入法抢走（§1），再验证。
@@ -386,6 +416,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\vmenu-tray-setup.ps1
 | 点托盘「输入法设置」没反应 | `WeaselDeployer.exe` 是不是 **5632 字节**的代理、`WeaselDeployer.real.exe` 在不在；不在就重跑 `tools\vmenu-tray-setup.ps1`。窗口起不来则按「`v`→`1` 没反应」查常驻窗口 |
 | 托盘菜单第一项又变回「输入法设定」 | 多半是小狼毫升级 / 修复安装覆盖了 exe：重跑 `tools\vmenu-tray-setup.ps1` 即可（脚本会先编译代理、按大小判断当前 `WeaselDeployer.exe` 是不是代理，是真身就先改名保存为 `.real.exe`，不会丢掉新版部署器） |
 | 重新部署后候选方格参数没了 | **正常情况不会**：`max_width` / `page_size` 写在 `custom.yaml` 的 patch 里，重新部署会重新应用；真没了就查 `build\weasel.yaml` 与 `rime_ice.custom.yaml` 的值 |
+| **打字完全没有反应、候选框一个都不出（输入法像死了）** | ⚠️ **先怀疑服务端在崩**，别先怀疑焦点：① `Get-Process WeaselServer` 的 `StartTime` 是不是一直在变（每次按键重启 = 每次按键崩）；② `Get-ChildItem $env:TEMP\rime.weasel -Filter *.dmp` 有没有新转储；③ `Get-WinEvent -FilterHashtable @{LogName='Application';StartTime=(Get-Date).AddMinutes(-10)}` 找 `WeaselServer.exe` 的 `APPCRASH`，看异常代码 —— **`0xc00000fd` = 栈溢出**，最常见的原因就是**在 `lua_filter` 里调了 `ctx:set_option()`**（约束 33）。修完重编 server + 换文件 + 重启服务 |
+| v 功能里一行还是 9 个 / 序号不对 / `+` 不翻页 | 三个文件是否**同时**是新的：客户端 DLL（`ctx.grid_cols`、`ctx.grid_2d` 由它消费，改完要重启目标程序）、`WeaselServer.exe`（下发这两条协议）、三个 lua（切片 + 翻页；两个 lua 目录要 MD5 一致并重启服务）。只换一半会出现「列数对了但序号还是按行算」这类半生效现象 |
 | 打字变卡 | 是不是在普通打字路径里读了文件或起了进程（约束 1、3） |
 
 ---
@@ -501,6 +533,21 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\vmenu-tray-setup.ps1
   `↓`/`↑`/`←`/`→` 现在真的能移动高亮且不上屏（`GRID-CANDIDATE-DLL.md` §2.3）。
 * 遗留死代码：`vmenu_core.lua` 的 `grid_sel()` 已无人调用（可删），它注释里还留着那条错误的「1 基 / 0 基」。
   → **✅ 0.2.5 已删除**。
+
+### 已完成并验收（2026-09-19 第十八轮 · v 功能一行 4 个 + 加减号翻页 + `↓` 展开）
+
+* 用户诉求：v 功能**一行 4 个**、`+` / `-` 选择翻页、`↓` 像正常打字一样展开；
+  条目太多时**允许一行少 1-3 个**，但展开栏要跟着缩、**保证对齐**。
+* 做法：服务端下发 **`ctx.grid_cols`**（v = 4 / 普通 = 9）与 **`ctx.grid_2d`**（列表 = 行×列 /
+  静态 v 菜单 = 顺序 `1..N`）；Lua 按同一套 `grid_limit` 切片 + `page_next/prev` 翻页；
+  前端 `HorizontalLayout` 一行放不下时**少画 1–3 列**（保留列槽位 → 收起态与展开态逐像素对齐）。
+* 实测：v 主菜单 `861x95`（`1..4` + `5 原符号`）、v3 快捷输入 `808x96`（`1..7` 跨两行连续）、
+  剪贴板收起 `1433x49` / `↓` `1433x191` / `↑` 回 `1433x49`、第 2 屏一行**画满 4 个** `1424x49`；
+  普通打字 `shi` 仍 `660x49` / `660x189`（**未回归**）。
+* ⚠️ 最大教训：第一版在 `lua_filter` 里 `ctx:set_option()` → 服务端**每次按键栈溢出崩溃**
+  （`0xc00000fd`），现象是「记事本里打字毫无反应」。见约束 33。
+* ⚠️ 客户端 DLL 是**进程内**加载的：记事本 / 浏览器 / 微信都要**重启**才看得到新效果（约束 30）。
+* **打包（`打包`）还没做** —— 用户要求「网页跑通、审核完再打包」。
 
 ### 下一步（按价值排序）
 

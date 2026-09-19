@@ -241,7 +241,7 @@ DLL 只提供「能不能」；「什么时候」由 Lua 通过 context option `
 
 ## 4. 编译（GitHub Actions）与部署
 
-### 4.1 为什么用 CI 而不是本机
+### 4.1 为什么当年用 CI 而不是本机（**第十八轮起本机也能编，见 §7.4 与 `AGENT-HANDOFF.md` 约束 32**）
 
 本机没有 VS2022/v143 + ATL + boost 的完整环境，而 Weasel 需要
 `weasel.sln`（VS2026 打开、平台工具集 v143）+ 预编译 boost。CI 的坑与解法：
@@ -597,12 +597,69 @@ if (api->get_option(session_id, "vraw_mode")) return false;  // 原符号模式�
 → `493D4A5CAC45BE0B0A2BE00260579504`；旧文件备份 `WeaselServer.exe.bak-preedit-09191251`；
 重编命令同 §7.2（24 秒）。**客户端 DLL 未动。**
 
+## 7.4 ✅ 已部署（第十八轮，2026-09-19）：v 功能一行 4 个 + `+/-` 翻页 + `↓` 展开（**客户端也改了**）
+
+**两个新的文本协议键**（服务端 → 客户端，都走 `_Respond()`）：
+
+| 键 | 取值 | 客户端字段（缺省 = 老行为） | 作用 |
+| --- | --- | --- | --- |
+| `ctx.grid_cols=` | `4` = v 功能、`9` = 普通打字 | `Context::grid_cols`，缺省 `0` → 当 9 | 换行步长 + 序号步长（原来硬编码 9，见 §2.1/§2.2） |
+| `ctx.grid_2d=` | `1` = 按「行 × 列」、`0` = 按 `1..N` 顺序 | `Context::grid_2d`，缺省 `1` → 老行为 | 静态 v 菜单（v 主菜单 5 项、v3 快捷输入 7 项）的数字键是**顺序选**，序号也得顺序画 |
+
+**排版新增一条规则**：一行放不下时**少画 1–3 列**（最少 1 列），
+别重排 —— 重排会让收起那一行与展开后的每一行**列位置对不上**。
+
+```cpp
+// HorizontalLayout.cpp（DoLayout / _candidateRects 重排 / 拉伸到右边缘 三处都要判）
+if ((i % kGridCols) >= draw_cols) { SetRectEmpty(&_candidateRects[i]); … continue; }
+```
+
+`draw_cols` 的算法：`min_cols = (kGridCols > 3) ? kGridCols - 3 : 1;`
+`while (draw_cols > min_cols && (draw_cols * col_width) > grid_budget) --draw_cols;`
+其中 `grid_budget = GetSystemMetrics(SM_CXSCREEN) - offsetX - 2*real_margin_x - 16`。
+被省掉的格子是**空矩形**（点不到、不画序号），但槽位仍在 —— 所以对齐是逐像素的。
+
+**实测**（记事本 + Chrome，截图 + OCR）：
+
+| 操作 | 候选窗 | 读出 |
+| --- | --- | --- |
+| `v`（v 主菜单） | `861x95` | `1 设置 图形窗口 2 剪贴板 历史 3 快捷输入 计算·日期 4 常用语 快捷内容` / `5 原符号 原版 v` |
+| `v`→`3` | `808x96` | `1 计算 2 日期 3 时间 按s 4 农历输入` / `5 数字货币转写 6 Unicode 7 返回` |
+| `v`→`2`（剪贴板 20 条，长条目） | `1433x49`（收起 2 列） | `1/20 这个栏…` `2/20 D:\VibeCoding\Codex.lnk` |
+| `v`→`2`→`↓` | `1433x191`（4 行 × 2 列） | `1/2`、`5/6`、`9/10`、`13/14`（第 3、4 列空着不画） |
+| `v`→`2`→`↑` | `1433x49` | 收回 |
+| `v`→`2`→`+`（第 2 屏，短条目） | `1424x49`（**画满 4 列**） | `1 Paraformer-zh 5/20` `2 不要显示这个内部代码 6/20` `3 paraformer-zh-small int8 7/20` `4 先再网页跑通了再打包 8/20` |
+| `v`→`2`→退格 | 无候选窗 | 整条取消（回归 §7.3） |
+| `v`→`2`→`1` | 上屏 | 剪贴板第一条 |
+| 普通打字 `shi`（回归） | `660x49` / `↓` `660x189` | **与上一轮一致**，9 列没被裁 |
+
+> ⚠️⚠️ **`lua_filter` 里绝对不能 `ctx:set_option()`**（这一轮踩的雷，1 小时）：
+> 第一版用 option `vmenu_list` 传递「是不是列表型 v 功能」，服务端**每次按键栈溢出崩溃**
+> （`ntdll.dll` / `0xc00000fd`，`%TEMP%\rime.weasel\*.dmp` 每半分钟一个；
+> 现象是「输入法在记事本里完全没反应」）。`set_option` 会让引擎重跑候选管线，
+> 管线再进过滤器、过滤器再 `set_option` → 无限递归。
+> **判断要放在哪**：要么服务端按输入前缀自己算（本轮做法 `_VMenuListCode`），
+> 要么放在 **`menu_processor.lua`**（processor 跑在管线之前，改 option 是安全的）。
+
+**部署记录**（`tools\deploy-grid-dlls.ps1 -SourceDir D:\weasel-build\weasel\output`，5 个文件）：
+`WeaselServer.exe` **2692608 B** md5 `DF2B80E2B2106E42329685402D345870`；
+`weaselx64.dll`（`C:\Windows\System32\weasel.dll`）**1181696 B** md5 `7969B7C0C6E0A64C8524C4A81B290862`；
+`weasel.dll`（`C:\Windows\SysWOW64\weasel.dll`）**1037824 B** md5 `7FD813EF343FC9C0346BEAFC9DEE9B29`；
+旧文件备份在 `D:\weasel-build\dll-backup\<时间戳>\`。
+重编：`pwsh -NoProfile -File D:\weasel-build\build-vmenu.ps1 -Only all`
+（server 44 s / x64 14 s / x86 23 s，前台跑，日志 `D:\weasel-build\build-vmenu.log`）。
+
+> ⚠️ **客户端 DLL 是进程内加载的**：记事本、Chrome、微信… 都得**重启**才会用上新 DLL。
+> 验证网页通路时用了独立 profile 的 Chrome：`chrome.exe --user-data-dir=D:\weasel-build\chrome-ime-profile
+> --new-window file:///D:/weasel-build/tst/ime-web-test.html`（不动用户的浏览器会话）。
+
 ## 7. 未做 / 待确认
 
 | 项 | 说明 |
 |---|---|
 | 托盘入口 | 见 §4.4，编出的 server 丢了这个入口 |
-| v 菜单列表里的 `+` | v 菜单剪贴板列表（输入 `vclip`）**不吃**任何后缀（翻译器忽略），所以那里的 `+` 不会翻页；Lua 的 `is_more_key` 只对**已从菜单撤掉**的 `vsetc*` 管理列表生效。「下翻」目前只在**普通打字**的候选列表里实现 |
-| `+` 的页数 | 固定 4 页（`GRID_PAGES = 4`），与展开态 36 个候选对齐；要更多页就加 `vmenu_page_4…` 开关 |
+| ~~v 菜单列表里的 `+`~~ | **第十八轮已解决**（见 §7.4）：列表型 v 功能（`vclip*`/`vfav*`/`vsetc*`/`vsetf*`）的 `+`/`-` 现在按「这一屏的条数」翻页，`↓` 展开 4 行 × 4 列 = 16 个 |
+| 被省掉的列仍可被数字键选中 | 收起态只画 2 列时按 `3` 会上屏第 3 条（看不见）—— 前端只是没画，选词下标仍按下标算。要做成「不可选」必须让 Lua 只 yield 可见的那几个，而 Lua 不知道前端裁了几列（除非再返一条协议），成本大于收益，先记为已知特性 |
+| `+` 的页数（普通打字） | 默认 4 页（`GRID_PAGES = 4`），与展开态 36 个候选对齐；**v 列表的页数按条目数自动算**（`math.ceil(n / lim)`） |
 | 「最右边的回车键也要还原」 | 用户提过但含义未定（原始 0.17.4 主题？），未动 |
 | language bar 名称 | 仍是 DLL 里的资源字符串，没改 |

@@ -67,10 +67,19 @@ local function handle(key, env)
   -- 纯数字编码（如 131）本来靠「整屏只有一个候选时回车上屏」这个巧合生效，
   -- 这里显式接管：数字编码、字母编码一律支持，行为统一，也不再依赖巧合。
   -- 只有输入和某条编码完全一致时才接管，其余回车行为原样放行。
-  -- 候选窗口展开/收起 + 二维选择（只在正常打字时生效；v 菜单里保持原样）
-  if cur ~= "" and not core.mode_of(cur) then
-    -- 「+ 号下翻」：用户要求保留这个功能 —— 收起态一行只有 9 个候选，按 + 把可见窗口
-    -- 后移 9 个（第 10-18 个候选），配合 Weasel 标签槽的 1-9 序号即可直接选词。
+  -- 候选窗口展开/收起 + 加减号翻页。
+  -- ★ v 功能的「列表型」子模式（剪贴板 vclip / 常用语 vfav / 管理列表 vsetc·vsetf）也要
+  --   （用户要求「v 的功能改为支持用加减号进行选择，同时参考正常输入的下键拓展按键进行
+  --   拓展显示」）：列表收起一行 4 个，按 ↓ 展开成 4 行 × 4 列 = 16 个；加减号按这一屏的
+  --   条数翻页（可见条数由 menu_filter.lua 用同一个 lim 切片）。
+  -- 静态菜单（v 主菜单 / v3 快捷输入）不放进来：它们条目少、本来就全显示，而且数字键是
+  -- 顺序选（1..N），一旦展开态让服务端接管数字键就会按「行 × 列」选错（服务端也用
+  -- vmenu_list 这个 option 做了同样的判断，两边一致）。
+  local is_v_mode = core.is_v_code(cur)
+  local v_list_mode = is_v_mode and core.is_list_code(cur)
+  if cur ~= "" and (not is_v_mode or v_list_mode) then
+    -- 「+ 号下翻」：用户要求保留这个功能 —— 收起态一行只有 9 个候选（v 列表是 4 个），
+    -- 按 + 把可见窗口后移一屏，配合 Weasel 标签槽的序号即可直接选词。
     -- rime 默认把 KP_Add 绑成 plus（只当标点、会直接上屏），所以必须在这里拦下来。
     -- 主键盘 +（shift+equal）与小键盘 +（KP_Add）在 librime 里都归一化成 plus；
     -- 减号是 minus / KP_Subtract。两个方向都要接，「原来的 +- 翻页」才算回来。
@@ -83,6 +92,8 @@ local function handle(key, env)
       or repr == "KP_Equal" or repr == "Next" or repr == "Page_Down")
     local is_prev = (repr == "minus" or repr == "KP_Subtract" or repr == "Prior"
       or repr == "Page_Up")
+    -- v 子菜单里的字母键（d 删除 / x 清空 / q 返回 / m 更多）优先级更高，不能被翻页吃掉；
+    -- 这些键不在 is_next / is_prev 里，所以顺序上天然不冲突。
     if is_next then
       -- [同列光标] 「翻页后光标停在原列最上方」不在这里做：本机 librime 没有
       --   「读/写当前选中下标」的 API，由自编 Weasel 补丁完成（RimeWithWeasel.cpp）。
@@ -222,23 +233,26 @@ local function handle(key, env)
     end
 
     if act == "d" then
-      -- 删除模式：数字按「本屏第 N 条」删除；m 下一组；q 返回
+      -- 删除模式：数字按「本屏第 N 条」删除；m / + 下一屏；q 返回。
+      -- [v 一行 4 个] 「本屏」的条数跟菜单切片一致：收起 4 个、展开 16 个（core.grid_limit），
+      -- 页码用和列表同一套 option（core.page_get），不再用输入码里的 m 个数自己算窗口，
+      -- 否则「屏幕上一屏 4 个、m 却跳过 9 个」会错位。
       if is_more_key(repr) then
-        replace_input(ctx, "vset" .. base .. "d" .. string.rep("m", more + 1))
+        core.page_next(ctx)
         return 1
       end
       if repr == "q" then replace_input(ctx, "vset") return 1 end
+      local lim = core.grid_limit(ctx, cur)
       local n = tonumber(repr)
-      if n and n >= 1 and n <= core.WINDOW then
+      if n and n >= 1 and n <= lim then
         local items
         if base == "c" then items = core.read_clip() else items = core.read_fav() end
-        local idx = more * core.WINDOW + n
+        local idx = core.page_get(ctx) * lim + n
         if items[idx] then
           table.remove(items, idx)
           if base == "c" then core.write_clip(items) else core.write_fav(items) end
         end
-        -- 原地刷新，便于连续删除
-        replace_input(ctx, "vset" .. base .. "d" .. string.rep("m", more))
+        -- 原地刷新，便于连续删除（本屏内容会跟着重排）
         return 1
       end
       if repr:match("^%a$") then return 1 end
@@ -247,9 +261,9 @@ local function handle(key, env)
 
     -- 列表模式
     if base == "c" and is_more_key(repr) then
-      if more < math.floor((core.MAX_PAGE - core.MIN_PAGE) / core.STEP) then
-        replace_input(ctx, "vsetc" .. string.rep("m", more + 1))
-      end
+      -- [v 一行 4 个] 与列表切片保持一致：m / + 直接翻到下一屏（原来用输入码里的 m 个数
+      -- 记窗口，一屏 9 个，和现在一屏 4/16 个不匹配）。
+      core.page_next(ctx)
       return 1
     end
     if repr == "d" then replace_input(ctx, "vset" .. base .. "d") return 1 end

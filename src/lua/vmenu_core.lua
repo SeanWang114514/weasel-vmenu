@@ -91,12 +91,55 @@ end
 M.GRID_COLS = 9
 M.GRID_ROWS = 4
 M.GRID_OPTION = "vmenu_grid"   -- 状态必须放在 context option 里！
+-- [v 一行 4 个] v 功能菜单自己的列数 / 展开行数：
+--   用户要求「v 的功能…一行显示 4 个，同时参考正常输入的下键拓展按键进行拓展显示」。
+--   收起 = 一行 4 个，按 ↓ 展开 = 4 行 × 4 列 = 16 个。
+--   服务端会把这个列数用 ctx.grid_cols 下发给客户端（WeaselUI/HorizontalLayout.cpp 按它排版）。
+M.V_COLS = 4
+M.V_ROWS = 4
+
+-- 输入码是不是 v 功能菜单（v / vclip / vqi / vfav / vset…）
+function M.is_v_code(code)
+  return M.mode_of(code) ~= nil
+end
+
+-- 「列表型」v 功能：剪贴板 / 常用语 / 管理列表。
+-- 只有这些才需要按一屏 4 / 16 个切片、才需要加减号翻页、序号才按「行 × 列」算
+-- （数字键在列表里是二维的：第 2 行的 1 选的是本行第 1 个）。
+-- 静态菜单（v 主菜单 5 项、v3 快捷输入 7 项）条目本来就少，全部放出来，
+-- 序号按 1..N 顺序编号 —— 数字键在菜单里就是顺序选（见 menu_processor.lua 的 cur=="v" 段）。
+function M.is_list_code(code)
+  local m = M.mode_of(code)
+  if m == "clip" or m == "fav" then return true end
+  if m == "set" then
+    local base = M.parse_sub(code)
+    return base == "c" or base == "f"
+  end
+  return false
+end
+
+-- 服务端也需要知道「这次是不是列表型 v 功能」，才能决定两件事：
+--   1) 序号按「行 × 列」算（列表）还是按 1..N 顺序算（静态菜单）；
+--   2) 数字键要不要被服务端接管（静态菜单永远交给 Lua 顺序选，避免按第 2 行的 1 选错）。
+-- ★ 实现方式：C++ 侧（RimeWithWeasel.cpp 的 _VMenuListCode）按同一套前缀自己判断，
+--   不走 option —— 试过在 lua_filter 里 ctx:set_option("vmenu_list", …)，结果
+--   **服务端当场栈溢出崩溃**（0xc00000fd）：set_option 会通知引擎重跑候选管线，
+--   管线又进过滤器、又 set_option … 无限递归。filter 里绝不能改 option。
+--   所以这里只保留 is_list_code 供 Lua 自己用（menu_filter / menu_processor），
+--   前缀表必须和 C++ 侧保持一致：vclip / vfav / vsetc / vsetf。
 
 -- 注意：lua_processor 与 lua_filter 各自 require 一份本模块（模块级变量不共享），
 -- 所以「是否展开」只能通过 ctx 的 option 传递（vraw_mode 也是这么做的）。
-function M.grid_limit(ctx)
+-- 第二个参数是「输入码」：给了且是 v 功能菜单时按 4 / 16 算，否则（普通打字）按 9 / 36 算。
+-- 省略第二个参数 = 普通打字的旧行为，老的调用点不受影响。
+function M.grid_limit(ctx, code)
   local ok, open = pcall(function() return ctx:get_option(M.GRID_OPTION) end)
-  if ok and open then return M.GRID_COLS * M.GRID_ROWS end
+  local opened = (ok and open) and true or false
+  if code ~= nil and M.is_v_code(code) then
+    if opened then return M.V_COLS * M.V_ROWS end
+    return M.V_COLS
+  end
+  if opened then return M.GRID_COLS * M.GRID_ROWS end
   return M.GRID_COLS
 end
 

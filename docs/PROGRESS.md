@@ -276,7 +276,7 @@
 | 为什么一开始骗过了我 | 我一直在**新开的记事本**里验收：记事本不支持「集成候选列表」→ 用我们自己的候选窗 → 当然有数字；用户用的是 Chrome / 微信，走的是另一条路 |
 | 根因（源码逐行确认） | `WeaselTSF/CandidateList.cpp` 的 `QueryInterface` 把 `ITfIntegratableCandidateListUIElement` 暴露给应用 → Chrome / Edge / 微信 / Office / UWP / 搜索框这些**会自己画候选**的程序接管列表，而它们只拿到 `GetString()` 的**候选文本**：标签槽的 1–9 序号、9×4 方格都不存在；记事本不支持 → `_pbShow = TRUE` → 退回我们自己的窗 |
 | 修法（源码） | ① `QueryInterface` 不再暴露该接口（只留 `ITfUIElement` / `ITfCandidateListUIElement` / `...Behavior`）；② `StartUI()` 里 `_pbShow = TRUE` 后再 `_MakeUIWindow()` 作保险（`_pbShow` 同时决定 `UpdateUI()` 的 `Show(_pbShow)`，不强制就会「建了但永不显示」） |
-| ★ 本机编不出来 | VS18 **没装 ATL**（`VC\Tools\MSVC\14.51.36231` 下没有 `atlmfc`、vswhere 也查不到 `VC.ATL`）→ `WeaselTSF` 必失败（`atlbase.h`/`afxres.h`）。本地从零编还要先编 Boost（约 40 分钟）+ librime，**且仍会卡在 ATL** |
+| ~~★ 本机编不出来~~ **（2026-09-19 第十八轮已推翻）** | 当时以为 VS18 没装 ATL（`VC\Tools\MSVC\14.51.36231` 下「没有」`atlmfc`、vswhere 查不到 `VC.ATL`）；其实 **ATL 就在 `VC\Tools\MSVC\14.51.36231\atlmfc\`**，只是没进默认搜索路径。把 `atlmfc\include` 塞进 `INCLUDE`、`atlmfc\lib\x64|lib\x86` 塞进 `LIB`（再设 `BOOST_ROOT=D:\weasel-build\weasel\deps\boost_1_84_0`，Boost/librime 都已编好）之后，**本机一次就能编出全部 3 个产物**（前台约 80 秒）：`pwsh -NoProfile -File D:\weasel-build\build-vmenu.ps1 -Only all`。详见 `AGENT-HANDOFF.md` 约束 32 |
 | ★ 二进制等效补丁（实际部署的） | `__uuidof(ITfIntegratableCandidateListUIElement)` 把 IID 以 **16 字节常量**编进 DLL：把该常量**最后一字节** `0x7B → 0x7A`，`IsEqualIID()` 永远匹配不上 = 等价于「不再暴露集成接口」。实测该常量在 x86 `weasel.dll` 偏移 **729804**、x64 `weaselx64.dll` 偏移 **825488**，各自**只出现 1 次**，`WeaselServer.exe` 里 **0 次** → 只影响这一处判断 |
 | 部署结果 | `weasel.dll` 1034752 = `60B0F018D85B7DE1322A332E31657D11`、`weaselx64.dll` 1180672 = `8245FED5FF4983FA43436FF495B1172E`（第九轮：统一列宽严格对齐 +「满页才等宽」保护）；`System32` = x64、`SysWOW64` = x86（md5 一一对应 ✅）；备份 `D:\weasel-build\dll-backup\20260918-205936-patch4\` |
 | 验收证据（Chrome + `file://` 测试页） | 补丁前：只有 `zhe'g` + 应用自画列表、**无数字**；补丁后：`1 这个 2 这关 3 这股 4 组合柜 5 赵河沟 6 遮盖 7 这给 8 鹧鸪 9 这跟`（数字在词**左边**），按 `↓` 展开后**只有第 1 行** 1–9、第 2/3/4 行「开头无数字」✅ |
@@ -431,6 +431,40 @@
 | ⑩ ⚠️ 取证脚本的严重教训 | 上一版验收脚本「点一下就认为焦点到手」：实测 `click-focus ok = False`，**按键全部打进了别的窗口**。新版每个按键前做两道硬检查 —— ① `WindowFromPoint(点击点)` 的根窗口 == 目标窗口，② `GetForegroundWindow()` == 目标窗口 —— 任一不满足就**一个键都不发**直接退出；并且只对「已确认在前台」的窗口发按键。**这条务必保留**（见 `TESTING.md` §12） |
 
 **改动的文件 / 指纹**：`RimeWithWeasel.cpp`（服务端，只重编 `WeaselServer.exe`，24 秒，2685440 → 2688512 B，md5 `BDF332243AD1B407EDC1F712C357ED8A` → `493D4A5CAC45BE0B0A2BE00260579504`，旧文件备份为 `WeaselServer.exe.bak-preedit-09191251`）；`menu_processor.lua`（md5 `D551EAD3A69151A842AE524D01366961`，`D:\rime-sandbox\lua\`、`src\lua\`、`%APPDATA%\Rime\lua\` 三份一致）。客户端 DLL 未动。
+
+### 1.29 v 功能一行 4 个 + 加减号翻页 + `↓` 展开（第十八轮，2026-09-19）
+
+**用户诉求**（原话）：「v 的功能改为支持用加减号进行选择 然后一行 显示4个
+同时参考正常输入的下键拓展按键进行拓展显示」→ 补充「当所有的功能 的候选词实在太多的时候
+允许减少1-3个候选词 以保证页面可实行完整 同时拓展栏也要有相应的缩减 以保证对齐」
+
+| 环节 | 内容 |
+| --- | --- |
+| ① 拆需求 | 三件事：**(a)** v 功能一行 4 个（不是 9 个）；**(b)** `+` / `-` 用来翻页选词；**(c)** `↓` 像正常打字一样展开。补充条件：一行放不下时**允许每行少 1-3 个**，但**展开栏必须跟着缩**（= 收起那一行与展开后每一行**列位置对齐**） |
+| ② 分工（谁改哪里） | **Lua**：一屏几条（`grid_limit`）、翻页（`page_next/prev`）、`↓` 走 `grid_key`；**服务端**：下发列数 `ctx.grid_cols` 与序号算法 `ctx.grid_2d`、数字键在展开态按二维换算、箭头/加减号补丁的闸门；**前端 DLL**：换行步长、序号、以及「一行太宽就少画 1-3 列」 |
+| ③ Lua（`vmenu_core.lua`） | 新增 `M.V_COLS = 4` / `M.V_ROWS = 4`、`M.is_list_code(code)`（`vclip*`/`vfav*`/`vsetc*`/`vsetf*` = 列表）、`M.grid_limit(ctx, code)` = **列表 4 / 16，静态菜单 36，普通打字 9 / 36**。⚠️ 一开始还加了 `set_list_flag` 用 option 传标志 —— 见 ⑦ 的崩溃 |
+| ④ Lua（`menu_filter.lua`） | v 分支按 `is_list` 切片：`lim = grid_limit`、`start = page * lim`（静态菜单永远从 0 开始、`lim = 36` 保证「原符号」一项不漏）、`stop_n` 控制收集上界、yield 只给 `start+1 .. min(n, start+lim)`；页码越界时 `page_reset` 兜底。普通打字分支（9 / 36）**一行未动** |
+| ⑤ Lua（`menu_processor.lua`） | 加减号/翻页块从「非 v 模式」放宽到「**非 v 模式 或 列表型 v 功能**」（`is_v_mode` / `v_list_mode`）；静态菜单仍然跳过，保持原菜单手感。顺手把已废弃的 `vset` 列表管理（`d` 删除 / `m` 更多）从「按字母选」改成**按可见序号 + 翻页**，与新的窗口语义一致 |
+| ⑥ 服务端（`RimeWithWeasel.cpp`） | `_VMenuCols()`（v → 4，否则 9）、`_VMenuListCode()`（按输入前缀判列表）、`_VMenuSeqLabels()`（静态菜单 = 顺序序号）→ `_Respond()` 每帧下发 `ctx.grid_cols=` 与 `ctx.grid_2d=`；数字键接管闸门改成「**列表型** v 功能在展开态才接管」（静态菜单永远交给 Lua 顺序选）；箭头/加减号补丁的闸门同样只对列表型 v 功能与普通打字开放 |
+| ⑦ ⚠️⚠️ **血的教训：`lua_filter` 里绝不能 `ctx:set_option()`** | 第一版为了让服务端知道「这次是不是列表型 v 功能」，在过滤器里 `ctx:set_option("vmenu_list", …)`。结果：**服务端每次按键都崩溃重启**（`WeaselServer.exe` 反复换 pid，事件日志 `APPCRASH` / `ntdll.dll` / **`0xc00000fd` = 栈溢出**，`%TEMP%\rime.weasel\WeaselServer.exe.<pid>.dmp` 每 30 秒一个），记事本里打字**完全没有反应**（输入法看起来「死了」）。原因：`set_option` 通知引擎重跑候选管线 → 管线又进过滤器 → 过滤器又 `set_option` → **无限递归**。改法：这份判断挪到**服务端按前缀自己算**（`_VMenuListCode`），Lua 侧只保留 `is_list_code` 给自己用；`menu_processor.lua`（processor，跑在管线**之前**）里该改 option 的照旧 |
+| ⑧ 前端 DLL（`HorizontalLayout`） | `cols_per_row_`（换行/序号步长，取 `ctx.grid_cols`）、新增 `visible_cols_`（**每行实际画几列**）与 `grid_2d_`（序号算法）。「放不下」判据：`cols >= 4` 时最多省 3 列（最少留 1 列），`while (draw_cols > min_cols && draw_cols * col_width > grid_budget) --draw_cols;`，`grid_budget = SM_CXSCREEN - offsetX - 2*real_margin_x - 16`；被省掉的尾部格子三处都 `SetRectEmpty`（含 `_candidateRects` 重排循环与「拉伸到右边缘」循环），**列槽位保留 → 收起态与展开态列位置逐像素对齐** |
+| ⑨ 协议（`WeaselIPCData.h` / `ContextUpdater.cpp`） | `Context` 加 `int grid_cols;`（缺省 **0 = 9**）、`int grid_2d;`（缺省 **1 = 旧的「行 × 列」**）；`ContextUpdater` 解析 `ctx.grid_cols=` / `ctx.grid_2d=`。缺省值刻意选「老行为」，这样新旧 DLL 混装也不会错乱 |
+| ⑩ 验收 · 记事本（TSF 通路） | v 主菜单 `861x95`：第 1 行 `1 设置 图形窗口 / 2 剪贴板 历史 / 3 快捷输入 计算·日期 / 4 常用语 快捷内容`，第 2 行 **`5 原符号 原版 v`** ✅（顺序序号）；v3 快捷输入 `808x96`：`1 计算 / 2 日期 / 3 时间 按s / 4 农历输入` + `5 数字货币转写 / 6 Unicode / 7 返回` ✅；剪贴板收起 `1433x49`（2 列，条目太长）→ `↓` 展开 `1433x191`（4 行）→ `↑` 收回 `1433x49` ✅；第 2 屏 `1424x49` 一行**画满 4 个**（OCR：`1 Paraformer-zh 5/20`、`2 不要显示这个内部代码 6/20`、`3 paraformer-zh-small int8 7/20`、`4 先再网页跑通了再打包 8/20`）✅；`v`→`2`→退格 = 候选窗直接消失 ✅；`v`→`2`→`1` = 上屏第一条剪贴板 ✅ |
+| ⑪ 验收 · 网页（Chrome，新 DLL） | 同一套键序在 `tools\ime-web-test.html` 里复测：`1433x49` / `↓` `1433x191` / `+` 翻页 `1424x49`；`v`→`2`→`1` 后 MIRROR 区读出整条剪贴板（`len=83`）✅。⚠️ 为了加载新 DLL 用了独立 profile 的 Chrome（`--user-data-dir=D:\weasel-build\chrome-ime-profile`），**用户自己的浏览器还是旧 DLL**，需要重启一次浏览器 |
+| ⑫ 回归 | 普通打字 `shi`：收起 `660x49`、`↓` `660x189`、`↑` 回 `660x49` —— 与改动前**完全一致**（9 列没被裁、`grid_2d` 缺省仍是老行为）✅ |
+| ⑬ 坐标系的坑（复用上一轮的结论） | 截图是**真实像素**（2560×1440），`GetWindowRect` 是**虚拟像素**（/1.5），所以「面板在窗口外」这种误判出现过两次；裁图脚本 `tst\crop-panel.ps1` 专门做「虚拟矩形 × 1.5 → 真实像素」的换算 |
+
+**改动的文件 / 指纹**：客户端 `WeaselUI/HorizontalLayout.h` / `.cpp`（`visible_cols_`、`grid_2d_`）、
+`include/WeaselIPCData.h`、`WeaselIPC/ContextUpdater.cpp`；服务端 `RimeWithWeasel/RimeWithWeasel.cpp`；
+Lua `src/lua/vmenu_core.lua` / `menu_filter.lua` / `menu_processor.lua`（三份同步：
+`src\lua\` = `D:\rime-sandbox\lua\` = `%APPDATA%\Rime\lua\`）。
+构建（本机 `D:\weasel-build\build-vmenu.ps1`，前台）：`WeaselServer` x64 **44 s**、
+`WeaselTSF` x64 **14 s**、`WeaselTSF` Win32 **23 s**。产物：`weasel.dll` 1037824 B
+（md5 `7FD813EF343FC9C0346BEAFC9DEE9B29`）、`weaselx64.dll` 1181696 B
+（md5 `7969B7C0C6E0A64C8524C4A81B290862`）、`WeaselServer.exe` 2692608 B
+（md5 `DF2B80E2B2106E42329685402D345870`）。部署：`tools\deploy-grid-dlls.ps1 -SourceDir …\output`
+（5 个文件，旧文件备份在 `D:\weasel-build\dll-backup\`）。
+**未做**：打包（等用户审核）；用户自己浏览器的重启（进程内 DLL）。
 
 ---
 ## 2. 时间线（2026-09-13）

@@ -123,16 +123,34 @@ local function filter(input, env)
     return
   end
 
+  -- [v 一行 4 个] v 功能菜单的可见个数与翻页：
+  --   * 列表模式（剪贴板 / 常用语 / 管理列表）= 收起 4 个（一行 4 个）、按 ↓ 展开 16 个
+  --     （4 行 × 4 列，和正常打字的 ↓ 展开同一套手感）；加减号按这一屏的条数翻页。
+  --   * 静态菜单（v 主菜单 / v3 快捷输入 / 设置根菜单）本来就 5-7 条，全部放出来，
+  --     交给 Weasel 按 4 列自动换行（不会把第 5 项「原符号」藏起来）。
+  local is_v = (want ~= nil)
+  local is_list = is_v and core.is_list_code(code or "")
+
   local buf = {}
   local n = 0
   local lim = core.grid_limit(ctx)
+  if is_v then
+    lim = is_list and core.grid_limit(ctx, code) or 36
+  end
+  local start = 0
+  if is_list then
+    start = core.page_get(ctx) * lim
+  end
+  local need = start + lim
+  if need < lim then need = lim end
+  local stop_n = is_v and need or lim
   for cand in input:iter() do
     if want ~= nil then
       -- v 相关模式：只留自己的候选
       if cand.type == want or cand.type == "vact" then
         n = n + 1
         buf[n] = cand
-        if n >= lim then break end   -- 【卡顿修复】够一屏就停
+        if n >= stop_n then break end   -- 【卡顿修复】够一屏就停
       end
     else
       -- 正常打字：全收，顺便把已经存在的同一条收藏候选去掉，避免重复
@@ -151,12 +169,16 @@ local function filter(input, env)
       passthrough(input)
       return
     end
-    -- 同样受当前状态限制：收起时最多 9 个（一行，不换行），按 ↓ 展开后才能看到最多 36 个，
-    -- 也就是「每行 9 个」，第 10 个及以后靠展开查看。
-    for i = 1, math.min(n, lim) do
-      -- v 菜单的序号同样交给 Weasel 的标签槽（按高亮行 1-9）。
+    -- 翻过头（例如删到只剩 3 条还停在第 2 页）就回第 1 页，绝不留空窗口
+    if is_list and start >= n then
+      if core.page_get(ctx) > 0 then pcall(core.page_reset, ctx) end
+      start = 0
+    end
+    -- 同样受当前状态限制：普通打字收起 9 / 展开 36；v 列表收起 4 / 展开 16。
+    for i = start + 1, math.min(n, start + lim) do
+      -- v 菜单的序号同样交给 Weasel 的标签槽（v 菜单一行 4 个，按高亮行给 1-4）。
       -- 候选自带的注释（如快捷输入的「按 1 · …」）保持原样，不再拼数字。
-      yield(buf[i])
+      if buf[i] then yield(buf[i]) end
     end
     return
   end
