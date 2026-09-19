@@ -32,6 +32,17 @@ typedef enum { COLOR_ABGR = 0, COLOR_ARGB, COLOR_RGBA } ColorFormat;
 using namespace weasel;
 
 static RimeApi* rime_api;
+
+// [vmenu-grid] v 功能菜单判定与「一行几列」——定义在下面（_Respond 之前），
+// ProcessKeyEvent 里也要用（数字键换行换算、方向键网格导航），先声明。
+inline bool _VMenuLabel(RimeApi* api,
+                        RimeSessionId session_id,
+                        const char* code,
+                        std::string* label);
+inline bool _IsVMenu(RimeApi* api, RimeSessionId session_id, const char* code);
+inline int _VMenuCols(RimeApi* api, RimeSessionId session_id, const char* code);
+inline bool _VMenuList(RimeApi* api, RimeSessionId session_id, const char* code);
+inline bool _VMenuSeqLabels(RimeApi* api, RimeSessionId session_id, const char* code);
 WeaselSessionId _GenerateNewWeaselSessionId(SessionStatusMap sm, DWORD pid) {
   if (sm.empty())
     return (WeaselSessionId)(pid + 1);
@@ -342,6 +353,9 @@ BOOL RimeWithWeaselHandler::ProcessKeyEvent(KeyEvent keyEvent,
       //   menu_processor 收到数字才切换，如果被这里当成「选中并上屏」，按 3 就只会把
       //   「常用语」三个字写进文档 —— 用户实测的「v 功能无法正常打开」就是这个。
       const char* input = rime_api->get_input(session_id);
+      // [vmenu-grid] 复制一份：下面还会调 rime（_VMenuCols / _VMenuList → get_option），
+      // get_input 的裸指针可能被 librime 复用，留着用会读到脏内存。
+      const std::string input_str = input ? input : "";
       bool digits_only = true;
       bool v_prefix = false;
       bool first_char = true;
@@ -376,14 +390,29 @@ BOOL RimeWithWeaselHandler::ProcessKeyEvent(KeyEvent keyEvent,
           }
         }
       }
-      if (!digits_only && !v_prefix && !has_upper && !has_other && !date_prefix) {
+      // [vmenu-grid] v 功能菜单展开态（vmenu_grid）也要接管数字：
+      //   那时标签是按「4 列」的行号画的（第 2 行的标签是 1-4），必须用同一个列数换算，
+      //   否则按第 2 行的「1」会选到第 1 行第 1 个。收起态照旧不接管（菜单靠 Lua 的数字切换）。
+      //   ★ 只对**列表型** v 功能接管：静态菜单（v 主菜单 / v3 快捷输入）的序号是 1..N 顺序，
+      //     数字键必须继续交给 Lua 顺序选，按二维换算会选错。
+      const bool grid_open =
+          !!(rime_api->get_option(session_id, "vmenu_grid"));
+      const bool v_grid_digits =
+          v_prefix && grid_open &&
+          _VMenuList(rime_api, session_id, input_str.c_str());
+      if ((!digits_only && !v_prefix && !has_upper && !has_other &&
+           !date_prefix) ||
+          v_grid_digits) {
         RIME_STRUCT(RimeContext, ctx);
         if (rime_api->get_context(session_id, &ctx)) {
           const int current = ctx.menu.highlighted_candidate_index;
           const int count = ctx.menu.num_candidates;
           rime_api->free_context(&ctx);
-          const int row = (current > 0) ? (current / 9) : 0;
-          const int target = row * 9 + digit;
+          // [vmenu-grid] 列数与前端一致：v 功能菜单 4 列，普通打字 9 列。
+          const int cols =
+              _VMenuCols(rime_api, session_id, input_str.c_str());
+          const int row = (current > 0) ? (current / cols) : 0;
+          const int target = row * cols + digit;
           if (target < count) {
             DLOG(INFO) << "vmenu-grid: digit " << (digit + 1) << " -> row " << row
                        << ", select " << target << " (highlight was " << current
@@ -398,9 +427,21 @@ BOOL RimeWithWeaselHandler::ProcessKeyEvent(KeyEvent keyEvent,
       }
     }
   }
+  // [vmenu-grid] 展开态的方向键网格导航 / 加减号翻页。
+  // ★ 静态 v 菜单（v 主菜单 / v3 快捷输入）不接：它们没有可展开的第二屏，
+  //   而且 ↑↓ 在菜单里应该还是「移动高亮」（Lua/引擎自己的行为），
+  //   接管后按 4 列跳行会显得莫名其妙。列表型 v 功能与普通打字照旧接管。
+  // ★ get_input 返回的是 librime 内部缓冲，紧接着还有别的 rime 调用，
+  //   不能把裸指针留着用（会读到已被覆盖的内存），先拷贝成 std::string。
+  const std::string grid_input = rime_api->get_input(session_id);
+  const bool grid_is_v = _IsVMenu(rime_api, session_id, grid_input.c_str());
   if (!(keyEvent.mask & ibus::Modifier::RELEASE_MASK) &&
-      rime_api->get_option(session_id, "vmenu_grid")) {
-    const int kGridColumns = 9;  // 与主题 style/layout/max_width = 530（正好 9 个一行）一致
+      rime_api->get_option(session_id, "vmenu_grid") &&
+      (!grid_is_v ||
+       _VMenuList(rime_api, session_id, grid_input.c_str()))) {
+    // [vmenu-grid] 列数：v 功能菜单 4 列（一行 4 个），普通打字 9 列。
+    const int kGridColumns =
+        _VMenuCols(rime_api, session_id, grid_input.c_str());
     // [vmenu-grid] 翻页键：+ / -。
     // 主键盘 + = shift+equal，客户端 ConvertKeyEvent 经 ToUnicodeEx 转成 XK_plus(0x2b)、
     // 主键盘 - = XK_minus(0x2d)；小键盘 + / - = KP_Add / KP_Subtract。
@@ -462,7 +503,7 @@ BOOL RimeWithWeaselHandler::ProcessKeyEvent(KeyEvent keyEvent,
                      << ", keep col " << col;
           Bool handled = rime_api->process_key(
               session_id, keyEvent.keycode, expand_ibus_modifier(keyEvent.mask));
-          if (col >= 0 && col < 9)
+          if (col >= 0 && col < kGridColumns)
             rime_api->highlight_candidate_on_current_page(session_id, col);
           _Respond(ipc_id, eat);
           _UpdateUI(ipc_id);
@@ -984,6 +1025,48 @@ inline bool _VMenuLabel(RimeApi* api,
   return false;
 }
 
+// [vmenu-grid] 「当前是不是 v 功能菜单」——与 _VMenuLabel 共用同一套前缀判断，
+// 用来决定候选窗**一行几列**：v 功能菜单 4 列（用户要求「一行显示 4 个」），普通打字 9 列。
+// 原符号模式（vraw_mode）不算：那里 v 开头是用户自己敲的符号编码，仍按 9 列。
+inline bool _IsVMenu(RimeApi* api, RimeSessionId session_id, const char* code) {
+  std::string label;
+  return _VMenuLabel(api, session_id, code, &label);
+}
+
+// [vmenu-grid] 一行几列（4 = v 功能菜单 / 9 = 普通打字）。
+inline int _VMenuCols(RimeApi* api, RimeSessionId session_id, const char* code) {
+  return _IsVMenu(api, session_id, code) ? 4 : 9;
+}
+
+// [vmenu-grid] 「这次是不是列表型 v 功能」（剪贴板 / 常用语 / 管理列表）。
+// 列表：一屏 4 / 16 个，序号按「行 × 列」算，展开态数字键由服务端按二维接管。
+// 静态菜单（v 主菜单 5 项、v3 快捷输入 7 项）：全部一次显示，序号按 1..N 顺序算，
+// 数字键永远交给 Lua 顺序选。
+// 前缀表必须与 src/lua/vmenu_core.lua 的 mode_of / parse_sub 一致：
+//   vclip… → clip、vfav… → fav、vsetc…/vsetf… → set 里的列表。
+// ★ 刻意不用 option 传递：试过在 lua_filter 里 ctx:set_option("vmenu_list", …)，
+//   服务端当场**栈溢出崩溃**（0xc00000fd，事件日志 ntdll.dll / 0xc00000fd）——
+//   set_option 会通知引擎重跑候选管线，管线再进过滤器、再 set_option…无限递归。
+inline bool _VMenuListCode(const char* code) {
+  if (!code) return false;
+  const std::string s(code);
+  if (s.compare(0, 5, "vclip") == 0) return true;
+  if (s.compare(0, 4, "vfav") == 0) return true;
+  if (s.size() >= 5 && s.compare(0, 4, "vset") == 0 &&
+      (s[4] == 'c' || s[4] == 'f'))
+    return true;
+  return false;
+}
+
+inline bool _VMenuList(RimeApi* api, RimeSessionId session_id, const char* code) {
+  return _IsVMenu(api, session_id, code) && _VMenuListCode(code);
+}
+
+// [vmenu-grid] 序号是不是「顺序 1..N」（静态 v 菜单），否则按「行 × 列」编号（列表/普通打字）。
+inline bool _VMenuSeqLabels(RimeApi* api, RimeSessionId session_id, const char* code) {
+  return _IsVMenu(api, session_id, code) && !_VMenuListCode(code);
+}
+
 bool RimeWithWeaselHandler::_Respond(WeaselSessionId ipc_id, EatLine eat) {
   std::set<std::string> actions;
   std::list<std::string> messages;
@@ -1136,6 +1219,25 @@ bool RimeWithWeaselHandler::_Respond(WeaselSessionId ipc_id, EatLine eat) {
 
       messages.push_back(std::string("ctx.cand=") + wtou8(ss.str()) + '\n');
     }
+    // [vmenu-grid] 候选窗「一行几列」下发前端：v 功能菜单 4（一行 4 个），普通打字 9。
+    // 前端 HorizontalLayout 用它当换行 / 序号步长，收起态那一行与展开后每一行用同一套格子；
+    // 一行放不下时前端会「少放 1-3 个」（见 HorizontalLayout.cpp 的 visible_cols_）。
+    // 每次都发（不是只在变化时发），这样从 v 列表回到普通打字不会留下旧的列数。
+    // preedit 先拷贝：下面两次判断内部还会调 rime（get_option），
+    // 不能一直拿着 RimeContext 里的裸指针。
+    const std::string preedit_str =
+        ctx.composition.preedit ? ctx.composition.preedit : "";
+    messages.push_back(
+        std::string("ctx.grid_cols=") +
+        std::to_string(_VMenuCols(rime_api, session_id, preedit_str.c_str())) +
+        '\n');
+    // [vmenu-grid] 序号算法：1 = 按「行 × 列」（列表 / 普通打字的展开网格），
+    // 0 = 按 1..N 顺序（静态 v 菜单：v 主菜单 5 项、v3 快捷输入 7 项，数字键就是顺序选）。
+    // 同样每次都发；老服务端不发这一行时前端默认 1 = 原来的行为。
+    messages.push_back(
+        std::string("ctx.grid_2d=") +
+        (_VMenuSeqLabels(rime_api, session_id, preedit_str.c_str()) ? "0" : "1") +
+        '\n');
     rime_api->free_context(&ctx);
   }
 

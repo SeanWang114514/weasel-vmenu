@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 
 #include <string>
 #include <vector>
@@ -119,7 +119,7 @@ struct CandidateInfo {
 };
 
 struct Context {
-  Context() {}
+  Context() : grid_cols(0), grid_2d(1) {}
   void clear() {
     preedit.clear();
     aux.clear();
@@ -143,6 +143,15 @@ struct Context {
   Text preedit;
   Text aux;
   CandidateInfo cinfo;
+  // [vmenu-grid] 服务端下发的「每行几列」（文本协议 ctx.grid_cols）：
+  //   v 功能菜单 = 4（用户要求「一行显示 4 个」），普通打字 = 9。
+  //   0 = 旧服务端没发 → 客户端按 9 处理。老客户端遇到这个键会忽略，互不影响。
+  int grid_cols;
+  // [vmenu-grid] 序号算法（文本协议 ctx.grid_2d）：
+  //   1 = 按「行 × 列」编号（列表 / 普通打字的展开网格，数字键是二维的）；
+  //   0 = 按 1..N 顺序编号（静态 v 菜单：v 主菜单 5 项、v3 快捷输入 7 项，数字键就是顺序选）。
+  //   默认 1 = 旧服务端没发这个键时的原行为。
+  int grid_2d;
 };
 // for icon type in tip
 enum IconType { SCHEMA, FULL_SHAPE };

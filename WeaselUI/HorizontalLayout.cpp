@@ -26,6 +26,14 @@ std::wstring HorizontalLayout::GetLabelText(const std::vector<Text>& labels,
                                             int id,
                                             const wchar_t* format) const {
   const int cols = (cols_per_row_ > 0) ? cols_per_row_ : 9;
+  // [vmenu-grid] 静态 v 菜单（v 主菜单 / v3 快捷输入）：数字键是顺序选的（Lua 的 cur=="v"
+  // 分支），所以整块按 1..N 顺序编号，且**每一行都要显示**（否则第 2 行的「5 原符号」
+  // 没有序号，用户看不出该按几）。服务端用 ctx.grid_2d=0 通知这种情形。
+  if (!grid_2d_) {
+    if (id < 0)
+      return L"  ";
+    return std::to_wstring(id + 1) + L" ";
+  }
   const int hl_row = this->id / cols;
   const int row = id / cols;
   if (row == hl_row)
@@ -112,13 +120,21 @@ void HorizontalLayout::DoLayout(CDCHandle dc, PDWR pDWR) {
   int mintop_of_rows[MAX_CANDIDATES_COUNT] = {0};
   // only when there are candidates
   // [vmenu-grid] 统一列宽的量：作用域要覆盖下面「定位」与「设置 rect」两段 pass
-  const int kGridCols = 9;
+  //   基准列数：普通打字 9；**v 功能菜单 4**（服务端用 ctx.grid_cols 下发，用户要求
+  //   「一行显示 4 个」，展开后 4 行 × 4 = 16 个）。旧服务端不发这个键 → 0 → 退化为 9。
+  const int kGridCols = (_context.grid_cols > 0) ? _context.grid_cols : 9;
+  const bool explicit_cols = (_context.grid_cols > 0);
   // [vmenu-grid] 只有「排满一页」才强制等宽（收起 = 9、展开 = 36）。见下面 grid_uniform 的注释。
   const int kGridUniformMin = 8;
   const bool grid_multi_row = (candidates_count > kGridCols);
   int col_width = 0;
   int grid_label_w = 0;                // 网格态统一序号槽宽（见下面注释）
-  int& cols_per_row = cols_per_row_;   // 正常 = 9；超长候选时下面会下调
+  int draw_cols = kGridCols;           // 本行实际画几格（<= kGridCols，见下面「少放几个」）
+  int& cols_per_row = cols_per_row_;   // 换行 / 编号的步长：普通 9、v 功能菜单 4
+  cols_per_row = kGridCols;
+  // [vmenu-grid] 序号算法由服务端下发：1 = 行 × 列（列表 / 普通打字的展开网格），
+  // 0 = 顺序 1..N（静态 v 菜单）。这里先记下来，GetLabelText 会在下面各次调用里用它。
+  grid_2d_ = (_context.grid_2d != 0);
   if (candidates_count) {
     w = offsetX + real_margin_x;
     // [vmenu-grid] 「严格整齐」：网格态先量出**统一列宽**。
@@ -155,30 +171,47 @@ void HorizontalLayout::DoLayout(CDCHandle dc, PDWR pDWR) {
       }
       col_width += _style.candidate_spacing;  // 列与列之间的间距
     }
-    // [vmenu-grid] 统一列宽的另一面：万一有**超长候选**（例如很长的常用语），
-    // 9 列 × 那个宽度会把面板撑得比屏幕还宽。用户允许「实在太长就少放几个」，
-    // 于是按屏幕可用宽度反算每行最多放几列（下限 3 列，保证还是个网格）。
-    // 正常中文候选（1–4 字）算出来仍然是 9 列，行为完全不变。
+    // [vmenu-grid] 统一列宽的另一面：万一有**超长候选**（例如很长的常用语 / 剪贴板长句），
+    // N 列 × 那个宽度会把面板撑得比屏幕还宽。用户允许「实在太长就少放 1-3 个」：
+    // 从基准列数往下减（9→8/7/6，v 菜单 4→3/2/1），减到这一行能完整放进屏幕为止。
+    // 减掉的那几格**不画**（visible_cols_），但列位置仍钉在「列号 × 列宽」上，
+    // 于是收起态那一行与展开后每一行同一列严格对齐（用户要求「上下对齐」）。
     const int kScreenW = GetSystemMetrics(SM_CXSCREEN);
     const int grid_budget =
         (kScreenW > 0) ? (kScreenW - offsetX - 2 * real_margin_x - 16) : 0;
-    cols_per_row = kGridCols;
-    if (grid_multi_row && col_width > 0 && grid_budget > 0) {
-      while (cols_per_row > 3 && cols_per_row * col_width > grid_budget)
-        --cols_per_row;
+    draw_cols = kGridCols;
+    if (col_width > 0 && grid_budget > 0) {
+      const int min_cols = (kGridCols > 3) ? (kGridCols - 3) : 1;  // 最多少放 3 个
+      while (draw_cols > min_cols && draw_cols * col_width > grid_budget)
+        --draw_cols;
     }
+    visible_cols_ = draw_cols;
+    const bool cols_trimmed = (draw_cols < kGridCols);
     // 统一列宽在**展开态一律启用**（要的就是严格行列对齐）；
-    // 收起态（单行 9 个）也启用，让每一格等宽 —— 用户要求「每个预选词都用同一个长度」，
+    // 收起态（单行）也启用，让每一格等宽 —— 用户要求「每个预选词都用同一个长度」，
     // 收起态量出来 95/100/101 这种 ±3px 的抖动就是各格自然宽度不同造成的。
-    // 但**必须排满一页才启用**：像 v 菜单那样只有 5–6 条、每条还带长短不一的注释，
-    // 强制等宽会把面板按「最宽那条 × 条数」撑大（实测 700px → 1117px），
-    // 那种列表保持自然宽度更紧凑；而候选页（收起 9 / 展开 36）永远是满的。
-    // 唯一的例外：这一行 9 格会超出屏幕（候选超长）时退回自然宽度，别把面板撑出屏幕。
+    // 「必须排满一页才启用」的老例外保留：像 v 主菜单那样只有 5–6 条、每条还带长短不一的
+    // 注释时，自然宽度更紧凑。但现在多了两个新的启用条件：
+    //   * explicit_cols：服务端指明这是 v 功能菜单（一行 4 个）→ 收起态那一行必须与展开后
+    //     每一行**同一套格子**，否则「收起 / 展开」两态对不齐（用户明确要求对齐）；
+    //   * cols_trimmed：候选超长、本行已经「少放了几个」→ 只有等宽 + 按列号钉位才能上下对齐。
     const bool grid_uniform =
-        (candidates_count >= kGridUniformMin && col_width > 0 &&
-         (grid_multi_row || grid_budget <= 0 ||
-          kGridCols * col_width <= grid_budget));
+        (candidates_count >= kGridUniformMin || explicit_cols || cols_trimmed) &&
+        col_width > 0 &&
+        (grid_multi_row || explicit_cols || cols_trimmed || grid_budget <= 0 ||
+         kGridCols * col_width <= grid_budget);
     for (auto i = 0; i < candidates_count && i < MAX_CANDIDATES_COUNT; ++i) {
+      // [vmenu-grid] 「实在太长就少放 1-3 个」：这一行第 draw_cols 格之后的候选不画。
+      //   注意不画 ≠ 挪走：列位置仍按 kGridCols 的步长排，所以被省掉的永远是每行的**最后几格**，
+      //   展开后的每一行省掉的也是同样的那几格 → 上下严格对齐（用户要求）。
+      if ((i % kGridCols) >= draw_cols) {
+        _candidateLabelRects[i].SetRectEmpty();
+        _candidateTextRects[i].SetRectEmpty();
+        _candidateCommentRects[i].SetRectEmpty();
+        row_of_candidate[i] = i / kGridCols;
+        mintop_of_rows[row_of_candidate[i]] = height;
+        continue;
+      }
       int current_cand_width = 0;
       if (i > 0)
         w += _style.candidate_spacing;
@@ -258,9 +291,12 @@ void HorizontalLayout::DoLayout(CDCHandle dc, PDWR pDWR) {
       if (grid_uniform) {
         w = offsetX + real_margin_x + ((i % cols_per_row) + 1) * col_width -
             _style.candidate_spacing;
-        max_width_of_rows = max(
-            max_width_of_rows,
-            offsetX + real_margin_x + cols_per_row * col_width);
+        // [vmenu-grid] 面板宽度按**实际画出的格数**算：候选比一行格数还少时不留空格
+        //   （例如 v 常用语只有 2 条，就不要按 4 格宽画）。
+        const int width_cols = min(draw_cols, candidates_count);
+        max_width_of_rows =
+            max(max_width_of_rows,
+                offsetX + real_margin_x + width_cols * col_width);
       }
       // calculate height of current row is the max of three rects
       mintop_of_rows[row_cnt] = height;
@@ -277,6 +313,11 @@ void HorizontalLayout::DoLayout(CDCHandle dc, PDWR pDWR) {
     // reposition for alignment, exp when rect height not equal to
     // height_of_rows
     for (auto i = 0; i < candidates_count && i < MAX_CANDIDATES_COUNT; ++i) {
+      // [vmenu-grid] 本行被省掉的几格：rect 留空 → 不画、也点不到。
+      if ((i % kGridCols) >= draw_cols) {
+        _candidateRects[i].SetRectEmpty();
+        continue;
+      }
       int base_left = (i == id) ? _candidateLabelRects[i].left - base_offset
                                 : _candidateLabelRects[i].left;
       if (grid_uniform) {
@@ -319,6 +360,7 @@ void HorizontalLayout::DoLayout(CDCHandle dc, PDWR pDWR) {
     height = mintop_of_rows[row_cnt] + height_of_rows[row_cnt] - offsetY;
     width = max(width, max_width_of_rows);
   } else {
+    visible_cols_ = 0;  // [vmenu-grid] 没有候选：不留下上一帧的裁列状态
     height -= _style.spacing + offsetY;
     width += _style.hilite_spacing + _style.border;
   }
@@ -332,6 +374,9 @@ void HorizontalLayout::DoLayout(CDCHandle dc, PDWR pDWR) {
   }
   if (candidates_count) {
     for (auto i = 0; i < candidates_count && i < MAX_CANDIDATES_COUNT; ++i) {
+      // [vmenu-grid] 被省掉的格子不参与「末格拉到右缘」的美化（否则空 rect 会被撑开）
+      if ((i % kGridCols) >= draw_cols)
+        continue;
       // make rightest candidate's rect right the same for better look
       if ((i < candidates_count - 1 &&
            row_of_candidate[i] < row_of_candidate[i + 1]) ||

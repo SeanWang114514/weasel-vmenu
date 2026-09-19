@@ -37,6 +37,21 @@ void ContextUpdater::Store(Deserializer::KeyType const& k,
     _StoreCand(k, value);
     return;
   }
+
+  // [vmenu-grid] ctx.grid_cols=4 —— v 功能菜单「一行 4 个」，普通打字 9。
+  // 走文本协议（不是 boost 结构）是刻意的：老客户端会忽略这个键、新客户端遇到老服务端
+  // 保持 0（按 9 渲染），两边版本不一致也不会崩。
+  if (k[1] == L"grid_cols") {
+    m_pTarget->p_context->grid_cols = _wtoi(value.c_str());
+    return;
+  }
+
+  // [vmenu-grid] ctx.grid_2d=0/1 —— 序号算法：1 = 按「行 × 列」（列表/普通打字），
+  // 0 = 按 1..N 顺序（静态 v 菜单）。同上走文本协议，旧服务端不发就保持默认 1。
+  if (k[1] == L"grid_2d") {
+    m_pTarget->p_context->grid_2d = _wtoi(value.c_str());
+    return;
+  }
 }
 
 void ContextUpdater::_StoreText(Text& target,
