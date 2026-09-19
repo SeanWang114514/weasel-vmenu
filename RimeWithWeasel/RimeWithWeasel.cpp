@@ -1069,6 +1069,15 @@ inline bool _VMenuListCode(const char* code) {
 // （2 → 1），但仍保住列位置，不重排候选。
 inline int _VMenuCols(RimeApi* api, RimeSessionId session_id, const char* code) {
   if (!_IsVMenu(api, session_id, code)) return 9;
+  // [快捷输入 2 列] 用户要求：v3 快捷输入的候选显示也改成「和剪贴板相似的 2 列格式」。
+  //   注意 vqi **不是列表型**：它仍是静态菜单 —— 序号顺序 1..N（ctx.grid_2d = 0），
+  //   数字键仍由 menu_processor.lua 按序号选，服务端不接管。
+  //   这里只把列数从 4 改成 2：客户端 HorizontalLayout 的 fixed_cells 只看 grid_cols == 2，
+  //   所以 v3 自动获得「等宽固定格 + 屏宽 20% + 超长 … 截断」的同一套排版。
+  {
+    const std::string s(code ? code : "");
+    if (s.compare(0, 3, "vqi") == 0) return 2;
+  }
   return _VMenuListCode(code) ? 2 : 4;
 }
 
