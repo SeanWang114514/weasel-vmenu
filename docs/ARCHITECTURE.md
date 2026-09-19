@@ -8,7 +8,8 @@
                   │   ├─ 输入为空 + v          → push_input("v")            → 进入 v 菜单                  │
                   │   ├─ v + 1..5            → 写标记文件 / 切到 vclip / vfav / v / vqi                    │
                   │   ├─ 方向键 ↓↑←→          → 普通打字走网格导航（grid_key），其它键交回原版             │
-                  │   ├─ 纯数字编码前缀        → push_input(数字)，否则交给选字键                          │
+                  │   ├─ 全数字编码：数字→并进编码；组不成前缀→数字直接上屏；
+                  │   │              `-`/`=`/`+`→上屏数字再插符号；回车→整条常用语（§3.3.1）      │
                   │   └─ Return + 编码完全匹配 → engine:commit_text(常用语内容)                            │
                   │                                                                                        │
                   │ lua_menu.lua (lua_translator)  ── 产出候选行：vmenu / vclip / vfav / vqi / vset / vact  │
@@ -37,7 +38,7 @@
 | `vmenu_core.lua` | 共享模块 | 路径解析（`rime_api.get_user_data_dir()`）、设置读写、剪贴板/常用语读写、`fav_hit` / `fav_exact` / `digit_prefix`、原符号标记、**候选方格状态与二维导航**（`grid_limit` / `grid_key`，见 §3.6） | 所有对外函数可被 `pcall` 包裹；不启动进程；**模块级变量在 processor/filter 之间不共享**，状态只能走 context option |
 | `menu_processor.lua` | `lua_processor@*` | 按键总管。**必须排在 `speller` / `selector` 之前**，否则数字会被当成选字键、`v` 会被当普通字母。主菜单 `1`–`5`、`vqi` 子模式（§3.9）、非 v 模式的 `+`（下翻）与方向键 → `grid_key`（§3.6；移动高亮的补丁在自编 DLL 里） | 只拦自己认识的键，其余一律 `return 2` |
 | `lua_menu.lua` | `lua_translator@*` | 所有菜单/列表候选的文案与数据（菜单文案要改就改这里），含主菜单第 5 项「快捷输入」与 `yield_quick` 的 9 项 | 候选 `type` 用于 filter 分流：`vmenu`/`vclip`/`vfav`/`vqi`/`vset`/`vact`（`vset` 自第二轮起已不可从菜单进入，属保留代码） |
-| `menu_filter.lua` | `lua_filter@*` | ① v 模式：只保留当前模式需要的候选类型；② 普通打字：命中常用语时插入候选第 2 位；③ 普通打字时按方格状态限制候选个数（收起 9 / 展开 36），并按 `core.page_get(ctx)` 做 `+` 下翻的窗口切片（见 §3.6） | 插位后必须重排 `quality`（严格递减）；**序号不在这个文件里**（已改由自编 DLL 的标签槽画） |
+| `menu_filter.lua` | `lua_filter@*` | ① v 模式：只保留当前模式需要的候选类型；② 普通打字：命中常用语时插入候选第 2 位，全数字输入时把「数字本身」做成第 1 位候选；③ 普通打字时按方格状态限制候选个数（收起 9 / 展开 36），并按 `core.page_get(ctx)` 做 `+` 下翻的窗口切片（见 §3.6、§3.3.1） | 插位后必须重排 `quality`（严格递减）；**序号不在这个文件里**（已改由自编 DLL 的标签槽画） |
 | `vmenu-settings-gui.ps1` | 常驻 WinForms | 三个标签页的可视化设置；轮询标记文件；改动即时写文件；列表支持**双击编辑**；「设置与缓存」页底部还有 **`小狼毫原生设置`** 分组 + `打开小狼毫原生设置` 按钮（打开小狼毫自带的设置对话框） | DPI 不感知 → 所有坐标在 `Layout-Tabs` 里按「实际客户区」现算，不能用 Dock/Anchor/写死坐标 |
 | `vmenu-deployer-wrapper.cs` | 代理（C#） | 顶替安装目录下的 `WeaselDeployer.exe`：**无参数** → 打开 vmenu 设置窗口（`vmenu-settings-gui.ps1 -ShowNow`）；**带参数** → 原样转发给 `WeaselDeployer.real.exe`（见 §3.8） | 用 `csc.exe /target:winexe /r:System.Windows.Forms.dll` 编译；源文件必须 UTF-8 **带 BOM**；找不到窗口脚本时退回原生对话框 |
 | `vmenu-tray-setup.ps1` | 部署工具 | 托盘菜单入口的**安装 / 撤销**：改 `WeaselServer.exe` 里的菜单文字、安装代理、开始菜单快捷方式改名 | 幂等；`-Revert` 可还原；`WeaselServer.exe.vmenu-bak` 只在第一次安装时生成 |
@@ -77,10 +78,41 @@
 | 搜索取用 | `vfav` 模式 + `fav_match` 过滤 | 编码或内容前缀匹配 |
 | **打字预览** | `menu_filter` 普通分支 + `fav_hit(code)` | 输入长度 **≥ 3**，且输入是某条编码的前缀 → 常用语内容做成 `vfav` 候选插到索引 2（注释文本 `常用语`） |
 | **回车调用** | `menu_processor` 的 `Return` 分支 + `fav_exact(code)` | 输入与某条编码**完全一致**（不分大小写）→ `engine:commit_text(word)` + `ctx:clear()` |
-| 纯数字编码 | `digit_prefix(code)` + 数字接管分支 | 输入为空或全数字，且「已输入 + 新按键」仍是一条**纯数字编码**的前缀 → 把数字并进编码 |
+| 纯数字编码 | `digit_prefix(code)` + 数字接管分支 | 输入为空或全数字，且「已输入 + 新按键」仍是一条**纯数字编码**的前缀 → 把数字并进编码；**组不成前缀就把数字当普通字符上屏**（`commit_text(code)` + `clear()`），于是 `13` 后面按 `-` `=` `+` `.` 得到的是「数字 + 符号」而不是「数字变成候选态」（第二十轮，见 §3.3.1） |
 
 `fav_hit`（前缀，用于预览）与 `fav_exact`（完全一致，用于回车）**故意分开**：
 预览要「早」（3 位就出现），回车要「准」（不能抢走正常的原始输入）。
+
+#### 3.3.1 纯数字输入不再「变成候选态」（第二十轮）
+
+用户诉求（原话）：「输入数字的时候会变成候选状态 也就是无法在输入如 13的时候直接按"-"等按键
+在后面插入一个"-" 但是要保留数字作为常用语的编码（如常用语 13122500717 在输入131的时候会在
+候选词中显示 但是有且只有在输入回车后才会输入完整的常用语 输入1等词的时候不会输入而是正常地
+加在后面）」。
+
+原因是两条老机制叠在一起：① `menu_filter` 把「数字编码本身」也做成了候选（第 1 位），
+② `punctuator` 在**有候选菜单**时，`-` 会先提交**当前高亮的候选**再插入符号
+（`Punctuator::ProcessKeyEvent`：`if (ctx->IsComposing()) { commit 选中项 }`），
+于是 `13` + `-` 变成「13」上屏 + 「-」，看起来就是「数字被当成候选吃掉了」。
+
+现在的分工（`menu_processor.lua` 新增分支放在 **raw 模式之后、翻页分支之前**）：
+
+| 输入 | 按键 | 结果 |
+| --- | --- | --- |
+| 空 或 全数字 | 数字，且 `已输入+数字` 仍是某条**纯数字编码**的前缀 | 并进编码（`ctx:push_input`），继续待在输入框里等回车 |
+| 空 | 其它数字（组不成任何编码前缀，例如现库里没有 `2…` 开头的编码） | `return 2` 放行 → 正常打字 |
+| 全数字 | `-` `=` `+`（含小键盘 `KP_Subtract/Equal/Add`） | **先上屏数字本身**，再插入符号 → `13` + `-` = `13-`（`commit_text(code .. sym)` + `clear()`） |
+| 全数字 | `Enter` | **仍然是唯一**能上屏整条常用语的键（`fav_exact`） |
+| 全数字 | 其它数字（组不成前缀） | 数字当普通字符上屏 → `1313`、`1312` 就老老实实是 `1313`、`1312` |
+
+* 配套的「数字候选」由 `menu_filter.lua` 的 `digit_cand(code)` 提供：全数字输入时它**永远排第 1 位**
+  （`quality = 1000000`），于是「回车/点它」= 上屏数字本身；常用语排在它后面（第 2 位）。
+  没有这条候选时，输入框里只有常用语一条候选，`13` 看起来就像「已经被选成候选」了。
+* 翻页键同时收窄了适用范围：`-` / `=` 只在**列表型 v 功能**或**纯拼音输入**（`^[a-z']+$`）时才当翻页，
+  数字编码输入时它们走上面的「上屏数字 + 插入符号」分支。
+* 实测（干净记事本，逐条）：`13`+`-` → `13-`；`131`+回车 → `13122500717`；`1313` → `1313`；
+  `13`+`.` → `13。`；`13`+`Shift+=` → `13+`；`13`+`=` → `13=`；`1312` → `1312`；
+  单个 `1`（前缀 `131` 的起点）留在输入框、回车才上屏；`wsl`+回车 → 收藏邮箱（未受影响）。
 
 ### 3.4 原符号模式（`v`→`5`）
 
@@ -116,7 +148,8 @@ request_gui()  ──写──► open-settings.flag ──轮询 60 ms──►
 
 | 决定什么 | 键 / 代码 | 文件 | 现在的值 |
 | --- | --- | --- | --- |
-| 一行放几个 / 是否换行 | **自编 DLL**（不再是主题键） | `weasel-grid-build` 分支的 `WeaselUI/HorizontalLayout.cpp` | 候选 **> 9** 时每 9 个换行；**≤ 9 绝不换行**（窗口随内容变长）。`style/layout/max_width` 现在只是兜底（`1100`） |
+| 一行放几个 / 是否换行 | **自编 DLL**（不再是主题键） | `weasel-grid-build` 分支的 `WeaselUI/HorizontalLayout.cpp` | 候选 **> 9** 时每 9 个换行；**≤ 9 绝不换行**（窗口随内容变长） |
+| 候选框最宽多少 | **`style/layout/max_width`（第二十轮起真的生效了）** | 主题 `weasel.custom.yaml` → `style.max_width` → `HorizontalLayout.cpp` 的 `row_budget` | `1100`。英文/长候选（如 `gith` 9 条 × 272px = 2448）不再把框拉到整屏宽：**先丢尾部最多 3 条**，仍放不下就把格宽压到 `row_budget / draw_cols`，超出的字画成 `…`（**候选文本不动，上屏仍是完整的**） |
 | 一页最多几条 | `menu/page_size` | 方案：`rime_ice.custom.yaml` →（编译产物）`build/rime_ice.schema.yaml` | `36`（= 9 × 4，原来 `18`） |
 | 原生序号列画不画 | `style/label_format` | Weasel 主题：同一个 `weasel.custom.yaml` | `" "`（留空 = 不画原生序号；原值 `"%s"`）。序号改由自编 DLL 的标签槽画 |
 | 这一屏实际放几个 | `grid_limit(ctx)` | `src/lua/menu_filter.lua`（正常打字分支） | 收起 **9**、展开 **36** |
@@ -186,7 +219,7 @@ request_gui()  ──写──► open-settings.flag ──轮询 60 ms──►
 > 取证：`D:\weasel-build\shots\` 下的候选窗裁图（只截候选窗口区域，按惯例**不入库** `screenshots/`），
 > 用 `node ...\claude-vision-skill\vision.js <png> "逐字输出图中所有文字"` 读出 `1 这个 2 这股 …`。
 
-#### 3.6.1 v 功能菜单：一行 4 个 + `+` / `-` 翻页 + `↓` 展开（第十八轮）
+#### 3.6.1 v 功能菜单：一行 4 个 + `+` / `-` 翻页 + `↓` 展开（第十八轮；第二十轮静态菜单已改成「全部排一行」，见下）
 
 用户诉求（原话）：「v 的功能改为支持用加减号进行选择 然后一行显示 4 个 同时参考正常输入的下键
 拓展按键进行拓展显示」，并补充「当所有的功能的候选词实在太多的时候 允许减少 1-3 个候选词
@@ -199,7 +232,7 @@ request_gui()  ──写──► open-settings.flag ──轮询 60 ms──►
 | 一屏几条 / 翻页步长 | `core.grid_limit(ctx, code)` | `src/lua/vmenu_core.lua` | v 列表 **4 / 16**（= 4 列 × 1 / 4 行），静态 v 菜单 **36**（全部一次给），普通打字 **9 / 36** |
 | `+` / `-` 干什么 | `core.page_next / page_prev` | `src/lua/menu_processor.lua` | **列表型 v 功能**与普通打字：按「这一屏的条数」翻页；`-` 回上一屏。静态 v 菜单不接（条目本来就全显示） |
 | `↓` / `↑` 干什么 | `core.grid_key` | `src/lua/menu_processor.lua` + 服务端箭头补丁 | 列表型 v 功能：`↓` 展开 4 行 × 4 列 = 16 个、`↑` 在第一行收回；静态 v 菜单不接（保持原菜单手感） |
-| 一行放不下怎么办 | `visible_cols_` | `WeaselUI/HorizontalLayout.cpp` | **每行少放 1–3 列**（最少 1 列），被省掉的**尾部格子里什么都不画**（空矩形 = 点不到），列槽位保留 |
+| 一行放不下怎么办 | `visible_cols_` + `row_budget` | `WeaselUI/HorizontalLayout.cpp` | ① **每行少放 1–3 列**（最少 1 列），被省掉的**尾部格子里什么都不画**（空矩形 = 点不到），列槽位保留；② 丢到 3 条还放不下 → **压窄每格**（`col_width = row_budget / draw_cols`，下限 `120 + candidate_spacing`），多出来的字画 `…`。**静态 v 菜单不参与这两步** |
 
 **为什么「少放几列」而不是「重新折行」**：重排会让收起态那一行与展开后的每一行**列位置对不上**
 （用户明确要求「拓展栏也要有相应的缩减 以保证对齐」）。现在的做法是：
@@ -223,15 +256,16 @@ request_gui()  ──写──► open-settings.flag ──轮询 60 ms──►
   前端只是没画）。表现：收起态只画 2 个时按 `3` 会上屏第 3 条（看不见）。这是「不重排」的代价，
   比「按了 3 却选到第 1 行第 3 个」要可预测得多。
 
-**静态 v 菜单的序号是顺序的**（这是 `ctx.grid_2d = 0` 的唯一用途）：v 主菜单 5 项、v3 快捷输入 7 项
-都是「一行 4 个换行」，但数字键是 **1..N 顺序选**（`menu_processor.lua` 自己处理），
-所以序号也必须顺序画。实测：
+**静态 v 菜单的序号是顺序的**（这是 `ctx.grid_2d = 0` 的唯一用途）：v 主菜单 5 项、v3 快捷输入 7 项，
+数字键是 **1..N 顺序选**（`menu_processor.lua` 自己处理），所以序号也必须顺序画。
+**第二十轮起它们不再折行，而是全部排在同一行**（用户：「让v功能的页面的候选词在同一行显示」）：
 
-* v 主菜单（`v`）：`861x95`，第 1 行 `1 设置 图形窗口 · 2 剪贴板 历史 · 3 快捷输入 计算·日期 · 4 常用语 快捷内容`，
-  第 2 行 `5 原符号 原版 v`（以前第 2 行是**没有序号**的，`10`、`11` 那种又是另一回事）。
-* v3 快捷输入：`808x96`，第 1 行 `1 计算 · 2 日期 · 3 时间 按s · 4 农历输入`，
-  第 2 行 `5 数字货币转写 按h · 6 Unicode 按u · 7 返回 按q`。
-* 普通打字 `shi`：收起 `660x49`、`↓` 展开 `660x189`（4 行 × 9 列）—— **与上一轮逐像素一致，没有回归**。
+* 静态 v 菜单（`grid_2d == 0`）在 `HorizontalLayout` 里走 `static_menu` 分支：**列数 = 候选条数**、
+  强制单行、格宽用**内容自然宽度**（`grid_uniform = false`，不再等宽居中），也**不参与**下面的丢格/压宽。
+  实测：v 主菜单 `849x49` 一行 5 项（原来是 4 列 `861x95` 两行）、
+  v3 快捷输入 `997x49` 一行 7 项（原来是 2 列 `707x189` 四行）。
+* 普通打字仍是「≤9 绝不换行、>9 每 9 个换行」的等宽网格（`shi` 收起 `663x49` 9 格、
+  `↓` 展开 4 行 × 9 列），列的 x 坐标与展开后逐像素对齐 —— **这是不能回归的约束**。
 
 > ⚠️⚠️ **绝不能在 `lua_filter` 里调用 `ctx:set_option()`**（第十八轮付出血的代价）：
 > 第一版把「这次是不是列表型 v 功能」写进 option `vmenu_list` 由过滤器刷新，
@@ -258,11 +292,30 @@ request_gui()  ──写──► open-settings.flag ──轮询 60 ms──►
   （否则那一格的宽度是 0），以及固定格宽下**光标只能走到本格文字区右缘**
   （否则注释 rect 被顶出格子，`max_width_of_rows` 跟着涨 → 面板宽度抖动）。
   详见 `docs/GRID-CANDIDATE-DLL.md` §7.5。
-* **快捷输入（`v`→`3`）后来也接进同一套排版**（用户：「把快捷输入的候选词显示也改为和粘贴板相似的2*3格式」）：
-  服务端 `_VMenuCols` 对 `vqi` 也返回 2 → 客户端因为 `fixed_cells` 只看 `grid_cols == 2`
-  就自动给了它等宽固定格；但它**仍是静态菜单**（`grid_2d = 0`，顺序序号 1..7、
-  数字键由 Lua 顺序选，服务端不接管）。7 个条目按 2 列排出来是 **4 行**（`707x189`），
-  第 4 行只有「返回」；要严格 2×3 得把「返回」挪到第二页或删掉。
+* **快捷输入（`v`→`3`）曾经在 0.2.17 接进这套固定格**（用户当时要求「和粘贴板相似的2*3格式」）；
+  第二十轮用户改口「让 v 功能的页面的候选词在同一行显示」，于是服务端 `_VMenuCols` 对它
+  **不再返回 2**，v3 与 v 主菜单一起排成一行（`997x49`）。
+  **剪贴板（`v`→`2`）与常用语（`v`→`4`）保持这 2 × 3 的固定格**（`grid_2d = 1` 的列表型），
+  用户明确没有要求改它们 —— 实测仍是 `706x143` / `706x49`。
+
+#### 3.6.3 候选框宽度上限（第二十轮）：长英文候选不再把框拉长
+
+用户诉求（原话）：「在输入GitHub等词的时候会出现如图候选词框过长的问题 并且不止一个有这个问题
+删除1-3个候选词不是让你拉长候选词框的」。
+
+* `row_budget = min(_style.max_width, grid_budget)`，其中 `_style.max_width` 就是主题键
+  `style/layout/max_width`（当前 `1100`）—— 这份补丁以前完全没用它，框宽只看屏宽。
+* 顺序：先 `--draw_cols`（最多丢 3 条，`min_cols = avail_cols - 3`、至少 1 列）；
+  丢到 3 条仍超 → `col_width = max(row_budget / draw_cols, 120 + candidate_spacing)`，
+  置 `cells_shrunk`，命中它的格子和固定格一样走 `…` 裁剪（**只裁绘制，候选文本不动**）。
+* 实测 `gith`：9 条 × 272px = 2448 → 丢 3 条后 6 × 272 = 1632 > 1100 → 格宽压到 183 →
+  面板 **1122x49**（旧行为 `1656x49`，几乎顶满 `1707` 的逻辑屏宽）。视觉复核一行 6 个：
+  `1 GitHub · 2 GitHub Pages · 3 GitHub Actions · 4 GitHub Copilot · 5 GitHub Copilot… · 6 GitHub Codes…`。
+* 代价（已知，与 §3.6.1 那条同源）：被丢掉的第 7–9 条**仍能被数字键选中**（服务端按下标算选词）。
+* 想更宽/更窄就改主题 `style/layout/max_width`（`D:\rime-sandbox\weasel.custom.yaml`），
+  改完必须重启 `WeaselServer`。诊断这类问题时曾临时在 `HorizontalLayout.cpp` 里加
+  `VMENU_LAY_DEBUG`（把 `cols/c2d/cand/static/uni/colw/budget/roww/draw/maxw/screen/off/rm/scale`
+  写进 `D:\rime-sandbox\vmenu-layout.log`）—— 定位完**已删除**，要复现就照这个字段表临时加回。
 
 ### 3.7 设置窗口里的双击编辑
 
@@ -357,46 +410,50 @@ vmenu-tray-setup.ps1 -Revert
 > 原生设置对话框（标题 `【小狼毫】方案选单设定`）的入口因此挪到了设置窗口的
 > 「小狼毫原生设置」分组里（等价于直接运行 `WeaselDeployer.real.exe`）。
 
-### 3.9 `v` → 5 快捷输入（借用雾凇拼音的前缀）
+### 3.9 `v` → 3 快捷输入（借用雾凇拼音的前缀）
+
+> 历史：这一项最初挂在 `v`→`5`、共 9 项（含「星期」「日期时间」「部件拆字」）。
+> 第十一轮 `v`→`3`/`v`→`5` 互换后，**现在是 `v`→`3`**（`v`→`5` 是原符号），
+> 第十五轮精简为 **7 项**并把数字换成「项目字母」快捷键，第十九/二十轮排版改成一行（§3.6.1）。
 
 **一句话**：子菜单里选中一项后，**把该功能的触发前缀直接写进输入框，然后把键盘完全交回原方案** ——
-计算 / 日期 / 农历 / 数字大写 / Unicode / 部件拆字这些能力**本来就是雾凇拼音自带的**
+计算 / 日期 / 农历 / 数字大写 / Unicode 这些能力**本来就是雾凇拼音自带的**
 （`recognizer/patterns` + `lua_translator`），本项目只是把前缀喂进去，**没有自己实现任何一个**。
 
 **为什么不用自己实现**：rime-ice 已经带了 `calc_translator.lua`（计算）、`date_translator.lua`
-（日期 / 时间 / 星期 / ISO 日期时间）、`lunar.lua`（农历）、`number_translator.lua`（数字大写）、
-`unicode.lua`（Unicode）、`radical_pinyin` 词典（部件拆字），每个都配好了 recognizer。
+（日期 / 时间）、`lunar.lua`（农历）、`number_translator.lua`（数字大写）、
+`unicode.lua`（Unicode），每个都配好了 recognizer。
 自己写一遍等于重造轮子，而且拿不到它们的边界处理（时区、大写规则、农历闰月…）。
 把前缀填进去 = 直接复用，代价为零。
 
 **链路**：
 
 ```
-按 v        → lua_menu: yield_menu() 产出 5 个 vmenu 候选（第 5 项：快捷输入 / 计算 · 日期）
-按 5        → menu_processor: cur == "v" 且 repr == "5" → replace_input(ctx, "vqi")   return 1
+按 v        → lua_menu: yield_menu() 产出 5 个 vmenu 候选（第 3 项：快捷输入 / 计算·日期）
+按 3        → menu_processor: cur == "v" 且 repr == "3" → replace_input(ctx, "vqi")   return 1
               （replace_input = ctx:clear() + ctx:push_input(前缀)，与 vclip / vfav 同一套）
 顶层       → vmenu_core: mode_of("vqi…") = "quick"；want_type("quick") = "vqi"
-              → lua_menu: yield_quick(seg) 产出 9 项 + 「返回」
+              → lua_menu: yield_quick(seg) 产出 7 项
               → menu_filter: 只留 type == "vqi" 的候选（不会被原方案候选混进来）
-按 1..9    → menu_processor: cur == "vqi" → replace_input(ctx, 前缀)                     return 1
-按 q       → menu_processor: ctx:clear()                                                return 1
+按 1..7 或按项目字母 → menu_processor: cur == "vqi" → replace_input(ctx, 真前缀)        return 1
+按 q       → menu_processor: replace_input(ctx, "v")（回主菜单）                        return 1
 之后       → 输入框里只剩前缀，我们不再拦截任何键：原方案的 recognizer 命中，lua_translator 出候选
 ```
 
-**9 项 → 前缀 → 来源 → 实测**：
+**7 项 → 快捷键 → 前缀 → 来源 → 实测**（数字映射按**屏幕上的渲染顺序**，见下面的坑）：
 
-| 数字 | 菜单文字 | 注释 | 填入的前缀 | 来源 | 实测上屏 |
+| 数字 | 字母 | 菜单文字 | 填入的前缀 | 来源 | 实测上屏 |
 | --- | --- | --- | --- | --- | --- |
-| 1 | 计算 | 按 1 · 接着输入算式 | `cC` | `calc_translator.lua`（recognizer `^cC.+`） | `1+2*3` → **7**；`9*9` → **81** |
-| 2 | 日期 | 按 2 · 今天的日期 | `rq` | `date_translator.lua` | **2026-09-13** |
-| 3 | 时间 | 按 3 · 现在的时间 | `sj` | 同上 | **02:30**（`HH:MM`） |
-| 4 | 星期 | 按 4 · 今天星期几 | `xq` | 同上 | **星期日** |
-| 5 | 日期时间 | 按 5 · ISO 格式 | `dt` | 同上 | **2026-09-13T02:30:14+0800** |
-| 6 | 农历 | 按 6 · 今天的农历 | `N` + 当天 `%Y%m%d` | `lunar.lua`（recognizer `^N[0-9]{1,8}`） | **丙午马年八月初三** |
-| 7 | 数字大写 | 按 7 · 如 R1234 | `R` | `number_translator.lua`（recognizer `^R[0-9]+`） | 输入 `1234` → **一千二百三十四** |
-| 8 | Unicode | 按 8 · 如 U4e2d | `U` | `unicode.lua`（recognizer `^U[a-f0-9]+`，需要 `unicode` tag） | 输入 `4e2d` → **中** |
-| 9 | 部件拆字 | 按 9 · 如 nvzi = 女+子 | `u` | `radical_pinyin` 词典（recognizer `^u[a-z]+$`） | 输入 `nvzi` → **好** |
-| q | 返回 | 按 q | （`ctx:clear()`，清空输入） | — | — |
+| 1 | `c` | 计算 | `cC` | `calc_translator.lua`（recognizer `^cC.+`） | `1+2*3` → **7**；`9*9` → **81** |
+| 2 | `r` | 日期 | `rq` | `date_translator.lua` | **2026-09-13** |
+| 3 | `s` | 时间 | `sj` | 同上 | **02:30**（`HH:MM`） |
+| 4 | `n` | 农历输入 | `N` + 当天 `%Y%m%d` | `lunar.lua`（recognizer `^N[0-9]{1,8}`） | **丙午马年八月初三** |
+| 5 | `h` | 数字货币转写 | `R` | `number_translator.lua`（recognizer `^R[0-9]+`） | 输入 `1234` → **一千二百三十四** |
+| 6 | `u` | Unicode | `U` | `unicode.lua`（recognizer `^U[a-f0-9]+`，需要 `unicode` tag） | 输入 `4e2d` → **中** |
+| 7 | `q` | 返回 | `v`（回主菜单） | — | — |
+
+> 部件拆字**不再从这个菜单进**（第十五轮精简掉了），它直接打字：`u` + 部件拼音（`unvzi` → 好）。
+> 「星期」「日期时间」也不再单独列项（想用就直接打 rime-ice 的前缀 `xq` / `dt`）。
 
 **三个易踩的点**：
 

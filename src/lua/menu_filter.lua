@@ -87,6 +87,26 @@ local function window_of(input, ctx, lim)
   return buf, start, k
 end
 
+-- [第二十轮] 纯数字常用语编码在候选框里长什么样。
+-- 用户诉求（原话）：「输入数字的时候会变成候选状态，也就是无法在输入如 13 的时候直接按 "-" 等
+--   按键在后面插入一个 "-"，但是要保留数字作为常用语的编码（… 输入 1 等词的时候不会输入
+--   而是正常地加在后面）」。
+-- 原来的毛病有两个：
+--   ① 只敲了前 2 位（如 13）时候选框是**空的**（实测面板只有 32x8，什么都看不见），
+--      用户看到的就是「数字进了候选状态、却哪儿都不显示」；
+--   ② 敲满 3 位（131）时框里只有那条常用语，于是方案自己的标点处理
+--      （librime 的 punctuator 提交的是「当前选中的候选」）会把整条常用语打出去，
+--      而不是把数字留着 —— 这与「只有回车才上屏整条常用语」冲突。
+-- 把「已输入的数字本身」做成候选第 1 位（默认选中项），两个毛病一起解决：
+--   * 框里看得见自己敲的数字；
+--   * `.` `,` 这些标点上屏时提交的是**数字本身**（13 → 「13。」），常用语仍然只有回车才出。
+-- type 用 "raw"：与 librime 自己的「原样上屏」候选同类，数字/小数点的识别逻辑也认它。
+local function digit_cand(code)
+  local c = Candidate("raw", 0, #code, code, "")
+  c.quality = 1000000
+  return c
+end
+
 local function filter(input, env)
   local ctx = env.engine.context
   local code = ctx.input
@@ -128,6 +148,13 @@ local function filter(input, env)
     end
   end
 
+  -- [第二十轮] 正在敲纯数字编码（如 131）？是的话候选第 1 位放「数字本身」，见 digit_cand。
+  local raw_digit = nil
+  if want == nil and type(code) == "string" and code:match("^%d+$") then
+    local ok_pre, is_pre = pcall(core.digit_prefix, code)
+    if ok_pre and is_pre then raw_digit = digit_cand(code) end
+  end
+
   if want == nil and fav == nil then
     -- 正常打字、没命中收藏：只放出当前状态允许的个数
     --   单行（默认）= 9 个，正好一行；按 ↓ 展开后 = 36 个，自动换成 4 行 × 9 列
@@ -136,6 +163,14 @@ local function filter(input, env)
     -- （序号由 Weasel 标签槽按当前可见行给）。窗口逻辑见上面的 window_of。
     local lim = core.grid_limit(ctx)
     local buf, start, k = window_of(input, ctx, lim)
+    if raw_digit then
+      -- 数字本身占第 1 位，剩下的位置留给真正的候选（少收 1 个）
+      yield(raw_digit)
+      for i = start + 1, math.min(k, start + lim - 1) do
+        if buf[i] then yield(buf[i]) end
+      end
+      return
+    end
     for i = start + 1, math.min(k, start + lim) do
       if buf[i] then yield(buf[i]) end
     end
@@ -207,6 +242,8 @@ local function filter(input, env)
   local c = Candidate("vfav", 0, #code, fav.word, "常用语")
   c.quality = 500000
   local out = place(buf, 2, c)
+  -- [第二十轮] 纯数字编码：数字本身占第 1 位（= 常用语仍在第 2 位，用户按 2 之前先看到自己敲的数字）
+  if raw_digit then out = place(out, 1, raw_digit) end
   for i = 1, #out do
     if i > lim then break end
     yield(out[i])

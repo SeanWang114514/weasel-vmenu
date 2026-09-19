@@ -80,6 +80,54 @@ local function handle(key, env)
     return 2
   end
 
+  -- ===== 纯数字常用语编码（如 131）：**必须排在翻页 / 方格之前** =====
+  -- 用户诉求（第二十轮，原话）：
+  --   「输入数字的时候会变成候选状态，也就是无法在输入如 13 的时候直接按 "-" 等按键在后面
+  --     插入一个 "-"，但是要保留数字作为常用语的编码（如常用语 13122500717 在输入 131 的时候
+  --     会在候选词中显示，但是有且只有在输入回车后才会输入完整的常用语，输入 1 等词的时候
+  --     不会输入而是正常地加在后面）」
+  -- 于是这里的规则：
+  --   ① 数字还能延长编码（仍是某条纯数字编码的前缀）→ 并进输入框（照旧）；
+  --   ② 已经延长不了（例如 131 之后再按 3）→ **不再交给选字键去选候选**（否则会把整条
+  --      常用语直接打出去），而是把「已输入的数字 + 这个数字」原样上屏 = 正常地加在后面；
+  --   ③ 符号键（- = +）→ 先把已输入的数字上屏，再插入符号（13 + - → 13-）；
+  --      其它符号不用管：数字本身已经占候选第 1 位（menu_filter.lua），方案自己的标点处理
+  --      提交的就是「当前选中的候选」= 那串数字，同样会得到「13。」这种结果；
+  --   ④ 回车仍然是**唯一**把整条常用语上屏的按键（见下面的 Return 分支）。
+  -- 放在最前面的原因：下面的翻页分支会把 `-`/`=` 吃掉（第二十轮已收窄，但数字编码这条
+  -- 路径必须优先），而「- 插不进去」正是用户报的问题。
+  if (cur == "" or cur:match("^%d+$")) and not core.raw(ctx) then
+    local sym = nil
+    if repr:match("^%d$") then
+      local ok_pre, is_pre = pcall(core.digit_prefix, cur .. repr)
+      if ok_pre and is_pre then
+        ctx:push_input(repr)
+        return 1
+      end
+      if cur == "" then
+        -- 输入还是空的、而这个数字开不了任何数字编码 → 交给原生（照旧直接上屏）
+        return 2
+      end
+      sym = repr
+    elseif cur ~= "" then
+      if repr == "minus" or repr == "KP_Subtract" then
+        sym = "-"
+      elseif repr == "equal" or repr == "KP_Equal" then
+        sym = "="
+      elseif repr == "plus" or repr == "KP_Add" then
+        sym = "+"
+      end
+    end
+    if sym then
+      core.debug_log("[vmenu] 数字编码直接上屏 <" .. cur .. sym .. ">")
+      local ok_commit = pcall(function()
+        env.engine:commit_text(cur .. sym)
+        ctx:clear()
+      end)
+      if ok_commit then return 1 end
+    end
+  end
+
   -- ===== v 功能里「退格 = 整条输入全部丢掉」=====
   -- 用户诉求：「back 键全部删除 不显示」：不管当前是 v 菜单、v2 剪贴板、v3 快捷输入、
   -- 常用语还是设置，一按退格这条输入就整条作废 —— ctx:clear() 之后输入为空，
@@ -117,10 +165,26 @@ local function handle(key, env)
     --   （实测日志：key repr=equal → key repr=Next），键先被 key_binder 抢走，
     --   我们的页码根本不前进 —— 用户看到的就是「+= 翻页没反应」。
     --   `=` 是「下一页」、`-` 是「上一页」，和原版横向候选窗的翻页键一致。
-    local is_next = (repr == "plus" or repr == "KP_Add" or repr == "equal"
-      or repr == "KP_Equal" or repr == "Next" or repr == "Page_Down")
-    local is_prev = (repr == "minus" or repr == "KP_Subtract" or repr == "Prior"
-      or repr == "Page_Up")
+    --
+    -- ===== 第二十轮修正：`-` / `=` 不再无条件抢走 =====
+    -- 用户诉求（原话）：「输入数字的时候会变成候选状态，也就是无法在输入如 13 的时候直接按
+    --   "-" 等按键在后面插入一个 "-"」。上面那段把 `-`/`=` 无条件当翻页，于是
+    --   ① 敲「13」（数字编码）时按 `-` 什么都不会发生（数字留在候选里、`-` 被吃掉）；
+    --   ② 敲 cC1+2-3 这种算式时 `-` 也进不去（同样被吃）。
+    -- 现在的规则（两处都保留原有手感）：
+    --   * `+` / KP_Add（下翻）**任何情况都保留** —— 用户明确要求保留这个功能；
+    --   * `-` / `=` / Page_Up / Page_Down 只在两种情况下当翻页：
+    --       ① v 的列表模式（剪贴板 / 常用语 —— 用户明确要「加减号翻页」）；
+    --       ② 输入是纯小写拼音（原来的手感；雾凇的方案里 `-`/`=` 本来就是翻页键）。
+    --     其余情况（纯数字编码见上面的 digit 分支、cC / U / N / R 这些带大写或数字的前缀）
+    --     一律放行：`-` 会走方案自己的标点处理 —— 那正是「先把已输入内容上屏、再插入符号」。
+    local plain_pinyin = cur:match("^[a-z']+$") ~= nil
+    local page_keys_ok = v_list_mode or plain_pinyin
+    local is_next = (repr == "plus" or repr == "KP_Add")
+      or (page_keys_ok and (repr == "equal" or repr == "KP_Equal"
+        or repr == "Next" or repr == "Page_Down"))
+    local is_prev = page_keys_ok and (repr == "minus" or repr == "KP_Subtract"
+      or repr == "Prior" or repr == "Page_Up")
     -- v 子菜单里的字母键（d 删除 / x 清空 / q 返回 / m 更多）优先级更高，不能被翻页吃掉；
     -- 这些键不在 is_next / is_prev 里，所以顺序上天然不冲突。
     if is_next then
@@ -163,15 +227,9 @@ local function handle(key, env)
   -- 注意：v 菜单里不拦截方向键；普通打字时上面的 grid_key 会接管方向键做网格导航
   --   （默认单行 9 个，按 ↓ 展开成 4 行 × 9 列，见 src/lua/vmenu_core.lua 与 docs/ARCHITECTURE.md §3.6）
 
-  -- 纯数字收藏编码（如 131）：数字本来是选字键，进不了编码，
-  -- 只有当输入为空或全是数字、且它仍是某条数字编码的开头时才接管。
-  if repr:match("^%d$") and (cur == "" or cur:match("^%d+$")) then
-    local ok_pre, is_pre = pcall(core.digit_prefix, cur .. repr)
-    if ok_pre and is_pre then
-      ctx:push_input(repr)
-      return 1
-    end
-  end
+  -- 纯数字收藏编码（如 131）：**已经挪到函数开头**（「纯数字常用语编码」那一段）。
+  -- 挪上去的原因：数字编码路径要排在翻页分支之前，否则 `-` 会被当成「上一页」吃掉
+  -- （第二十轮用户报的「13 之后按 - 插不进去」）。这里不再重复处理。
 
   -- ===== 主菜单 =====
   if cur == "" and repr == "v" then

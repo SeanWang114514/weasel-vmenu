@@ -49,8 +49,9 @@ const bool vmenu_line_break =
 * 候选 **≤ 9**：完全不换行 → 窗口宽度随内容变长（用户要求「不许丢候选、必须一行」）。
 * 候选 **> 9**：每 9 个换行 → 展开 36 个正好 4 行 × 9 列。
 
-> `style/layout/max_width` 因此**不再参与**网格排版（现在设成 `1100` 只是兜底），
-> 不要再花时间调它。
+> `style/layout/max_width` 在这一步**不再决定换行**（换行改由「每 9 个」决定），
+> 但**第二十轮起它重新变成「候选框最宽多少」的上限**（默认 `1100`，见 §7.6）——
+> 长英文候选（`gith` 等）靠它才不会把框拉到满屏。调它是有用的。
 
 ### 2.2 序号：写进「标签槽」，按高亮行 1–9，词前
 
@@ -758,7 +759,7 @@ SetLayoutEllipsisTrimming(pTextFormat);   // CreateEllipsisTrimmingSign + DWRITE
 | `v`→`5`（原符号）/ `↓` / `↑` | `690x49` → `852x191` → `690x49` | 与正常打字完全一致（9 列 1 行 → 4 行 → 收起）✅ |
 | `v`→`5` → 数字 `4` | — | 上屏 `vat` = `vac/van/var/vat/…` 的第 4 个 ✅ |
 | 普通打字 `shi` / `↓` | `660x49` / `660x189` | **无回归** ✅ |
-| `v` 主菜单 / `v`→`3` | `861x95` / `808x96` | 静态菜单不变（4 列、顺序序号、自然宽度）✅ |
+| `v` 主菜单 / `v`→`3` | `861x95` / `808x96` | 静态菜单不变（4 列、顺序序号、自然宽度）✅ —— **第二十轮已改成一行，见 §7.6：`849x49` / `997x49`** |
 
 **`…` 到底是谁画的**：主题里 `candidate_abbreviate_length: 30`（`%APPDATA%\Rime\weasel.yaml`）
 本来就会把 >30 字的候选**在客户端**缩成「前 29 字 + `...` + 末字」，而且**只影响显示**
@@ -780,13 +781,71 @@ SetLayoutEllipsisTrimming(pTextFormat);   // CreateEllipsisTrimmingSign + DWRITE
 > 在浏览器里复核时请开一个独立 profile（`--user-data-dir=D:\weasel-build\chrome-ime-profile`），
 > 别动用户自己的浏览器会话。
 
+## 7.6 ✅ 已部署（第二十轮，2026-09-19）：静态 v 菜单排一行 + 候选框宽度上限真的生效
+
+用户诉求见 `CHANGELOG.md` 0.2.18（① v 功能候选排一行；② GitHub 这类长英文候选不要把框拉满屏，
+「删除 1-3 个候选词不是让你拉长候选词框的」）。
+
+**客户端 `WeaselUI/HorizontalLayout.cpp`**：
+
+1. 新增 `const bool static_menu = explicit_cols && (_context.grid_2d == 0);`
+   —— 静态 v 菜单（主菜单 / 快捷输入）走一条独立排版路径：
+   * `kGridCols = max(1, min(candidates_count, MAX_CANDIDATES_COUNT))`（**列数 = 条数**）；
+   * `grid_multi_row = !static_menu && (candidates_count > kGridCols)`（**强制单行**）；
+   * `grid_uniform = !static_menu && …` —— 不强制等宽，格宽按内容自然宽度；
+   * 不参与下面的「丢格 / 压宽」；`grid_2d == 0` 时序号仍是顺序 `1..N`（`GetLabelText` 不变）。
+2. `row_budget = (grid_budget > 0 && _style.max_width > 0) ? min(_style.max_width, grid_budget) : grid_budget;`
+   —— `_style.max_width` 就是主题键 `style/layout/max_width`（当前 `1100`）。原版拿它做整体截断，
+   §2.1 的补丁把折行改成「每 9 个」之后就**没人再用**它了，于是框宽只受屏宽约束 → 长英文候选拉满屏。
+3. 丢格之后补一步「压窄格宽」（这一轮新加，第一版就是漏了它才没修好）：
+   ```cpp
+   if (!static_menu && !fixed_cells && draw_cols > 0 && draw_cols * col_width > row_budget) {
+     col_width = max(row_budget / draw_cols, 120 + _style.candidate_spacing);
+     cells_shrunk = true;
+   }
+   const bool clip_cells = fixed_cells || cells_shrunk;   // 文本/注释裁剪 + 光标夹取都看它
+   ```
+   注意 `cells_shrunk` 必须声明在 `if (candidates_count)` **外面**（后面的「末格拉到右缘」判断要用）。
+4. 静态菜单那一行的 `…` 只裁绘制、**候选文本不动**（与 §7.5 同一套 DirectWrite 裁剪路径）。
+
+**服务端 `RimeWithWeasel.cpp`**：`_VMenuCols` 对 `vqi` **不再返回 2**（0.2.17 曾为「2×3」返回 2），
+静态菜单不需要固定格。
+
+**实测（逻辑坐标；本机真实屏 2560×1440 @150%，逻辑 1707×960）**：
+
+| 用例 | 第二十轮 | 之前 |
+| --- | --- | --- |
+| `v` 主菜单（5 项） | **`849x49` 一行** | `861x95`（4 列两行） |
+| `v`→`3` 快捷输入（7 项） | **`997x49` 一行** | `707x189`（2 列四行） |
+| `v`→`2` 剪贴板 | `706x143`（未动） | `706x143` |
+| `v`→`4` 常用语 | `706x49`（未动） | `706x49` |
+| 普通打字 `shi` | `663x49`（9 格等宽，未动） | `660x49` |
+| `gith`（9 条英文候选） | **`1122x49`**：丢 3 条 → 6 格 × 183px，末两格 `…` | `1656x49`（9 × 272px，顶满 1707 屏宽） |
+
+**定位手段**：客户端曾临时加 `#define VMENU_LAY_DEBUG 1`，把
+`cols/c2d/cand/static/uni/colw/budget/roww/draw/maxw/screen/off/rm/scale` 追加写到
+`D:\rime-sandbox\vmenu-layout.log`。**就是靠它看到 `cand=9 colw=272 budget=1671 roww=1100 draw=6`**
+才明白「不是上限没比，是 9 条候选丢 3 条还剩 1632 > 1100」。**正式构建里这段诊断代码已删除**
+（`Select-String HorizontalLayout.cpp VMENU_LAY_DEBUG` 应为空）。
+
+**部署记录**（`tools\deploy-grid-dlls.ps1 -SourceDir D:\weasel-build\weasel\output`）：
+
+| 文件 | 大小 | md5 |
+| --- | --- | --- |
+| `WeaselServer.exe` | 2695680 B | `26913979B49EF4977E43F5D8FA4ECB31` |
+| `weaselx64.dll` → `C:\Windows\System32\weasel.dll` | 1182720 B | `849EDDACD1491C8D3D086ACE1F8E37D9` |
+| `weasel.dll` → `C:\Windows\SysWOW64\weasel.dll` | 1038848 B | `5942369145A7A8F4895A2129312DA1C9` |
+
+旧文件备份：`D:\weasel-build\dll-backup\`（脚本自动建时间戳目录）。
+重编：`pwsh -NoProfile -File D:\weasel-build\build-vmenu.ps1 -Only all`（server 20 s / x64 9 s / x86 10 s）。
+
 ## 7. 未做 / 待确认
 
 | 项 | 说明 |
 |---|---|
 | 托盘入口 | 见 §4.4，编出的 server 丢了这个入口 |
 | ~~v 菜单列表里的 `+`~~ | **第十八轮已解决**（见 §7.4）：列表型 v 功能（`vclip*`/`vfav*`/`vsetc*`/`vsetf*`）的 `+`/`-` 现在按「这一屏的条数」翻页，`↓` 展开 4 行 × 4 列 = 16 个 |
-| 被省掉的列仍可被数字键选中 | 收起态只画 2 列时按 `3` 会上屏第 3 条（看不见）—— 前端只是没画，选词下标仍按下标算。要做成「不可选」必须让 Lua 只 yield 可见的那几个，而 Lua 不知道前端裁了几列（除非再返一条协议），成本大于收益，先记为已知特性 |
+| 被省掉的列仍可被数字键选中 | 收起态只画 2 列时按 `3` 会上屏第 3 条（看不见）—— 前端只是没画，选词下标仍按下标算。**第二十轮起「被 `max_width` 丢掉的候选」也是同一回事**（`gith` 只画 6 条，按 `7`/`8`/`9` 仍能上屏第 7–9 条）。要做成「不可选」必须让 Lua 只 yield 可见的那几个，而 Lua 不知道前端裁了几列/几条（除非再返一条协议），成本大于收益，先记为已知特性 |
 | `+` 的页数（普通打字） | 默认 4 页（`GRID_PAGES = 4`），与展开态 36 个候选对齐；**v 列表的页数按条目数自动算**（`math.ceil(n / lim)`） |
 | 「最右边的回车键也要还原」 | 用户提过但含义未定（原始 0.17.4 主题？），未动 |
 | language bar 名称 | 仍是 DLL 里的资源字符串，没改 |
