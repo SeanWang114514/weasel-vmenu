@@ -49,14 +49,43 @@ local function handle(key, env)
     -- 「下翻」页码也要复位，否则下一次打字会从上一轮的第 2 页开始。
     pcall(core.page_reset, ctx)
   end
-  -- 原符号模式：完全不拦截，让 speller / punctuator 按原版行为处理
-  if core.raw(ctx) then return 2 end
+  -- ===== 原符号模式：按键也照**普通打字**来处理 =====
+  -- 用户反馈：「v5 的候选词选择逻辑没有和正常的候选词选择逻辑同步」。
+  -- 原符号模式以前是「完全不拦截、全交给原版」，但候选窗是照普通打字的网格画的
+  -- （一行 9 个、高亮行画 1-9），而服务端的数字键补丁在 v 开头时被闸门挡住 →
+  -- 序号画着却按不动。现在这里只接管三件事，其余按键照旧放行：
+  --   ① +/- 翻页（和普通打字同一套页码）；
+  --   ② ↓ 展开 / 第一行按 ↑ 收起（core.grid_key）；
+  --   ③ 继续敲符号编码时页码回到第 1 页。
+  if core.raw(ctx) then
+    local r_next = (repr == "plus" or repr == "KP_Add" or repr == "equal"
+      or repr == "KP_Equal" or repr == "Next" or repr == "Page_Down")
+    local r_prev = (repr == "minus" or repr == "KP_Subtract" or repr == "Prior"
+      or repr == "Page_Up")
+    if r_next then
+      pcall(core.page_next, ctx)
+      return 1
+    end
+    if r_prev then
+      pcall(core.page_prev, ctx)
+      return 1
+    end
+    local r_arrow = (repr == "Down" or repr == "Up" or repr == "Left" or repr == "Right")
+    if not r_arrow then
+      -- 继续敲编码 = 换了一份候选，页码必须回第 1 页，否则新编码会显示成空白页
+      pcall(core.page_reset, ctx)
+    end
+    local ok_rgrid, r_handled = pcall(core.grid_key, ctx, repr)
+    if ok_rgrid and r_handled then return 1 end
+    return 2
+  end
 
   -- ===== v 功能里「退格 = 整条输入全部丢掉」=====
   -- 用户诉求：「back 键全部删除 不显示」：不管当前是 v 菜单、v2 剪贴板、v3 快捷输入、
   -- 常用语还是设置，一按退格这条输入就整条作废 —— ctx:clear() 之后输入为空，
   -- 候选窗与输入框里什么都不剩（内部编码也随之消失）。
-  -- 原符号模式在上面已经 return 2：那里 v 开头是用户自己敲的符号编码，退格仍然只删一个字。
+  -- 原符号模式在上面已经处理完（只接翻页 / 展开收起）：那里 v 开头是用户自己敲的符号编码，
+  -- 退格仍然只删一个字。
   if cur ~= "" and is_v_func(cur) and is_back_key(repr) then
     core.debug_log("[vmenu] 退格取消整条输入 <" .. cur .. ">")
     ctx:clear()
@@ -68,13 +97,13 @@ local function handle(key, env)
   -- 这里显式接管：数字编码、字母编码一律支持，行为统一，也不再依赖巧合。
   -- 只有输入和某条编码完全一致时才接管，其余回车行为原样放行。
   -- 候选窗口展开/收起 + 加减号翻页。
-  -- ★ v 功能的「列表型」子模式（剪贴板 vclip / 常用语 vfav / 管理列表 vsetc·vsetf）也要
-  --   （用户要求「v 的功能改为支持用加减号进行选择，同时参考正常输入的下键拓展按键进行
-  --   拓展显示」）：列表收起一行 4 个，按 ↓ 展开成 4 行 × 4 列 = 16 个；加减号按这一屏的
-  --   条数翻页（可见条数由 menu_filter.lua 用同一个 lim 切片）。
+  -- ★ v 功能的「列表型」子模式（剪贴板 vclip / 常用语 vfav / 管理列表 vsetc·vsetf）：
+  --   [一行 2 个] 用户要求剪贴板与常用语「一行 2 个、默认显示 3 行、默认展开」，
+  --   所以这些列表**没有收起态**：一屏固定 2 列 × 3 行 = 6 个，加减号按 6 个翻页，
+  --   ↓↑←→ 由服务端补丁逐格移动、第一行按 ↑ 不再收起（见下面的 v_list_mode 分支）。
   -- 静态菜单（v 主菜单 / v3 快捷输入）不放进来：它们条目少、本来就全显示，而且数字键是
-  -- 顺序选（1..N），一旦展开态让服务端接管数字键就会按「行 × 列」选错（服务端也用
-  -- vmenu_list 这个 option 做了同样的判断，两边一致）。
+  -- 顺序选（1..N），一旦展开态让服务端接管数字键就会按「行 × 列」选错（服务端用
+  -- _VMenuListCode 做了同样的判断，两边一致）。
   local is_v_mode = core.is_v_code(cur)
   local v_list_mode = is_v_mode and core.is_list_code(cur)
   if cur ~= "" and (not is_v_mode or v_list_mode) then
@@ -104,8 +133,20 @@ local function handle(key, env)
       pcall(core.page_prev, ctx)
       return 1
     end
-    local ok_grid, handled = pcall(core.grid_key, ctx, repr)
-    if ok_grid and handled then return 1 end
+    if v_list_mode then
+      -- ===== 剪贴板 / 常用语：固定 2 列 × 3 行，**永远是展开态** =====
+      -- 用户要求「一行 2 个、默认显示 3 行、用正常候选词的逻辑选择（但拓展栏默认展开）」，
+      -- 并补充「按上键不要收起，默认就是展开态」。所以：
+      --   ① 每个按键都把「展开」钉住（服务端的数字键 / 方向键 / 翻页补丁以它为门槛）；
+      --   ② ↑ 在第一行时不再收起 —— 补丁发现 -2 越界会把按键放行到这里，直接吞掉；
+      --   ③ ↓ / ← / → 的逐格移动、以及「最后一行再按 ↓ = 翻页」都由补丁完成，
+      --      落到这里只可能是「跑的是没有补丁的原版 server」，此时不拦，交回 rime。
+      pcall(core.grid_lock, ctx)
+      if repr == "Up" then return 1 end
+    else
+      local ok_grid, handled = pcall(core.grid_key, ctx, repr)
+      if ok_grid and handled then return 1 end
+    end
   end
 
   if repr == "Return" and cur ~= "" and not core.mode_of(cur) then
@@ -144,11 +185,20 @@ local function handle(key, env)
       ctx:clear()
       return 1
     end
-    if repr == "2" then replace_input(ctx, "vclip") return 1 end
+    if repr == "2" then
+      -- 剪贴板：固定 2 列 × 3 行、进列表就是展开态，所以立刻把「展开」钉住
+      replace_input(ctx, "vclip")
+      pcall(core.grid_lock, ctx)
+      return 1
+    end
     -- 第 3 项：快捷输入（计算 / 日期 / 时间 / 星期 …）
     if repr == "3" then replace_input(ctx, "vqi") return 1 end
     -- 第 4 项：常用语（第二次互换后在第 4 位）
-    if repr == "4" then replace_input(ctx, "vfav") return 1 end
+    if repr == "4" then
+      replace_input(ctx, "vfav")
+      pcall(core.grid_lock, ctx)
+      return 1
+    end
     -- 第 5 项：原符号（第二次互换后在第 5 位）
     -- 说明：原来的「文字设置」（vset 纯键盘设置）已去掉，vset* 代码保留但菜单进不去
     if repr == "5" then
@@ -183,8 +233,16 @@ local function handle(key, env)
   end
   -- ===== 设置根菜单 =====
   if cur == "vset" then
-    if repr == "1" then replace_input(ctx, "vsetc") return 1 end
-    if repr == "2" then replace_input(ctx, "vsetf") return 1 end
+    if repr == "1" then
+      replace_input(ctx, "vsetc")
+      pcall(core.grid_lock, ctx)   -- 剪贴板管理（列表）：同剪贴板，一律展开态
+      return 1
+    end
+    if repr == "2" then
+      replace_input(ctx, "vsetf")
+      pcall(core.grid_lock, ctx)   -- 常用语管理（列表）：同上
+      return 1
+    end
     if repr == "3" then replace_input(ctx, "vsetn") return 1 end
     if repr == "4" then replace_input(ctx, "vsetx") return 1 end
     if repr == "5" then replace_input(ctx, "v") return 1 end

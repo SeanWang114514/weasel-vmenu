@@ -37,6 +37,56 @@ end
 -- 所以注释里的序号永远钉在第一行，做不到「按高亮行重新编号」。
 -- 现在序号由 Weasel 侧的标签槽负责（WeaselUI/HorizontalLayout.cpp 的 GetLabelText
 -- 覆写）：标签槽在词的左侧，每帧重算，随高亮行给 1-9。此文件不再碰 comment。
+-- 按「一屏 lim 个 + 页码偏移」取窗口：返回 (候选表, 起止下标)。
+-- 普通打字、原符号模式、v 列表共用同一套窗口逻辑（页码由 menu_processor 用 +/- 改）。
+-- ★ 这里刻意**不**在函数里 yield：把结果交回调用方再 yield，避免依赖
+--   「嵌套函数里 yield」这种 librime-lua 生成器语义。
+local function window_of(input, ctx, lim)
+  local page = core.page_get(ctx)
+  local start = page * lim
+  local need = start + lim        -- 本页最多需要前 need 个
+  if need < lim then need = lim end
+  local buf = {}
+  local k = 0
+  local t0 = os.clock()
+  for cand in input:iter() do
+    k = k + 1
+    buf[k] = cand
+    -- 【卡顿修复】早停：rime-ice 对 1-2 个字母能产出上千条候选，
+    -- 而可见窗口最多也就 need 个，把后面全部遍历+建表纯属浪费（每个键都做一遍）。
+    if k >= need then break end
+  end
+  -- 只在真的翻过头时才回到第一页；早停时 k 就是「候选总数不足 need」，判定不变。
+  -- ★ 顺手把**页码也复位**：否则页码会停在一个「空页」上（例如第 15 页），
+  --   表现是①按了翻页画面没变化（用户以为键坏了）②下一页要多遍历上百个候选（翻页卡顿）。
+  if start >= k then
+    if page > 0 then pcall(core.page_reset, ctx) end
+    start = 0
+  end
+  do
+    local dt = (os.clock() - t0) * 1000
+    if dt > 15 then
+      core.debug_log(("[vmenu] 候选遍历偏慢 %.1fms (k=%d lim=%d page=%d)"):format(dt, k, lim, page))
+    end
+  end
+  -- [诊断] 每次 filter 运行都把本页候选打一行到 vmenu-debug.log。
+  -- 默认关闭：这是**每个按键一次文件写入**，开着会影响按键手感；
+  -- 排查「显示的顺序和选中的不是同一个」这类问题时把 core.DEBUG_CAND 改成 true。
+  if core.DEBUG_CAND then
+    local dbg = {}
+    for i = start + 1, math.min(k, start + lim) do
+      local c = buf[i]
+      if c then
+        dbg[#dbg + 1] = ("%d[%s]{%s}%s"):format(i - start, tostring(c.text),
+          tostring(c.comment), tostring(c.type))
+      end
+    end
+    core.debug_log(("[vmenu] 本页 page=%d k=%d lim=%d :: %s"):format(page, k, lim,
+      table.concat(dbg, " ")))
+  end
+  return buf, start, k
+end
+
 local function filter(input, env)
   local ctx = env.engine.context
   local code = ctx.input
@@ -47,7 +97,22 @@ local function filter(input, env)
   if type(code) == "string" and code ~= "" then
     local ok_raw, raw = pcall(core.raw, ctx)
     local ok_ascii, ascii = pcall(function() return ctx:get_option("ascii_mode") end)
-    if (ok_ascii and ascii) or (ok_raw and raw) then
+    if ok_raw and raw then
+      -- [原符号模式 = 和普通打字完全同步] 用户反馈：「v5 的候选词选择逻辑没有和正常的
+      -- 候选词选择逻辑同步」。原因是这里原来直接 passthrough：候选**全部**放出去
+      -- （几十条英文词 / 上百个符号），Weasel 按宽度折成 4 行、只在高亮行画 1-9，
+      -- 而服务端的数字键补丁有「输入以 v 开头就不接管」的闸门 → 序号画着却按不动，
+      -- 按 3 反而把符号编码补成 v3。
+      -- 现在改成和普通打字**同一套**：收起 9 个（一行）/ 展开 36 个（↓ 展开 4 行），
+      -- 页码由 +/- 改，数字键按「高亮那一行」选（服务端补丁已对原符号模式放行）。
+      local lim = core.grid_limit(ctx)
+      local buf, start, k = window_of(input, ctx, lim)
+      for i = start + 1, math.min(k, start + lim) do
+        if buf[i] then yield(buf[i]) end
+      end
+      return
+    end
+    if ok_ascii and ascii then
       passthrough(input)
       return
     end
@@ -66,66 +131,20 @@ local function filter(input, env)
   if want == nil and fav == nil then
     -- 正常打字、没命中收藏：只放出当前状态允许的个数
     --   单行（默认）= 9 个，正好一行；按 ↓ 展开后 = 36 个，自动换成 4 行 × 9 列
+    -- 用户要求：「还有保留 + 号下翻选择预选词的功能」：收起态一行只有 9 个，第 10 个以后
+    -- 够不着；按 +（下翻）就把可见窗口整体后移一屏（9 或 36 个），序号仍是 1-9
+    -- （序号由 Weasel 标签槽按当前可见行给）。窗口逻辑见上面的 window_of。
     local lim = core.grid_limit(ctx)
-    -- 用户要求：「还有保留 + 号下翻选择预选词的功能」。
-    -- 收起态一行只有 9 个，第 10 个以后够不着；按 +（下翻）就把可见窗口整体后移 9 个，
-    -- 于是第二页显示第 10-18 个候选，序号仍是 1-9（序号由 Weasel 标签槽按当前可见行给）。
-    -- 展开态一屏已有 36 个（9×4），不再叠加翻页。
-    -- [整页翻] 收起态与展开态都翻页（原来展开态完全没接！）；每页 = lim 个，
-    -- 所以新一屏的第 1 行正好是原来第 5 行（用户要求），窗口长度仍是 lim（9 或 36）。
-    local page = core.page_get(ctx)
-    -- 用户要求：**不许丢候选**，全部强制显示在一行（窗口宽度随内容变宽），绝不换行。
-    -- 折行与否由 Weasel 侧补丁控制（候选 <=9 时完全不折行），这里只决定「取哪 9 个」。
-    local start = page * lim
-    local need = start + lim        -- 本页最多需要前 need 个
-    if need < lim then need = lim end
-    local buf = {}
-    local k = 0
-    local t0 = os.clock()
-    for cand in input:iter() do
-      k = k + 1
-      buf[k] = cand
-      -- 【卡顿修复】早停：rime-ice 对 1-2 个字母能产出上千条候选，
-      -- 而可见窗口最多也就 need 个，把后面全部遍历+建表纯属浪费（每个键都做一遍）。
-      if k >= need then break end
-    end
-    -- 只在真的翻过头时才回到第一页；早停时 k 就是「候选总数不足 need」，判定不变。
-    -- ★ 顺手把**页码也复位**：否则页码会停在一个「空页」上（例如第 15 页），
-    --   表现是①按了翻页画面没变化（用户以为键坏了）②下一页要多遍历上百个候选（翻页卡顿）。
-    if start >= k then
-      if page > 0 then pcall(core.page_reset, ctx) end
-      start = 0
-    end
-    do
-      local dt = (os.clock() - t0) * 1000
-      if dt > 15 then
-        core.debug_log(("[vmenu] 候选遍历偏慢 %.1fms (k=%d lim=%d page=%d)"):format(dt, k, lim, page))
-      end
-    end
-    -- [诊断] 每次 filter 运行都把本页候选打一行到 vmenu-debug.log。
-    -- 默认关闭：这是**每个按键一次文件写入**，开着会影响按键手感；
-    -- 排查「显示的顺序和选中的不是同一个」这类问题时把 core.DEBUG_CAND 改成 true。
-    if core.DEBUG_CAND then
-      local dbg = {}
-      for i = start + 1, math.min(k, start + lim) do
-        local c = buf[i]
-        if c then
-          dbg[#dbg + 1] = ("%d[%s]{%s}%s"):format(i - start, tostring(c.text),
-            tostring(c.comment), tostring(c.type))
-        end
-      end
-      core.debug_log(("[vmenu] 本页 page=%d k=%d lim=%d :: %s"):format(page, k, lim,
-        table.concat(dbg, " ")))
-    end
+    local buf, start, k = window_of(input, ctx, lim)
     for i = start + 1, math.min(k, start + lim) do
-      yield(buf[i])
+      if buf[i] then yield(buf[i]) end
     end
     return
   end
 
-  -- [v 一行 4 个] v 功能菜单的可见个数与翻页：
-  --   * 列表模式（剪贴板 / 常用语 / 管理列表）= 收起 4 个（一行 4 个）、按 ↓ 展开 16 个
-  --     （4 行 × 4 列，和正常打字的 ↓ 展开同一套手感）；加减号按这一屏的条数翻页。
+  -- [一行 2 个 / 一行 4 个] v 功能菜单的可见个数与翻页：
+  --   * 列表模式（剪贴板 / 常用语 / 管理列表）= **固定一屏 6 个**（2 列 × 3 行，永远是展开态，
+  --     用户要求「一行 2 个、默认 3 行、默认展开、按上键不要收起」）；加减号按 6 个翻页。
   --   * 静态菜单（v 主菜单 / v3 快捷输入 / 设置根菜单）本来就 5-7 条，全部放出来，
   --     交给 Weasel 按 4 列自动换行（不会把第 5 项「原符号」藏起来）。
   local is_v = (want ~= nil)
@@ -174,9 +193,10 @@ local function filter(input, env)
       if core.page_get(ctx) > 0 then pcall(core.page_reset, ctx) end
       start = 0
     end
-    -- 同样受当前状态限制：普通打字收起 9 / 展开 36；v 列表收起 4 / 展开 16。
+    -- 同样受当前窗口限制：普通打字收起 9 / 展开 36；v 列表固定 6 个。
     for i = start + 1, math.min(n, start + lim) do
-      -- v 菜单的序号同样交给 Weasel 的标签槽（v 菜单一行 4 个，按高亮行给 1-4）。
+      -- v 菜单的序号同样交给 Weasel 的标签槽（v 菜单一行 4 个，按高亮行给 1-4；
+      -- 剪贴板 / 常用语一行 2 个，按高亮行给 1-2）。
       -- 候选自带的注释（如快捷输入的「按 1 · …」）保持原样，不再拼数字。
       if buf[i] then yield(buf[i]) end
     end

@@ -109,22 +109,20 @@ local function yield_clip_list(seg, more, is_admin)
   end
 end
 
-local function yield_clip_delete(seg, more)
+local function yield_clip_delete(seg)
   local items = core.read_clip()
   local total = #items
-  local start = more * core.WINDOW + 1
-  if start > total then
-    yield(item(seg, "vclip", "没有更多可删除的条目了", "[q] 返回设置"))
+  if total == 0 then
+    yield(item(seg, "vclip", "剪贴板历史为空", "[q] 返回设置"))
     return
   end
-  local last = math.min(total, start + core.WINDOW - 1)
-  for i = start, last do
-    yield(item(seg, "vclip", items[i], "第 " .. i .. " 条 · 按标签删除"))
-  end
-  -- 只有在「本屏没占满 9 条」时才追加操作行，
-  -- 否则第 10 条会翻到第 2 页、标签从 1 重新开始，导致序号与删除目标错位。
-  if last < total and (last - start + 1) < core.WINDOW then
-    yield(action(seg, "[m] 下一组（" .. (last + 1) .. "-" .. math.min(total, last + core.WINDOW) .. "）", 1))
+  -- [一屏 6 个] 这里**一次把全部条目都产出**（最多 MAX_PAGE 条），由 menu_filter 按
+  -- 「页码 × 一屏 6 个」切窗口。原来是自己按 9 条一组切片（more 记组号），和现在的
+  -- 加减号翻页（core.page_next）不是同一套 → 只能删到第 9 条；现在两边都用同一个窗口。
+  for i = 1, total do
+    local cmt = "第 " .. i .. " 条 · 按标签删除"
+    if i == 1 then cmt = cmt .. " · +/- 翻页" end
+    yield(item(seg, "vclip", items[i], cmt))
   end
 end
 
@@ -153,20 +151,18 @@ local function yield_fav_list(seg, query, is_admin)
   end
 end
 
-local function yield_fav_delete(seg, more)
+local function yield_fav_delete(seg)
   local favs = core.read_fav()
   local total = #favs
-  local start = more * core.WINDOW + 1
-  if start > total then
-    yield(item(seg, "vfav", "没有更多可删除的条目了", "[q] 返回设置"))
+  if total == 0 then
+    yield(item(seg, "vfav", "还没有常用语", "[q] 返回设置"))
     return
   end
-  local last = math.min(total, start + core.WINDOW - 1)
-  for i = start, last do
-    yield(item(seg, "vfav", favs[i].word, "第 " .. i .. " 条 · 按标签删除"))
-  end
-  if last < total and (last - start + 1) < core.WINDOW then
-    yield(action(seg, "[m] 下一组（" .. (last + 1) .. "-" .. math.min(total, last + core.WINDOW) .. "）", 1))
+  -- 同 yield_clip_delete：一次全产出，交给 menu_filter 的一屏 6 个窗口切片。
+  for i = 1, total do
+    local cmt = "第 " .. i .. " 条 · 按标签删除"
+    if i == 1 then cmt = cmt .. " · +/- 翻页" end
+    yield(item(seg, "vfav", favs[i].word, cmt))
   end
 end
 
@@ -230,7 +226,7 @@ local function gen(input, seg, env)
     return
   end
   if act == "d" then
-    if base == "c" then yield_clip_delete(seg, more) else yield_fav_delete(seg, more) end
+    if base == "c" then yield_clip_delete(seg) else yield_fav_delete(seg) end
     return
   end
   if base == "c" then

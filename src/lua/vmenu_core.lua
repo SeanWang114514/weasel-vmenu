@@ -97,6 +97,17 @@ M.GRID_OPTION = "vmenu_grid"   -- 状态必须放在 context option 里！
 --   服务端会把这个列数用 ctx.grid_cols 下发给客户端（WeaselUI/HorizontalLayout.cpp 按它排版）。
 M.V_COLS = 4
 M.V_ROWS = 4
+-- [剪贴板 / 常用语：一行 2 个、默认 3 行] 用户要求：
+--   剪贴板与常用语「一行 2 个、默认显示 3 行，用正常候选词的逻辑进行选择，拓展栏默认展开」，
+--   并特别补充「按上键不要收起，默认就是展开态」。
+--   * 因此这两种列表**没有收起态**：一屏固定 2 列 × 3 行 = 6 个；
+--   * ↑ 在第一行时不再收起（menu_processor.lua 里对这些编码直接吞掉该键）；
+--   * 序号照普通打字来（服务端 ctx.grid_2d=1）：只在高亮那一行画 1 / 2，
+--     数字键选的是「高亮那一行」的第 N 个，而不是整屏第 N 个；
+--   * 加减号按一屏 6 个翻页。
+M.LIST_COLS = 2
+M.LIST_ROWS = 3
+M.LIST_LIMIT = M.LIST_COLS * M.LIST_ROWS   -- 6
 
 -- 输入码是不是 v 功能菜单（v / vclip / vqi / vfav / vset…）
 function M.is_v_code(code)
@@ -133,6 +144,10 @@ end
 -- 第二个参数是「输入码」：给了且是 v 功能菜单时按 4 / 16 算，否则（普通打字）按 9 / 36 算。
 -- 省略第二个参数 = 普通打字的旧行为，老的调用点不受影响。
 function M.grid_limit(ctx, code)
+  -- [一行 2 个] 剪贴板 / 常用语（列表型）：固定 6 个，**不看展开状态** —— 它们永远是展开态。
+  if code ~= nil and M.is_list_code(code) then
+    return M.LIST_LIMIT
+  end
   local ok, open = pcall(function() return ctx:get_option(M.GRID_OPTION) end)
   local opened = (ok and open) and true or false
   if code ~= nil and M.is_v_code(code) then
@@ -159,6 +174,16 @@ end
 -- 否则普通打字也会按 36 个候选排版，表现为候选窗口换行成 4 行（用户反馈的问题）。
 function M.grid_reset(ctx)
   grid_set(ctx, false)
+end
+
+-- [一行 2 个 / 默认展开] 剪贴板 / 常用语：进入列表就把「展开」打开，并且在列表里一直保持开着。
+-- 为什么必须开着：服务端补丁里「数字键按高亮行选词」「↓↑←→ 逐行移动」「+/- 翻页」三件事
+-- 都以 vmenu_grid 为门槛（RimeWithWeasel.cpp），关了这些键就退回 librime 原生行为，
+-- 而原生的「本页第 N 个」与屏幕上画的 1/2 序号在高亮不在第一行时会对不上。
+-- 只有真的需要写 option 时才写（状态没变就不写），避免每个按键都让 rime 重翻译。
+function M.grid_lock(ctx)
+  if grid_open(ctx) then return end
+  pcall(function() ctx:set_option(M.GRID_OPTION, true) end)
 end
 
 -- ===== 候选窗口「下翻」页码（+ 号触发）=====
