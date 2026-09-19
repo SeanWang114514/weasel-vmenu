@@ -349,6 +349,7 @@
 | ④ v3/v5 互换 | `lua_menu.lua` 的 `yield_menu` 与 `menu_processor.lua` 的 `v` 分支同步互换：**3 = 快捷输入**（`vqi`）、**5 = 常用语**（`vfav`）；主菜单现为 `1 设置 / 2 剪贴板 / 3 快捷输入 / 4 原符号 / 5 常用语`（README / ARCHITECTURE / AGENT-HANDOFF / TESTING / PROGRESS 里描述顺序的地方都同步改了）|
 | ⑤ 验收（视觉 + 读回内容） | `v` → 读图确认菜单为 `1 设置 图形窗口 2 剪贴板 历史 3 快捷输入 计算 · 日期 4 原符号 原版 v …` ✅；`v`→`3` → 输入框变 `vqi` 并列出「计算 按1…/日期…/时间…」✅；`v`→`5` → 列出常用语，按 `1` 上屏 `wslzhenshuai@163.com` ✅ |
 | ⑥ 回归复测（本轮最容易被碰坏的就是数字选词） | 展开+`↓`到第 2 行按 `3`：截图第 2 行标签为 `1 逝 2 实 3 拭 4 史 …` → 上屏**拭** ✅；收起+`=`翻页按 `3`：截图新页 `1 氏 2 逝 3 实 …` → 上屏**实** ✅（不是上一页的词）；纯数字编码 `131`+回车 → `13122500717` ✅ |
+| ⑦ 另一个「v 打不开」的原因 | 排查时发现三个后台助手**都不在跑**：`clipboard-sync.ps1` / `vmenu-watcher.ps1` / 常驻的 `vmenu-settings-gui.ps1`（机器上只有 note-studio 的 watchdog）。没有 watcher，`v`→`1` 只会写 `open-settings.flag` 而没人接手 → 设置窗口永远不开。已按设计用 `Start-Process -WindowStyle Hidden` 重新拉起三个助手（脱离我的会话、确认跨调用存活），实测 `v`→`1` → 窗口「小狼毫 v 功能 · 可视化设置」出现且 flag 被消费 ✅，剪贴板同步也在写 `clipboard-cache.txt` ✅。以后要再拉起：双击 `D:\VibeCoding\输入法\clipboard-sync.bat` |
 ---
 ## 2. 时间线（2026-09-13）
 
