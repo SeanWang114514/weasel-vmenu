@@ -25,11 +25,11 @@ using namespace weasel;
 std::wstring HorizontalLayout::GetLabelText(const std::vector<Text>& labels,
                                             int id,
                                             const wchar_t* format) const {
-  const int kGridCols = 9;
-  const int hl_row = this->id / kGridCols;
-  const int row = id / kGridCols;
+  const int cols = (cols_per_row_ > 0) ? cols_per_row_ : 9;
+  const int hl_row = this->id / cols;
+  const int row = id / cols;
   if (row == hl_row)
-    return std::to_wstring(id % kGridCols + 1) + L" ";
+    return std::to_wstring(id % cols + 1) + L" ";
   return L"  ";
 }
 
@@ -115,6 +115,8 @@ void HorizontalLayout::DoLayout(CDCHandle dc, PDWR pDWR) {
   const int kGridCols = 9;
   const bool grid_multi_row = (candidates_count > kGridCols);
   int col_width = 0;
+  int grid_label_w = 0;                // 网格态统一序号槽宽（见下面注释）
+  int& cols_per_row = cols_per_row_;   // 正常 = 9；超长候选时下面会下调
   if (candidates_count) {
     w = offsetX + real_margin_x;
     // [vmenu-grid] 「严格整齐」：网格态先量出**统一列宽**。
@@ -122,13 +124,20 @@ void HorizontalLayout::DoLayout(CDCHandle dc, PDWR pDWR) {
     // 每行第 2 列的起点都不同，展开后的 9×4 网格参差不齐。
     // 现在取所有候选里最宽的一格（标签 + 间距 + 词 + 注释）当所有列宽，
     // 每个候选钉在「列号 × 列宽」上 → 每列严格对齐。
-    if (grid_multi_row) {
+    if (candidates_count > 1) {
+      // 先定「序号槽」的固定宽度：
+      //   序号只画在高亮那一行，其余行用等宽占位（"  "）。但「数字+空格」比两个
+      //   空格宽 ~8px，于是第 1 行的词整体比第 2–4 行右移 8px —— 实测就是这点差异。
+      //   所以网格态把序号槽宽度**钉死**成所有行里最宽的那个（即数字+空格），
+      //   各行候选词左边缘才是真正严格对齐。
       for (auto i = 0; i < candidates_count && i < MAX_CANDIDATES_COUNT; ++i) {
-        int cw = 0;
         std::wstring lb =
             GetLabelText(labels, i, _style.label_text_format.c_str());
         GetTextSizeDW(lb, lb.length(), pDWR->pLabelTextFormat, pDWR, &size);
-        cw += size.cx * labelFontValid + _style.hilite_spacing;
+        grid_label_w = max(grid_label_w, size.cx * labelFontValid);
+      }
+      for (auto i = 0; i < candidates_count && i < MAX_CANDIDATES_COUNT; ++i) {
+        int cw = grid_label_w + _style.hilite_spacing;
         GetTextSizeDW(candidates.at(i).str, candidates.at(i).str.length(),
                       pDWR->pTextFormat, pDWR, &size);
         cw += size.cx * textFontValid;
@@ -144,21 +153,44 @@ void HorizontalLayout::DoLayout(CDCHandle dc, PDWR pDWR) {
       }
       col_width += _style.candidate_spacing;  // 列与列之间的间距
     }
+    // [vmenu-grid] 统一列宽的另一面：万一有**超长候选**（例如很长的常用语），
+    // 9 列 × 那个宽度会把面板撑得比屏幕还宽。用户允许「实在太长就少放几个」，
+    // 于是按屏幕可用宽度反算每行最多放几列（下限 3 列，保证还是个网格）。
+    // 正常中文候选（1–4 字）算出来仍然是 9 列，行为完全不变。
+    const int kScreenW = GetSystemMetrics(SM_CXSCREEN);
+    const int grid_budget =
+        (kScreenW > 0) ? (kScreenW - offsetX - 2 * real_margin_x - 16) : 0;
+    cols_per_row = kGridCols;
+    if (grid_multi_row && col_width > 0 && grid_budget > 0) {
+      while (cols_per_row > 3 && cols_per_row * col_width > grid_budget)
+        --cols_per_row;
+    }
+    // 统一列宽在**展开态一律启用**（要的就是严格行列对齐）；
+    // 收起态（单行 9 个）也启用，让每一格等宽 —— 用户要求「每个预选词都用同一个长度」，
+    // 收起态量出来 95/100/101 这种 ±3px 的抖动就是各格自然宽度不同造成的。
+    // 唯一的例外：这一行 9 格会超出屏幕（候选超长）时退回自然宽度，别把面板撑出屏幕。
+    const bool grid_uniform =
+        (candidates_count > 1 && col_width > 0 &&
+         (grid_multi_row || grid_budget <= 0 ||
+          kGridCols * col_width <= grid_budget));
     for (auto i = 0; i < candidates_count && i < MAX_CANDIDATES_COUNT; ++i) {
       int current_cand_width = 0;
       if (i > 0)
         w += _style.candidate_spacing;
-      if (id == i)
+      // [vmenu-grid] 等宽网格不给高亮格加 base_offset：高亮块本来就是整格，
+      //   加了会让那一格的文字比其他格右移几个像素，「严格对齐」就破了。
+      if (id == i && !grid_uniform)
         w += base_offset;
-      const int vmenu_cell_start = w - (id == i ? base_offset : 0);
       /* Label */
+      // [vmenu-grid] 网格态用统一序号槽宽（见上面的 grid_label_w 注释）。
       std::wstring label =
           GetLabelText(labels, i, _style.label_text_format.c_str());
       GetTextSizeDW(label, label.length(), pDWR->pLabelTextFormat, pDWR, &size);
-      _candidateLabelRects[i].SetRect(w, height, w + size.cx * labelFontValid,
-                                      height + size.cy);
-      w += size.cx * labelFontValid;
-      current_cand_width += size.cx * labelFontValid;
+      const int lab_w = grid_uniform ? max(grid_label_w, size.cx * labelFontValid)
+                                     : size.cx * labelFontValid;
+      _candidateLabelRects[i].SetRect(w, height, w + lab_w, height + size.cy);
+      w += lab_w;
+      current_cand_width += lab_w;
 
       /* Text */
       w += _style.hilite_spacing;
@@ -189,14 +221,15 @@ void HorizontalLayout::DoLayout(CDCHandle dc, PDWR pDWR) {
       //   * 候选数 <= 9：**无论如何都排成一行**（长词也不折行，窗口宽度随之变宽）。
       //     用户明确要求「无论如何都在一行显示」——按宽度折行时只要有一个词偏宽
       //     就会被挤到第二行，调 max_width 只能推后临界点，治不了本。
-      //   * 候选数 >  9：每 9 个强制换行，即展开后的「每行严格 9 个」网格。
+      //   * 候选数 >  9：每 cols_per_row 个强制换行（正常就是 9），即「每行严格 9 个」网格。
       const bool vmenu_line_break =
-          grid_multi_row && i > 0 && (i % kGridCols) == 0;
+          grid_multi_row && i > 0 && (i % cols_per_row) == 0;
       if (vmenu_line_break) {
         // max_width_of_rows current row
         max_width_of_rows =
             max(max_width_of_rows, _candidateCommentRects[i - 1].right);
-        w = offsetX + real_margin_x + (i == id ? base_offset : 0);
+        w = offsetX + real_margin_x +
+            ((i == id && !grid_multi_row) ? base_offset : 0);
         int ofx = w - _candidateLabelRects[i].left;
         int ofy = height_of_rows[row_cnt] + _style.candidate_spacing;
         // offset rects to next row
@@ -213,12 +246,16 @@ void HorizontalLayout::DoLayout(CDCHandle dc, PDWR pDWR) {
       } else if (!grid_multi_row)
         max_width_of_rows = max(max_width_of_rows, w);
 
-      // [vmenu-grid] 把本格「补齐」到统一列宽：下一列必定从
-      //   cell_start + col_width 开始 —— 这是「每列严格对齐」的关键一步。
-      if (grid_multi_row) {
-        w = vmenu_cell_start + col_width - _style.candidate_spacing;
+      // [vmenu-grid] 把光标「钉」到本列右缘：列号 = i % cols_per_row。
+      //   ★ 这里必须用**列号**算，不能用循环里累加出来的 w：
+      //     换行时 w 被重置成新行的行首，而累加值还是上一行末尾的值，
+      //     用它补齐会把新行第 2 格起推到面板外（实测第 2–4 行只剩第 1 格可见）。
+      if (grid_uniform) {
+        w = offsetX + real_margin_x + ((i % cols_per_row) + 1) * col_width -
+            _style.candidate_spacing;
         max_width_of_rows = max(
-            max_width_of_rows, offsetX + real_margin_x + kGridCols * col_width);
+            max_width_of_rows,
+            offsetX + real_margin_x + cols_per_row * col_width);
       }
       // calculate height of current row is the max of three rects
       mintop_of_rows[row_cnt] = height;
@@ -237,10 +274,10 @@ void HorizontalLayout::DoLayout(CDCHandle dc, PDWR pDWR) {
     for (auto i = 0; i < candidates_count && i < MAX_CANDIDATES_COUNT; ++i) {
       int base_left = (i == id) ? _candidateLabelRects[i].left - base_offset
                                 : _candidateLabelRects[i].left;
-      if (grid_multi_row) {
+      if (grid_uniform) {
         // [vmenu-grid] 高亮块 = 完整一格（等宽），所有格子的选中块大小一致
         const int cell_left =
-            offsetX + real_margin_x + (i % kGridCols) * col_width;
+            offsetX + real_margin_x + (i % cols_per_row) * col_width;
         _candidateRects[i].SetRect(
             cell_left, mintop_of_rows[row_of_candidate[i]],
             cell_left + col_width - _style.candidate_spacing,
