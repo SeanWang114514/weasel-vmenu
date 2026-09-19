@@ -473,8 +473,13 @@ $log = Get-ChildItem "$env:LOCALAPPDATA\Temp\rime.weasel\*.log" | Sort LastWrite
 **复用同名目标文件**，编出来的「x86 库」其实是 x64（dumpbin 看机器类型仍是 `8664`）；
 `rime.lib` 由 `rime.dll` 导出表生成（抓**名字列**）；RC 段缺 `afxres.h` 用本地 shim（已 gitignore）。
 
-**已知残留**：32 位 `weasel.dll`（`C:\Windows\SysWOW64\weasel.dll`）仍是旧版 → 32 位程序里
-看不到对齐效果（见 `PROGRESS.md` §5 第 21 条）。
+**32 位（x86）也已部署**：`deps\boost_1_84_0\stage\lib` 里原本混着一批「名字带 `-x32-`、
+内容其实是 x64」的 boost 库（早先失败的 b2 运行留下的），x86 链接会先命中它们 → boost 的
+`__thiscall` 符号全解不出（LNK2001，且不会报 LNK1112，因为没有任何成员被真正抽出来）。
+用真 x86 库覆盖那 9 个文件后 Win32 一次链接通过：`output\weasel.dll` 1037312 B、
+md5 `D5FE2EF773540AD78DA5EDE7A2D9DA7A`、`14C machine (x86)`，已部署到安装目录与
+`C:\Windows\SysWOW64\weasel.dll`。32 位宿主（`SysWOW64\WindowsPowerShell` 跑 WinForms 文本框）
+实测展开态 4×9：逐列起点差 0–5px、第 1 行对末行漂移 ≤5px，与 x64 完全一致 ✅
 
 ---
 ## 7. 未做 / 待确认

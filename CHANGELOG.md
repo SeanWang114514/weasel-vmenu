@@ -19,8 +19,9 @@
   端到端按键延迟与英文模式基线同量级 → 输入法无额外延迟。
 * 新增工具：`tools/measure-grid-align.ps1`（行列对齐客观量）、`tools/measure-key-latency.ps1`（按键延迟）。
 
-md5：`weaselx64.dll` / `System32\weasel.dll` = `EB2A8B8667F3AA11F9DC2A6F7440D9B7`（1180672 B）。
-32 位 `weasel.dll`（`SysWOW64`）仍是旧版。详见
+md5：`weaselx64.dll` / `System32\weasel.dll` = `8245FED5FF4983FA43436FF495B1172E`（1180672 B），
+32 位 `weasel.dll` / `SysWOW64\weasel.dll` = `D5FE2EF773540AD78DA5EDE7A2D9DA7A`（1037312 B，**本轮首次自编**）。
+详见
 [`docs/GRID-CANDIDATE-DLL.md`](docs/GRID-CANDIDATE-DLL.md) §7.1 与
 [`docs/PROGRESS.md`](docs/PROGRESS.md) §1.20。
 ## [0.2.6] — 2026-09-19

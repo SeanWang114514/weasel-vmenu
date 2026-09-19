@@ -278,7 +278,7 @@
 | 修法（源码） | ① `QueryInterface` 不再暴露该接口（只留 `ITfUIElement` / `ITfCandidateListUIElement` / `...Behavior`）；② `StartUI()` 里 `_pbShow = TRUE` 后再 `_MakeUIWindow()` 作保险（`_pbShow` 同时决定 `UpdateUI()` 的 `Show(_pbShow)`，不强制就会「建了但永不显示」） |
 | ★ 本机编不出来 | VS18 **没装 ATL**（`VC\Tools\MSVC\14.51.36231` 下没有 `atlmfc`、vswhere 也查不到 `VC.ATL`）→ `WeaselTSF` 必失败（`atlbase.h`/`afxres.h`）。本地从零编还要先编 Boost（约 40 分钟）+ librime，**且仍会卡在 ATL** |
 | ★ 二进制等效补丁（实际部署的） | `__uuidof(ITfIntegratableCandidateListUIElement)` 把 IID 以 **16 字节常量**编进 DLL：把该常量**最后一字节** `0x7B → 0x7A`，`IsEqualIID()` 永远匹配不上 = 等价于「不再暴露集成接口」。实测该常量在 x86 `weasel.dll` 偏移 **729804**、x64 `weaselx64.dll` 偏移 **825488**，各自**只出现 1 次**，`WeaselServer.exe` 里 **0 次** → 只影响这一处判断 |
-| 部署结果 | `weasel.dll` 1034752 = `60B0F018D85B7DE1322A332E31657D11`、`weaselx64.dll` 1180672 = `EB2A8B8667F3AA11F9DC2A6F7440D9B7`（第九轮：统一列宽严格对齐）；`System32` = x64、`SysWOW64` = x86（md5 一一对应 ✅）；备份 `D:\weasel-build\dll-backup\20260918-205936-patch4\` |
+| 部署结果 | `weasel.dll` 1034752 = `60B0F018D85B7DE1322A332E31657D11`、`weaselx64.dll` 1180672 = `8245FED5FF4983FA43436FF495B1172E`（第九轮：统一列宽严格对齐 +「满页才等宽」保护）；`System32` = x64、`SysWOW64` = x86（md5 一一对应 ✅）；备份 `D:\weasel-build\dll-backup\20260918-205936-patch4\` |
 | 验收证据（Chrome + `file://` 测试页） | 补丁前：只有 `zhe'g` + 应用自画列表、**无数字**；补丁后：`1 这个 2 这关 3 这股 4 组合柜 5 赵河沟 6 遮盖 7 这给 8 鹧鸪 9 这跟`（数字在词**左边**），按 `↓` 展开后**只有第 1 行** 1–9、第 2/3/4 行「开头无数字」✅ |
 | ★ 必须告知用户 | TSF 客户端 DLL 是**进程内**的：用 Chrome / 微信等**已开着的程序**验证时必须**先重启那些程序**（只重启 `WeaselServer.exe` 不够）；这一点与「网格/序号画在服务端」正好相反 |
 | 顺带发现 | 本机**没有 Edge**；`SysWOW64\notepad.exe` 被应用别名拦成 Store 版记事本（想测 32 位得另找程序）；微信输入法与「按程序记住输入法」会让人误判成「小狼毫坏了」 |
@@ -314,7 +314,7 @@
 | ⑥ 卡顿复检与修复 | ① `menu_filter` 每次按键遍历**全部候选**（rime-ice 1–2 个字母能出上千条）→ 改成够本页就 `break`；② `fav_hit`/`fav_exact`/`digit_prefix` 每次按键 `io.open` + 逐行解析收藏文件 → 加 3 秒 TTL 缓存 + 写入即失效（实测：10 次调用只读盘 **1** 次）；③ 删掉 `menu_processor` 里对**不存在的 API** 的 pcall 死代码（每次按 `+` 必定抛错）；④ 端到端延迟实测：英文模式（无候选窗）36ms vs 中文模式同量级 → **输入法本身没有额外延迟**（36ms 里含测量脚本注入按键后的固定 22ms 等待 + 轮询 10ms） |
 | ⑦ 诊断坑 | librime-lua 里 **`print` 不进 rime 日志**（实测一个字都没有），所以卡顿诊断统一写 `D:\rime-sandbox\vmenu-debug.log`（`vmenu_core.debug_log`，`DEBUG_LOG=false` 可关） |
 | ⑧ 本机编译链（这轮打通） | ATL 已装；Boost 用 `ci/build-boost.ps1` 的 `--user-config` 法编静态库 —— **x64/x86 必须各自指向自己的 cl.exe**（`Hostx64\x64\cl.exe` / `Hostx64\x86\cl.exe`），只改 `address-model=32` 而不换 cl，b2 会**复用同名目标文件**，编出来的「x86 库」其实是 x64（dumpbin 机器类型仍是 `8664`）；`rime.lib` 由 `rime.dll` 导出表生成（抓**名字列**）；RC 段缺 `afxres.h` 用本地 shim（已 gitignore） |
-| ⑨ 已知残留 | 32 位 `weasel.dll`（`SysWOW64`）仍是旧版 → 32 位程序里看不到对齐效果；64 位（记事本 / Chrome / 微信等绝大多数）已是新版 |
+| ⑨ 32 位也编出来了 | 卡了很久的 x86 终于解决：`deps\boost_1_84_0\stage\lib` 里**早就躺着一批名字叫 `-x32-` 但内容是 x64 的库**（早先几次失败的 b2 运行留下的），x86 链接先在该目录命中它们 → boost 的 `__thiscall` 符号一个都解不出（LNK2001）。用**真 x86 库**（`vcvarsall x86` + user-config 指向 `Hostx86\x86\cl.exe`，dumpbin 实测 `14C`）覆盖那 9 个文件后，`WeaselTSF` Win32 **一次链接通过** → `output\weasel.dll` 1037312 B（`D5FE2EF7…`）。32 位宿主（`SysWOW64\WindowsPowerShell` + WinForms 文本框）里实测 4×9 网格与 x64 **逐列一致**（漂移 ≤5px）✅ |
 
 ---
 ## 2. 时间线（2026-09-13）
@@ -444,7 +444,7 @@
 
 | 组件 | 状态 |
 | --- | --- |
-| `WeaselServer.exe` | **自己编的网格版**在运行：2684416 字节，md5 `1D87C729A92FCD8336A62C814CBD7B87`（本机自编：标签槽序号 + 翻页/同列光标 + §2.5 补丁）；`weasel.dll` 1034752 = `60B0F018D85B7DE1322A332E31657D11`、`weaselx64.dll` 1180672 = `EB2A8B8667F3AA11F9DC2A6F7440D9B7`（第九轮：统一列宽严格对齐）；`C:\Windows\System32\weasel.dll` = 1180672 = `EB2A8B86…`（= x64，已含对齐补丁）、`C:\Windows\SysWOW64\weasel.dll` = 1034752 = `60B0F018…`（= x86）✅ 5 个文件都对上了。**后缀 `-patch4` 的 md5 是在 run#24 基础上改了集成 IID 一个字节**（见 §1.18 与 `GRID-CANDIDATE-DLL.md` §2.4；未打补丁前的 md5 是 `79E43332…` / `993E74EC…`） |
+| `WeaselServer.exe` | **自己编的网格版**在运行：2684416 字节，md5 `1D87C729A92FCD8336A62C814CBD7B87`（本机自编：标签槽序号 + 翻页/同列光标 + §2.5 补丁）；`weasel.dll` 1034752 = `60B0F018D85B7DE1322A332E31657D11`、`weaselx64.dll` 1180672 = `8245FED5FF4983FA43436FF495B1172E`（第九轮：统一列宽严格对齐 +「满页才等宽」保护）；`C:\Windows\System32\weasel.dll` = 1180672 = `8245FED5…`（= x64，已含对齐补丁）、`C:\Windows\SysWOW64\weasel.dll` = 1037312 = `D5FE2EF7…`（= x86，**本轮也换成对齐版**）✅ 5 个文件都对上了。**后缀 `-patch4` 的 md5 是在 run#24 基础上改了集成 IID 一个字节**（见 §1.18 与 `GRID-CANDIDATE-DLL.md` §2.4；未打补丁前的 md5 是 `79E43332…` / `993E74EC…`） |
 | `clipboard-sync.ps1` | 1 个实例 |
 | `vmenu-watcher.ps1` | 1 个实例（监督常驻窗口） |
 | `vmenu-settings-gui.ps1` | 1 个实例（常驻，未打开时是隐藏窗口） |
@@ -544,7 +544,7 @@
     要更多页就加 `vmenu_page_4…` 开关（context option 只能存布尔，所以每页一个开关）。
 20. **候选方格对齐（第九轮）** —— ✅ 已解决，见 §1.20：统一列宽 + 固定序号槽宽，
     第 1 行对末行漂移 93px → ≤5px（5px 是高亮粗体字的墨迹差）；收起态也等宽。
-21. **32 位客户端 DLL 还没换成新版（`C:\Windows\SysWOW64\weasel.dll` = 旧版）。**
+21. ~~**32 位客户端 DLL 还没换成新版**~~ **✅ 已解决（第九轮）**：根因是 `stage\lib` 里混着一批「名字是 -x32-、内容是 x64」的 boost 库（早期失败的 b2 运行留下的）→ 真 x86 库覆盖后一次编过，`weasel.dll` 1037312 B = `D5FE2EF7…` 已部署到安装目录与 `SysWOW64`，32 位宿主实测与 x64 一致。原始记录：
     x86 Boost 静态库编不出来：b2 对 `address-model=32` 复用同一个目标目录，
     即使换 `--user-config` 指向 `Hostx64\x86\cl.exe`，已有目标文件也不会重编
     （dumpbin 实测机器类型仍是 x64）。要彻底解决：给 x86 单独一个 `--build-dir/--stagedir`
