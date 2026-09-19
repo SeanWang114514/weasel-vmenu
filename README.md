@@ -15,7 +15,7 @@
 > **English TL;DR** — A Lua + PowerShell extension pack for the
 > [Weasel](https://github.com/rime/weasel) IME on Windows (built and verified against
 > Weasel 0.17.4 + librime 1.13.1 + [rime-ice](https://github.com/iDvel/rime-ice)):
-> press `v` for a menu (`1` 设置 / `2` 剪贴板 / `3` 常用语 / `4` 原符号 /
+> press `v` for a menu (`1` 设置 / `2` 剪贴板 / `3` 快捷输入 / `4` 原符号 /
 > `5` 快捷输入 = calculator, date/time, lunar date, number-to-Chinese, Unicode, radical lookup).
 > Includes a **resident WinForms settings GUI** that opens in ~0.1 s, a clipboard-history
 > quick picker, favourite snippets that appear as **candidate #2 while you type their code**
@@ -89,7 +89,7 @@
 
 | 截图 | 说明 |
 | --- | --- |
-| ![v 菜单](screenshots/ime-01-menu.png) | 按 `v`：短候选（设置 / 剪贴板 / 常用语 / 原符号；**第 5 项「快捷输入」是后加的，这张图是 4 项时的样子**） |
+| ![v 菜单](screenshots/ime-01-menu.png) | 按 `v`：短候选（设置 / 剪贴板 / 快捷输入 / 原符号；**第 5 项「快捷输入」是后加的，这张图是 4 项时的样子**） |
 | ![常用语候选](screenshots/ime-02-favorite-inline.png) | 打字时输入编码前 3 位 `you`，候选第 2 位就是常用语内容 `alice@example.com`（注释「常用语」） |
 | ![回车调用](screenshots/ime-03-favorite-enter.png) | 编码打完按回车，内容直接上屏 |
 | ![数字编码常用语](screenshots/ime-04-digit-favorite.png) | **纯数字编码**：输入 `138` → 候选直接显示 `13800138000`，回车调用 |

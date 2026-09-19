@@ -51,7 +51,7 @@
 
 1. 输入为空时按下 `v`：`menu_processor` → `ctx:push_input("v")`，返回 1（已处理）。
 2. `lua_menu` 看到输入 `v` → 产出 **5 个** `vmenu` 候选
-   （设置 / 剪贴板 / 常用语 / 原符号 / 快捷输入）。
+   （设置 / 剪贴板 / 快捷输入 / 原符号 / 常用语）。
 3. `menu_filter` 看到 `core.mode_of("v") == "menu"` → 只保留 `vmenu` + `vact`，其余全丢。
 4. 按 `1`..`5`：`menu_processor` 的 `cur == "v"` 分支写标记文件（设置窗口）或改写输入
    （`vclip` / `vfav` / 原符号模式 / `vqi` 快捷输入，见 §3.9）；**其余按键 `return 2` 放行** ——

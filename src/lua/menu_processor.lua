@@ -110,16 +110,17 @@ local function handle(key, env)
       return 1
     end
     if repr == "2" then replace_input(ctx, "vclip") return 1 end
-    if repr == "3" then replace_input(ctx, "vfav") return 1 end
+    -- 第 3 项：快捷输入（计算 / 日期 / 时间 / 星期 …）—— 与第 5 项「常用语」互换了位置
+    if repr == "3" then replace_input(ctx, "vqi") return 1 end
     if repr == "4" then
       -- 还原原版 v 模式：输入回到 v，之后用户直接输入符号编码
       replace_input(ctx, "v")
       core.set_raw(ctx, true)
       return 1
     end
-    -- 第 5 项：快捷输入（计算 / 日期 / 时间 / 星期 …）
+    -- 第 5 项：常用语（与第 3 项「快捷输入」互换了位置）
     -- 说明：原来的「文字设置」（vset 纯键盘设置）已去掉，vset* 代码保留但菜单进不去
-    if repr == "5" then replace_input(ctx, "vqi") return 1 end
+    if repr == "5" then replace_input(ctx, "vfav") return 1 end
     return 2
   end
 
