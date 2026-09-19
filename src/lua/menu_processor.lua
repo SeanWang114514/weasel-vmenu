@@ -126,9 +126,13 @@ local function handle(key, env)
   end
 
   -- ===== 快捷输入：选中后把触发前缀直接写进输入框，之后的按键交给原方案 =====
-  -- 菜单保留 6 项，快捷键是「v3 + 字母」：c 计算 / r 日期 / s 时间 / u Unicode /
-  -- n 农历输入 / h 数字货币转写。候选窗口上画出来的标签是数字，所以 1-6 也一并保留，
-  -- 两个键位等价（字母是主推的快捷键）。
+  -- 快捷键是「v3 + 字母」：c 计算 / r 日期 / s 时间 / u Unicode /
+  -- n 农历输入 / h 数字货币转写 / q 返回。字母认的是**项目本身**，与候选顺序无关。
+  -- 另外保留数字键 1-7 —— 候选窗口上的标签是数字，而且**标签按渲染顺序走**，
+  -- 实测渲染顺序是：1 计算 2 日期 3 时间 4 农历输入 5 数字货币转写 6 Unicode 7 返回
+  -- （和 yield_quick 的书写顺序不完全一样，Unicode 被排到了第 6）。
+  -- 所以这里的数字映射必须跟着**实测渲染顺序**，不能跟着书写顺序，否则
+  -- 「按屏幕上写着 5 的那一项」会选错。改动菜单项后要重新量一遍顺序。
   -- 这些前缀都是雾凇拼音自带的（recognizer/patterns + lua_translator），
   -- 原来直接输入这些前缀的方式全部保留：cC / rq / sj / U / N / R。
   if cur == "vqi" then
@@ -136,10 +140,10 @@ local function handle(key, env)
     if k == "1" or k == "c" then replace_input(ctx, "cC") return 1 end
     if k == "2" or k == "r" then replace_input(ctx, "rq") return 1 end
     if k == "3" or k == "s" then replace_input(ctx, "sj") return 1 end
-    if k == "4" or k == "u" then replace_input(ctx, "U") return 1 end
-    if k == "5" or k == "n" then replace_input(ctx, "N" .. os.date("%Y%m%d")) return 1 end
-    if k == "6" or k == "h" then replace_input(ctx, "R") return 1 end
-    if k == "q" then ctx:clear() return 1 end
+    if k == "4" or k == "n" then replace_input(ctx, "N" .. os.date("%Y%m%d")) return 1 end
+    if k == "5" or k == "h" then replace_input(ctx, "R") return 1 end
+    if k == "6" or k == "u" then replace_input(ctx, "U") return 1 end
+    if k == "7" or k == "q" then ctx:clear() return 1 end
     return 2
   end
   -- ===== 设置根菜单 =====
