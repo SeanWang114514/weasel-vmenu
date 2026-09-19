@@ -89,11 +89,12 @@ local function yield_clip_list(seg, more, is_admin)
   for i = 1, #items do
     if shown >= count then break end
     shown = shown + 1
-    local cmt = "剪贴板 " .. i .. "/" .. #items
-    -- 第 1 条的注释顺便说明「当前显示几条 / 怎么显示更多」，
-    -- 因为操作行排在列表末尾，需要翻到最后一页才看得到。
+    -- [用户要求] 剪贴板候选后面不再显示「剪贴板 n/30」这类位置注释（太占地方，
+    --   20% 固定格宽里注释会吃掉小半个格子）。管理列表（v1）只在第一项保留
+    --   「显示 N · m 更多」这条操作性提示，也不再带位置前缀。
+    local cmt = ""
     if is_admin and i == 1 and count < #items then
-      cmt = i .. "/" .. #items .. " · 显示 " .. math.min(count, #items) .. " · m 更多"
+      cmt = "显示 " .. math.min(count, #items) .. " · m 更多"
     end
     yield(item(seg, "vclip", items[i], cmt))
   end
