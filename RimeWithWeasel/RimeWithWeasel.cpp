@@ -334,19 +334,25 @@ BOOL RimeWithWeaselHandler::ProcessKeyEvent(KeyEvent keyEvent,
       digit = (int)keyEvent.keycode - (int)ibus::Keycode::KP_1;
     if (digit >= 0 && !(keyEvent.mask & ibus::Modifier::RELEASE_MASK) &&
         RIME_API_AVAILABLE(rime_api, select_candidate_on_current_page)) {
-      // ⚠️ 闸门：输入为空或**全是数字**时不接管，把数字留给 Lua 的「数字编码」逻辑
-      //   （收藏可以设成 131 这种纯数字编码，用户逐位敲 1→3→1 时要能建码，
-      //    不能被我们当成选词键吃掉）。只有「正在打拼音」时才做标签重映射。
+      // ⚠️ 闸门一：输入为空或**全是数字**时不接管，把数字留给 Lua 的数字编码逻辑
+      //   （收藏可以设成 131 这种纯数字编码，用户逐位敲 1→3→1 时要能建码）。
+      // ⚠️ 闸门二：输入以 `v` 开头时也不接管 —— 那是我们自己的 v 功能菜单与 v 子模式
+      //   （v 菜单 / vclip / vfav / vqi / vset…）。菜单项、子模式都要靠 Lua 的
+      //   menu_processor 收到数字才切换，如果被这里当成「选中并上屏」，按 3 就只会把
+      //   「常用语」三个字写进文档 —— 用户实测的「v 功能无法正常打开」就是这个。
       const char* input = rime_api->get_input(session_id);
       bool digits_only = true;
+      bool v_prefix = false;
+      bool first_char = true;
       for (const char* p = input ? input : ""; *p != '\0'; ++p) {
         if (*p == '\'' || *p == ' ') continue;
-        if (*p < '0' || *p > '9') {
-          digits_only = false;
-          break;
+        if (first_char) {
+          first_char = false;
+          v_prefix = (*p == 'v');
         }
+        if (*p < '0' || *p > '9') digits_only = false;
       }
-      if (!digits_only) {
+      if (!digits_only && !v_prefix) {
         RIME_STRUCT(RimeContext, ctx);
         if (rime_api->get_context(session_id, &ctx)) {
           const int current = ctx.menu.highlighted_candidate_index;
