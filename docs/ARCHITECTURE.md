@@ -245,8 +245,8 @@ request_gui()  ──写──► open-settings.flag ──轮询 60 ms──►
 服务端下发 `ctx.grid_cols = 2` 时，客户端 `HorizontalLayout` 走 `fixed_cells` 分支 ——
 
 * 一屏固定 **2 列 × 3 行 = 6 条**（`vmenu_core.LIST_LIMIT`），**永远展开**，`↑` 在第 1 行被吞掉；
-* 格宽钉死为 **`min(屏宽 27%, 可用宽度/列数)`**（`kVMenuFixedCellPercent = 27`），
-  面板宽度因此与内容无关（剪贴板三页实测都是 `945x144`；`v`→`4` 两条也是 `945x49`）；
+* 格宽钉死为 **`min(屏宽 20%, 可用宽度/列数)`**（`kVMenuFixedCellPercent = 20`），
+  面板宽度因此与内容无关（剪贴板三页实测都是 `707x144`；`v`→`4` 两条也是 `707x49`）；
 * 每格 = `[序号槽][候选词][右对齐的注释]`，候选词可用宽度 = 格右缘 − 注释 − 间距，
   放不下的文字由 DirectWrite 画成 `…`（`SetLayoutWordWrapping(NO_WRAP)` +
   `SetLayoutEllipsisTrimming`）——**只裁绘制，候选文本不动，上屏仍是完整内容**；

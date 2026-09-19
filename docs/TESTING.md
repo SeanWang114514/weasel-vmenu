@@ -617,13 +617,13 @@ pid=14608 DRAW i=2 TEXT rect=52,89,52,127 w=0 cch=33 t=502 <!DOCTYPE html> <html
 ```powershell
 # 1) 先杀旧记事本再开新的：客户端 DLL 是进程内加载，不重启看不到新 DLL
 Get-Process notepad | Stop-Process -Force; Start-Process notepad.exe -ArgumentList '"D:\weasel-build\tst\IME LAYOUT TEST.txt"'
-# 2) 剪贴板：2 列 × 3 行、面板恒宽（应 945x144，三页都一样）
+# 2) 剪贴板：2 列 × 3 行、面板恒宽（应 707x144，三页都一样）
 pwsh -NoProfile -File probe-fixed.ps1 -Keys 'v,2'            -Out c1
 pwsh -NoProfile -File probe-fixed.ps1 -Keys 'v,2,equal'      -Out c2
 pwsh -NoProfile -File probe-fixed.ps1 -Keys 'v,2,equal,equal'-Out c3
 # 3) 选择逻辑与按键：↓ 后数字选「高亮那一行」；↑ 不许收起
 pwsh -NoProfile -File probe-fixed.ps1 -Keys 'v,2' -Down -Digit 2 -Out c4   # 期望上屏 URL（第 4 条）
-pwsh -NoProfile -File probe-fixed.ps1 -Keys 'v,2' -Up           -Out c5   # 期望仍是 945x144
+pwsh -NoProfile -File probe-fixed.ps1 -Keys 'v,2' -Up           -Out c5   # 期望仍是 707x144
 # 4) 常用语 / 原符号 / 回归
 pwsh -NoProfile -File probe-fixed.ps1 -Keys 'v,4' -Digit 1 -Out f1        # 期望上屏第 1 条常用语
 pwsh -NoProfile -File probe-fixed.ps1 -Keys 'v,5' -Down -Up    -Out r1    # 690x49 → 852x191 → 690x49
@@ -634,8 +634,8 @@ pwsh -NoProfile -File probe-fixed.ps1 -Keys 's,h,i'            -Out s1    # 660x
 
 | 量什么 | 命令 | 本轮结果 |
 | --- | --- | --- |
-| 高亮格（蓝块）宽度 | 逐像素找 `B > R + 15` 的 x 范围 | x 36..718 物理 = **455 虚拟 ≈ 屏宽 27%** ✅ |
+| 高亮格（蓝块）宽度 | 逐像素找 `B > R + 15` 的 x 范围 | 高亮格 540 物理 = **360 虚拟 ≈ 屏宽 20%** ✅ |
 | 文字块 / 注释块位置 | `ink.ps1 -In <crop> -Y0 a -Y1 b -Cells @(20,720,1400)` | 每格「文字块 → 右对齐注释块」，注释右缘两列各自对齐 ✅ |
 | 末尾有没有 `…` | `inkmap.ps1 -In <crop> -X0 470 -X1 545 -Y0 112 -Y1 150 -ColStep 1 -RowStep 1` | 基线处 **3 个小点** ✅ |
-| 面板宽度稳不稳 | `probe-fixed.ps1` 打印的 `panel WxH` | 剪贴板三页 **945x144 / 945x144 / 945x144** ✅ |
+| 面板宽度稳不稳 | `probe-fixed.ps1` 打印的 `panel WxH` | 剪贴板三页 **707x144 / 707x143 / 707x143** ✅ |
 

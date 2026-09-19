@@ -653,7 +653,7 @@ if ((i % kGridCols) >= draw_cols) { SetRectEmpty(&_candidateRects[i]); … conti
 > 验证网页通路时用了独立 profile 的 Chrome：`chrome.exe --user-data-dir=D:\weasel-build\chrome-ime-profile
 > --new-window file:///D:/weasel-build/tst/ime-web-test.html`（不动用户的浏览器会话）。
 
-## 7.5 ✅ 已部署（第十九轮，2026-09-19）：剪贴板 / 常用语「固定格宽 + `…` 截断」，格宽上限 = 屏宽 27%
+## 7.5 ✅ 已部署（第十九轮，2026-09-19）：剪贴板 / 常用语「固定格宽 + `…` 截断」，格宽上限 = 屏宽 20%
 
 **用户诉求（原话）**：
 「剪切板改为一行2个 默认显示3行 用正常候选词的逻辑进行选择（但是拓展栏默认展开）」、
@@ -669,14 +669,27 @@ if ((i % kGridCols) >= draw_cols) { SetRectEmpty(&_candidateRects[i]); … conti
 | 默认态 | **永远展开**（不需要按 `↓`），`↑` 在第 1 行**被吞掉**（绝不收起） |
 | 数字键 | 与正常打字同构：**只选「高亮那一行」里的第 N 个**（`row = current/2; target = row*2 + digit`） |
 | `+` / `-` | 按 **6** 翻页（`page_next` / `page_prev`，步长 = 本屏条数） |
-| 格宽 | **固定**：`col_width = min(屏宽 27%, 可用宽度/列数)`（此前是「可用宽度的一半」≈ 屏宽 50%），再与 `120 + candidate_spacing` 取大保底 |
+| 格宽 | **固定**：`col_width = min(屏宽 20%, 可用宽度/列数)`（此前是「可用宽度的一半」≈ 屏宽 50%），再与 `120 + candidate_spacing` 取大保底 |
 | 超长候选 | 绘制阶段裁掉并以 **`…`** 结尾；**候选文本本身不动** → 选中后上屏的仍是完整内容（实测：数字键选第 2 条 → 上屏 3000+ 字全文） |
+
+**格宽上限的三次取值**（都是同一个常量 `kVMenuFixedCellPercent`，一次只改一个数字）：
+
+| 时间点 | 取值 | 每格（虚拟） | 面板实测 | 依据 |
+| --- | --- | --- | --- | --- |
+| 第一次 | 屏宽 ≈50%（`grid_budget/列数`） | 837 | `1700x144` | 「框框长度固定」（原实现直接按可用宽度均分） |
+| 第二次 | 屏宽 **27%** | 461 | `945x144` | 「候选词长度上限缩短至27%」 |
+| 第三次（当前） | 屏宽 **20%** | 341 | `707x144`（≈ 屏宽 41%） | 「框长度减少到20%（也就是减少4/5）」 |
+
+> ⚠️ **快捷输入（`v`→`3`）故意没跟着改**：它一行 4 个、每格 ≈202 虚拟 ≈ **屏宽 11.8%**，
+> 本来就比 20% 还短；套上「屏宽 20%」会把面板从 `808x96` 撑到 ≈`1390x96`（越改越宽，与诉求相反）。
+> 静态 v 菜单（v 主菜单 / v3）继续用「自然宽度 + 4 列」，只有**列表型**（`ctx.grid_cols == 2`）
+> 才走固定格宽。
 
 **客户端改动（本轮真正的工作量在这里）**：
 
 ```cpp
 // HorizontalLayout.cpp —— 固定格宽（服务端下发 grid_cols == 2 的列表模式才启用）
-const int kVMenuFixedCellPercent = 27;           // ← 想调宽调窄只改这一个数字
+const int kVMenuFixedCellPercent = 20;           // ← 想调宽调窄只改这一个数字
 const int kScreenW  = GetSystemMetrics(SM_CXSCREEN);
 const int grid_budget = kScreenW - offsetX - 2*real_margin_x - 16;
 const bool fixed_cells = (explicit_cols && kGridCols == 2 && grid_budget > 0);
@@ -719,11 +732,11 @@ SetLayoutEllipsisTrimming(pTextFormat);   // CreateEllipsisTrimmingSign + DWRITE
 
 | 操作 | 候选窗（虚拟像素） | 读出 / 判定 |
 | --- | --- | --- |
-| `v`→`2` 第 1 页 | `945x144` | 2 列 × 3 行；高亮格蓝块 x 36..718 物理 = **455 虚拟 ≈ 屏宽 27%**；6 条都画出文字，注释「剪贴板 N/29」右对齐成两列 |
-| `v`→`2` 第 2 / 第 3 页（`=`、`==`） | `945x144` / `945x144` | **面板宽度恒定**（修坑 2 之前是 1053 / 945） |
+| `v`→`2` 第 1 页 | `707x144` | 2 列 × 3 行；高亮格蓝块 540 物理 = **360 虚拟 ≈ 屏宽 20%**；6 条都画出文字，注释「剪贴板 N/29」右对齐成两列 |
+| `v`→`2` 第 2 / 第 3 页（`=`、`==`） | `707x144` / `707x143` | **面板宽度恒定**（修坑 2 之前是 1053 / 945） |
 | `v`→`2` → `↓` → 数字 `2` | — | 上屏 `http://127.0.0.1:5173/` = 第 2 行第 2 格（第 4 条）✅ |
-| `v`→`2` → `↑` | `945x144`（不收起） | 高亮停在第 1 行，候选窗不收缩 ✅ |
-| `v`→`4`（常用语 2 条） | `945x49` | 两条各占固定一格，注释「常用语 wsl / 131」右对齐 ✅ |
+| `v`→`2` → `↑` | `707x144`（不收起） | 高亮停在第 1 行，候选窗不收缩 ✅ |
+| `v`→`4`（常用语 2 条） | `707x49` | 两条各占固定一格，注释「常用语 wsl / 131」右对齐 ✅ |
 | `v`→`4` → 数字 `1` | — | 上屏 `wslzhenshuai@163.com` ✅ |
 | `v`→`5`（原符号）/ `↓` / `↑` | `690x49` → `852x191` → `690x49` | 与正常打字完全一致（9 列 1 行 → 4 行 → 收起）✅ |
 | `v`→`5` → 数字 `4` | — | 上屏 `vat` = `vac/van/var/vat/…` 的第 4 个 ✅ |
@@ -733,15 +746,15 @@ SetLayoutEllipsisTrimming(pTextFormat);   // CreateEllipsisTrimmingSign + DWRITE
 **`…` 到底是谁画的**：主题里 `candidate_abbreviate_length: 30`（`%APPDATA%\Rime\weasel.yaml`）
 本来就会把 >30 字的候选**在客户端**缩成「前 29 字 + `...` + 末字」，而且**只影响显示**
 （`UI::Update` 改的是 `ctx_` 副本，上屏文本不受影响）；本轮新增的 DirectWrite 裁剪是**第二道保险**，
-在格宽 27% 之后真正开始生效（像素级确认：候选词末尾有 3 个基线小点）。
+在格宽收紧到 20% 之后真正开始生效（像素级确认：候选词末尾有 3 个基线小点）。
 
 **部署记录**（`tools\deploy-grid-dlls.ps1 -SourceDir D:\weasel-build\weasel\output`）：
 
 | 文件 | 大小 | md5 |
 | --- | --- | --- |
-| `WeaselServer.exe` | 2695168 B | `B69578DADF037BE844E4D5A55B93E8FF` |
-| `weaselx64.dll` → `C:\Windows\System32\weasel.dll` | 1182208 B | `2936549A6E8036090CF2274E0631618B` |
-| `weasel.dll` → `C:\Windows\SysWOW64\weasel.dll` | 1038848 B | `15E27D9AEB64A1F5BB22AE2EC72496DA` |
+| `WeaselServer.exe` | 2695168 B | `BBAE08F85A6F7A01C64F1995C3570C4D` |
+| `weaselx64.dll` → `C:\Windows\System32\weasel.dll` | 1182208 B | `9EBA0A41EE493054FE73663B873B27BE` |
+| `weasel.dll` → `C:\Windows\SysWOW64\weasel.dll` | 1038848 B | `E2787640E485034FA1D8FD13250F21DD` |
 
 旧文件备份：`D:\weasel-build\dll-backup\20260919-164421\`。
 重编：`pwsh -NoProfile -File D:\weasel-build\build-vmenu.ps1 -Only all`（server 20 s / x64 10 s / x86 12 s）。
