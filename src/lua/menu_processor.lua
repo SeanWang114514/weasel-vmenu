@@ -183,6 +183,20 @@ local function handle(key, env)
     return 2
   end
 
+  -- ===== v2（剪贴板）列表：退格 = 取消这次输入 =====
+  -- 用户诉求：「按 v2 后按 back（删除），去除所有的输入，也就是这次输入不算，去除 v2 的输入」。
+  -- 注意：v2 列表的输入是 vclip…，它**不走**下面的 vsetc/vsetf 子模式分支
+  -- （parse_sub 只匹配 ^vset([cf])…），所以这条判断必须放在子模式分支之前才会被执行。
+  -- 只作用于 v2 这一路；设置窗口里的剪贴板管理列表（vsetc…）不受影响，退格仍照原样删一个字。
+  if cur:sub(1, 5) == "vclip" and not core.parse_sub(cur) then
+    local rp = string.lower(repr or "")
+    if rp == "backspace" or rp == "back_space" or rp == "back" then
+      core.debug_log("[vmenu] v2 退格取消：丢掉输入 <" .. cur .. ">")
+      ctx:clear()
+      return 1
+    end
+  end
+
   -- ===== 剪贴板 / 收藏 的子模式 =====
   local base, act, more = core.parse_sub(cur)
   if base then

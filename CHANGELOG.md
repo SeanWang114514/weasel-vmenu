@@ -3,6 +3,20 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 本项目在真机（Windows 11 + Weasel 0.17.4 + librime 1.13.1 + rime-ice）上验证。
 
+## [0.2.12] - 2026-09-19
+
+### v2（剪贴板）里按退格 = 取消这次输入
+
+* 进了 `v` → `2`（剪贴板）之后按 **Backspace**：整个 `vclip…` 输入作废，
+  候选窗关闭、**什么都不上屏**（等于「这次输入不算」）。带筛选词时（`vclip` + 字母）同样生效。
+* 设置窗口里的剪贴板管理列表（`vsetc…`）不受影响，退格仍是删一个字。
+* 修了一个隐蔽的坑：判断最初写在「剪贴板/收藏子模式」块里，而那块只处理 `vsetc…`，
+  v2 的 `vclip` 根本进不去 → 判断从未执行。移到子模式块之前才生效
+  （也解释了先前按空格「取消」为何无效：空格被 selector 正常处理并上屏了）。
+* 新增网页验收工具 `tools/ime-web-test.html`（textarea + 实时镜像 `MIRROR: >>>…<<< len=N`，
+  方便在真实浏览器里截图 + OCR 验收）与用例 `tools/v2-backspace-verify.ps1`、
+  `tools/web-verify2.ps1`、`tools/v2-final-check.ps1`。
+* 只改 Lua，重启服务端即生效。
 ## [0.2.11] - 2026-09-19
 
 ### 快捷输入子菜单改版：只留 6 项，快捷键改成「v3 + 字母」
