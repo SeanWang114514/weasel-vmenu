@@ -126,9 +126,9 @@ void HorizontalLayout::DoLayout(CDCHandle dc, PDWR pDWR) {
   const bool explicit_cols = (_context.grid_cols > 0);
   // [vmenu-grid] 只有「排满一页」才强制等宽（收起 = 9、展开 = 36）。见下面 grid_uniform 的注释。
   const int kGridUniformMin = 8;
-  // [vmenu-fixed] 剪贴板 / 常用语「固定格宽」占屏幕宽度的百分比：用户要求 27%。
-  //   改这一个数字就能整体调宽/调窄（往下还有 120px 的字宽保底）。
-  const int kVMenuFixedCellPercent = 27;
+  // [vmenu-fixed] 剪贴板 / 常用语「固定格宽」占屏幕宽度的百分比：用户定 20%（= 屏宽 1/5，
+  //   相对整屏宽度算是「减少 4/5」）。改这一个数字就能整体调宽/调窄（往下还有 120px 的字宽保底）。
+  const int kVMenuFixedCellPercent = 20;
   const bool grid_multi_row = (candidates_count > kGridCols);
   int col_width = 0;
   int grid_label_w = 0;                // 网格态统一序号槽宽（见下面注释）
