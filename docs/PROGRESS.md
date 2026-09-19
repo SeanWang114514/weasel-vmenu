@@ -278,7 +278,7 @@
 | 修法（源码） | ① `QueryInterface` 不再暴露该接口（只留 `ITfUIElement` / `ITfCandidateListUIElement` / `...Behavior`）；② `StartUI()` 里 `_pbShow = TRUE` 后再 `_MakeUIWindow()` 作保险（`_pbShow` 同时决定 `UpdateUI()` 的 `Show(_pbShow)`，不强制就会「建了但永不显示」） |
 | ★ 本机编不出来 | VS18 **没装 ATL**（`VC\Tools\MSVC\14.51.36231` 下没有 `atlmfc`、vswhere 也查不到 `VC.ATL`）→ `WeaselTSF` 必失败（`atlbase.h`/`afxres.h`）。本地从零编还要先编 Boost（约 40 分钟）+ librime，**且仍会卡在 ATL** |
 | ★ 二进制等效补丁（实际部署的） | `__uuidof(ITfIntegratableCandidateListUIElement)` 把 IID 以 **16 字节常量**编进 DLL：把该常量**最后一字节** `0x7B → 0x7A`，`IsEqualIID()` 永远匹配不上 = 等价于「不再暴露集成接口」。实测该常量在 x86 `weasel.dll` 偏移 **729804**、x64 `weaselx64.dll` 偏移 **825488**，各自**只出现 1 次**，`WeaselServer.exe` 里 **0 次** → 只影响这一处判断 |
-| 部署结果 | `weasel.dll` 1034752 = `60B0F018D85B7DE1322A332E31657D11`、`weaselx64.dll` 1179648 = `0B1307495A5766094CA6636242748677`；`System32` = x64、`SysWOW64` = x86（md5 一一对应 ✅）；备份 `D:\weasel-build\dll-backup\20260918-205936-patch4\` |
+| 部署结果 | `weasel.dll` 1034752 = `60B0F018D85B7DE1322A332E31657D11`、`weaselx64.dll` 1180672 = `EB2A8B8667F3AA11F9DC2A6F7440D9B7`（第九轮：统一列宽严格对齐）；`System32` = x64、`SysWOW64` = x86（md5 一一对应 ✅）；备份 `D:\weasel-build\dll-backup\20260918-205936-patch4\` |
 | 验收证据（Chrome + `file://` 测试页） | 补丁前：只有 `zhe'g` + 应用自画列表、**无数字**；补丁后：`1 这个 2 这关 3 这股 4 组合柜 5 赵河沟 6 遮盖 7 这给 8 鹧鸪 9 这跟`（数字在词**左边**），按 `↓` 展开后**只有第 1 行** 1–9、第 2/3/4 行「开头无数字」✅ |
 | ★ 必须告知用户 | TSF 客户端 DLL 是**进程内**的：用 Chrome / 微信等**已开着的程序**验证时必须**先重启那些程序**（只重启 `WeaselServer.exe` 不够）；这一点与「网格/序号画在服务端」正好相反 |
 | 顺带发现 | 本机**没有 Edge**；`SysWOW64\notepad.exe` 被应用别名拦成 Store 版记事本（想测 32 位得另找程序）；微信输入法与「按程序记住输入法」会让人误判成「小狼毫坏了」 |
@@ -299,6 +299,24 @@
 | 验证（视觉 + 像素，fresh Notepad） | shi→↓展开→→→移到第 3 列（十）→ +：第 1 行 = 驶 逝 狮 …（37–45，＝原第 5 行）且**高亮 = 第 3 列第 1 行 3 狮** ✅；+ 再 - = 与 + 后截图**像素 diff = 0**（精确回到同页同列）✅；在第 4 行按 ↓ → 整屏翻页且高亮仍在第 3 列第 1 行 ✅ |
 ---
 
+### 1.20 候选方格「严格对齐」+ 打字卡顿复检（第九轮，2026-09-19）
+
+**用户诉求**（原话）：「还有下方的预选词要对齐 最好要完全对齐 并且每个预选词都用同一个长度
+（如果实在太长 可以允许压缩到少几个预选词（行列对齐））还有记得修复卡顿问题」
+
+| 环节 | 内容 |
+| --- | --- |
+| ① 旧行为（已部署过的那版） | 展开态 4×9 的列宽是**各格自然宽度**（`HorizontalLayout.cpp` 里 `w += size.cx` 逐个累加）→ 第 1 行带序号、整体右移，而且逐列**累积漂移**：实测第 1 行 vs 第 4 行 = 8/16/25/32/43/59/67/80/**93** px |
+| ② 补丁（`WeaselUI/HorizontalLayout.cpp`） | 循环前先量**统一列宽** `col_width`（所有候选里最宽的一格）；每格把光标**按列号**钉在 `offsetX+margin+((i%cols)+1)*col_width`；序号槽宽度也**钉死**（`grid_label_w`：「数字+空格」比「两个空格」宽 8px，这正是残留漂移的来源）；高亮块 = 完整一格；**收起态也等宽**（用户要「每个预选词同一个长度」），但一行 `9×列宽` 超屏（超长候选）时退回自然宽度并按屏幕宽度下调列数（下限 3） |
+| ③ 中途抓到的真 bug | 第一版用循环里累加的 `vmenu_cell_start` 来「补齐」列宽。**换行时 `w` 被重置成新行行首，而它还是上一行末尾的值** → 第 2/3/4 行只有**第 1 格**画在正确位置，第 2–9 格被推到面板外（实测第 2–4 行各只有 1 个文字簇）。改成按列号算光标后恢复正常 |
+| ④ 验收（同法前后对比） | 旧 DLL `c2_exp.png`：第 1 行对末行逐列偏移 8,16,25,32,43,59,67,80,**93**（最大 93px）❌；新 DLL `i2_exp.png`：0,0,0,1,0,3,0,0,**5**（最大 5px，且这 5px 是高亮**粗体**字的墨迹差，不是格子位置差）✅；收起态与展开态第 1 行词起点**完全相同**：135,241,347,454,559,670,771,877,988 ✅（面板展开时宽度不再跳变） |
+| ⑤ 新工具 | `tools/measure-grid-align.ps1`（自动学面板底色 → 切行 → 按簇宽区分序号/候选词 → 逐列比 x + 列距极差 + 第 1 行对末行漂移）；`tools/measure-key-latency.ps1`（按键 → 画面更新的端到端毫秒） |
+| ⑥ 卡顿复检与修复 | ① `menu_filter` 每次按键遍历**全部候选**（rime-ice 1–2 个字母能出上千条）→ 改成够本页就 `break`；② `fav_hit`/`fav_exact`/`digit_prefix` 每次按键 `io.open` + 逐行解析收藏文件 → 加 3 秒 TTL 缓存 + 写入即失效（实测：10 次调用只读盘 **1** 次）；③ 删掉 `menu_processor` 里对**不存在的 API** 的 pcall 死代码（每次按 `+` 必定抛错）；④ 端到端延迟实测：英文模式（无候选窗）36ms vs 中文模式同量级 → **输入法本身没有额外延迟**（36ms 里含测量脚本注入按键后的固定 22ms 等待 + 轮询 10ms） |
+| ⑦ 诊断坑 | librime-lua 里 **`print` 不进 rime 日志**（实测一个字都没有），所以卡顿诊断统一写 `D:\rime-sandbox\vmenu-debug.log`（`vmenu_core.debug_log`，`DEBUG_LOG=false` 可关） |
+| ⑧ 本机编译链（这轮打通） | ATL 已装；Boost 用 `ci/build-boost.ps1` 的 `--user-config` 法编静态库 —— **x64/x86 必须各自指向自己的 cl.exe**（`Hostx64\x64\cl.exe` / `Hostx64\x86\cl.exe`），只改 `address-model=32` 而不换 cl，b2 会**复用同名目标文件**，编出来的「x86 库」其实是 x64（dumpbin 机器类型仍是 `8664`）；`rime.lib` 由 `rime.dll` 导出表生成（抓**名字列**）；RC 段缺 `afxres.h` 用本地 shim（已 gitignore） |
+| ⑨ 已知残留 | 32 位 `weasel.dll`（`SysWOW64`）仍是旧版 → 32 位程序里看不到对齐效果；64 位（记事本 / Chrome / 微信等绝大多数）已是新版 |
+
+---
 ## 2. 时间线（2026-09-13）
 
 | 时间 | 事件 |
@@ -426,12 +444,12 @@
 
 | 组件 | 状态 |
 | --- | --- |
-| `WeaselServer.exe` | **自己编的网格版**在运行：2756096 字节，md5 `FFA4285B058E81BDA32EC55F45A2D4DD`（run#24，含**标签槽序号**补丁）；`weasel.dll` 1034752 = `60B0F018D85B7DE1322A332E31657D11`、`weaselx64.dll` 1179648 = `0B1307495A5766094CA6636242748677`；`C:\Windows\System32\weasel.dll` = 1179648 = `0B130749…`（= x64）、`C:\Windows\SysWOW64\weasel.dll` = 1034752 = `60B0F018…`（= x86）✅ 5 个文件都对上了。**后缀 `-patch4` 的 md5 是在 run#24 基础上改了集成 IID 一个字节**（见 §1.18 与 `GRID-CANDIDATE-DLL.md` §2.4；未打补丁前的 md5 是 `79E43332…` / `993E74EC…`） |
+| `WeaselServer.exe` | **自己编的网格版**在运行：2684416 字节，md5 `1D87C729A92FCD8336A62C814CBD7B87`（本机自编：标签槽序号 + 翻页/同列光标 + §2.5 补丁）；`weasel.dll` 1034752 = `60B0F018D85B7DE1322A332E31657D11`、`weaselx64.dll` 1180672 = `EB2A8B8667F3AA11F9DC2A6F7440D9B7`（第九轮：统一列宽严格对齐）；`C:\Windows\System32\weasel.dll` = 1180672 = `EB2A8B86…`（= x64，已含对齐补丁）、`C:\Windows\SysWOW64\weasel.dll` = 1034752 = `60B0F018…`（= x86）✅ 5 个文件都对上了。**后缀 `-patch4` 的 md5 是在 run#24 基础上改了集成 IID 一个字节**（见 §1.18 与 `GRID-CANDIDATE-DLL.md` §2.4；未打补丁前的 md5 是 `79E43332…` / `993E74EC…`） |
 | `clipboard-sync.ps1` | 1 个实例 |
 | `vmenu-watcher.ps1` | 1 个实例（监督常驻窗口） |
 | `vmenu-settings-gui.ps1` | 1 个实例（常驻，未打开时是隐藏窗口） |
 | `open-settings.flag` | 稳态下**不存在** |
-| Lua 双目录一致性 | `D:\rime-sandbox\lua\` 与 `%APPDATA%\Rime\lua\` 三处（+ 仓库 `src/lua/`）MD5 必须一致：`vmenu_core.lua` = `C99F3643E3F96440C19730E35BC52722`、`menu_filter.lua` = `8C83EEDA3B668E759D57E55AFA786290`、`menu_processor.lua` = `4EA304F822B2C580993B184EA78101D7` |
+| Lua 双目录一致性 | `D:\rime-sandbox\lua\` 与 `%APPDATA%\Rime\lua\` 三处（+ 仓库 `src/lua/`）MD5 必须一致：`vmenu_core.lua` = `38902B9BF764B5953DE3A683BF40FA3A`、`menu_filter.lua` = `2C6E9BA46FB1A7EB369A80B00AC96610`、`menu_processor.lua` = `0DCF9BA831ACDA530272234A6BE562F2` |
 | `style/layout/max_width` | 1100（只是兜底）——**换行已经不归它管**：自编 DLL 的 `HorizontalLayout.cpp` 按「候选 > 9 时每 9 个换行、≤9 绝不换行」硬编码（用户要求「不许丢候选、必须一行」） |
 | `style/label_format` | 留空（`weasel.custom.yaml` 写 `" "`）→ 不画原生序号；序号改由**自编 DLL 的 `GetLabelText` 覆写**写进标签槽（旧做法 `menu_filter.number_row1` 写注释已删除） |
 | `menu/page_size` | 36（`rime_ice.custom.yaml` + `build/rime_ice.schema.yaml`；= 9 × 4，按 `↓` 展开后的条数） |
@@ -524,3 +542,12 @@
     **✅ 已解决（第八轮 / 见 §1.19）**：自编 `WeaselServer.exe`（补丁 5/6）`+`/`-` 与最后一行 `↓`
     都整屏翻 36 个，高亮回**同列第一行**；`+` 再 `-` 像素级回到原页（diff=0）。
     要更多页就加 `vmenu_page_4…` 开关（context option 只能存布尔，所以每页一个开关）。
+20. **候选方格对齐（第九轮）** —— ✅ 已解决，见 §1.20：统一列宽 + 固定序号槽宽，
+    第 1 行对末行漂移 93px → ≤5px（5px 是高亮粗体字的墨迹差）；收起态也等宽。
+21. **32 位客户端 DLL 还没换成新版（`C:\Windows\SysWOW64\weasel.dll` = 旧版）。**
+    x86 Boost 静态库编不出来：b2 对 `address-model=32` 复用同一个目标目录，
+    即使换 `--user-config` 指向 `Hostx64\x86\cl.exe`，已有目标文件也不会重编
+    （dumpbin 实测机器类型仍是 x64）。要彻底解决：给 x86 单独一个 `--build-dir/--stagedir`
+    并**先清空**，或改用 `using msvc : 14.3x86 : <x86 cl>` 另起一个 toolset 名（库名会变成
+    `-vc143x86-`，需要在 weasel.props 里对上 auto-link 名）。
+    影响面：只影响 32 位程序（记事本/Chrome/微信 等都是 64 位，已生效）。

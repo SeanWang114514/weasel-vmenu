@@ -24,6 +24,20 @@ function M.fav_path() return user_dir() .. "/cn_dicts/favorites.dict.yaml" end
 function M.set_path() return user_dir() .. "/vmenu-settings.txt" end
 function M.gui_flag_path() return user_dir() .. "/open-settings.flag" end
 
+-- 【诊断】librime 的 Lua 里 print 不会进 rime 日志（实测：日志里一个字都没有），
+-- 所以卡顿诊断统一写到用户目录下的 vmenu-debug.log，便于用文件计数取证。
+-- 正式使用时可把 DEBUG_LOG 置 false 彻底关掉。
+M.DEBUG_LOG = true
+local function debug_log(msg)
+  if not M.DEBUG_LOG then return end
+  local f = io.open(user_dir() .. "/vmenu-debug.log", "a")
+  if f then
+    f:write(os.date("%H:%M:%S "), msg, "\n")
+    f:close()
+  end
+end
+M.debug_log = debug_log
+
 -- 请求打开「可视化设置界面」。
 -- 这里只写一个标记文件，绝不在这里启动子进程：在 Rime 输入线程里创建进程
 -- （io.popen / os.execute）正是之前 v2 卡死的根因。
@@ -333,8 +347,45 @@ function M.write_fav(list)
   end
   f:close()
   os.remove(path)
-  return os.rename(tmp, path) and true or false
+  local ok = os.rename(tmp, path) and true or false
+  if ok then M.fav_invalidate() end  -- 刚写完，缓存立刻失效：新收藏马上能命中
+  return ok
 end
+
+-- ---------------------------------------------------------------------------
+-- 【卡顿修复】收藏列表 TTL 缓存
+-- 问题：fav_hit / fav_exact / digit_prefix 都在**按键热路径**上，而它们原来每次
+--       都调 M.read_fav() —— 也就是每个键都 io.open + 逐行解析 favorites.dict.yaml。
+--       在输入线程里做磁盘 I/O 就是「打字卡顿」的来源（本文件开头的设计原则第 2 条
+--       本来就写着「普通打字路径完全不读写文件」，这里把它真正落实）。
+-- 做法：热路径改走 fav_cached()，同一份列表在 FAV_TTL 秒内复用；任何写入立刻失效。
+--       收藏是「用户手动维护」的低频数据，最多 3 秒的旧值对体验没有影响；
+--       而 v 菜单列表这类需要绝对最新的地方仍然直接用 M.read_fav()（保持原语义）。
+-- ---------------------------------------------------------------------------
+local FAV_TTL = 3          -- 秒：缓存有效期
+local _fav_cache = nil
+local _fav_at = 0
+local _fav_reads = 0       -- 真实读盘次数（诊断用，见 M.fav_reads）
+
+local function fav_cached()
+  local now = os.time()
+  if _fav_cache and (now - _fav_at) < FAV_TTL then return _fav_cache end
+  local t0 = os.clock()
+  _fav_cache = M.read_fav()
+  _fav_at = now
+  _fav_reads = _fav_reads + 1
+  debug_log(("[vmenu] 收藏读盘 #%d  %.2fms  %d 条"):format(_fav_reads,
+        (os.clock() - t0) * 1000, #_fav_cache))
+  return _fav_cache
+end
+
+function M.fav_invalidate()
+  _fav_cache = nil
+  _fav_at = 0
+end
+
+function M.fav_reads() return _fav_reads end
+
 
 -- 正常打字时的收藏命中：输入满 3 个字符后，只要输入的 3 个字符是某条收藏
 -- 编码的开头（编码本身不足 3 位的不用这种方式，靠 v 菜单取用），就命中它。
@@ -342,7 +393,7 @@ end
 function M.fav_hit(code)
   if type(code) ~= "string" or #code < 3 then return nil end
   local key = code:lower()
-  local list = M.read_fav()
+  local list = fav_cached()   -- 【卡顿修复】热路径走缓存，不再每个键读盘
   for i = 1, #list do
     local k = (list[i].key or ""):lower()
     local w = list[i].word or ""
@@ -360,7 +411,7 @@ end
 function M.digit_prefix(s)
   if type(s) ~= "string" or s == "" then return false end
   if not s:match("^%d+$") then return false end
-  local list = M.read_fav()
+  local list = fav_cached()   -- 【卡顿修复】同上：数字编码热路径也不读盘
   for i = 1, #list do
     local k = list[i].key or ""
     if #s <= #k and k:match("^%d+$") and k:sub(1, #s) == s then return true end
@@ -375,7 +426,7 @@ end
 function M.fav_exact(code)
   if type(code) ~= "string" or code == "" then return nil end
   local key = code:lower()
-  local list = M.read_fav()
+  local list = fav_cached()   -- 【卡顿修复】同上：回车判定也不读盘
   for i = 1, #list do
     local k = (list[i].key or ""):lower()
     local w = list[i].word or ""

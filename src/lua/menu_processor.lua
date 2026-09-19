@@ -51,15 +51,13 @@ local function handle(key, env)
     -- 主键盘 +（shift+equal）与小键盘 +（KP_Add）在 librime 里都归一化成 plus；
     -- 减号是 minus / KP_Subtract。两个方向都要接，「原来的 +- 翻页」才算回来。
     if repr == "plus" or repr == "KP_Add" then
-      -- [同列光标] 先记住当前选中项所在的「列」，翻页后再放回同一列的最上面一行
-      local col = 0
-      pcall(function()
-        local i = ctx:get_selected_candidate_index()
-        if i then col = i % core.GRID_COLS end
-      end)
+      -- [同列光标] 「翻页后光标停在原列最上方」不在这里做：
+      --   本机 librime 没有「读/写当前选中下标」的 API（get_selected_candidate_index /
+      --   set_selected_candidate_index / selected_candidate_index 全部不存在，实测探针结果），
+      --   原来那两段 pcall 每次按 + 都必定抛错（错误对象本身也是开销），是纯死代码。
+      --   现在由自编 Weasel 补丁完成：RimeWithWeasel.cpp 在翻页后调
+      --   highlight_candidate_on_current_page(session_id, col)，col = 原高亮 % 9。
       pcall(core.page_next, ctx)
-      pcall(function() ctx.selected_candidate_index = col end)
-      pcall(function() ctx:set_selected_candidate_index(col) end)
       return 1
     end
     if repr == "minus" or repr == "KP_Subtract" then

@@ -53,7 +53,12 @@ local function filter(input, env)
     end
     want = core.want_type(code)
     if want == nil then
+      local t_fav = os.clock()
       local ok_fav, hit = pcall(core.fav_hit, code)
+      local dt_fav = (os.clock() - t_fav) * 1000
+      if dt_fav > 3 then
+        core.debug_log(("[vmenu] fav_hit 偏慢 %.2fms (code=%s)"):format(dt_fav, code))
+      end
       if ok_fav and type(hit) == "table" then fav = hit end
     end
   end
@@ -68,18 +73,30 @@ local function filter(input, env)
     -- 展开态一屏已有 36 个（9×4），不再叠加翻页。
     -- [整页翻] 收起态与展开态都翻页（原来展开态完全没接！）；每页 = lim 个，
     -- 所以新一屏的第 1 行正好是原来第 5 行（用户要求），窗口长度仍是 lim（9 或 36）。
-    local step = core.GRID_COLS
     local page = core.page_get(ctx)
     -- 用户要求：**不许丢候选**，全部强制显示在一行（窗口宽度随内容变宽），绝不换行。
     -- 折行与否由 Weasel 侧补丁控制（候选 <=9 时完全不折行），这里只决定「取哪 9 个」。
+    local start = page * lim
+    local need = start + lim        -- 本页最多需要前 need 个
+    if need < lim then need = lim end
     local buf = {}
     local k = 0
+    local t0 = os.clock()
     for cand in input:iter() do
       k = k + 1
       buf[k] = cand
+      -- 【卡顿修复】早停：rime-ice 对 1-2 个字母能产出上千条候选，
+      -- 而可见窗口最多也就 need 个，把后面全部遍历+建表纯属浪费（每个键都做一遍）。
+      if k >= need then break end
     end
-    local start = page * lim   -- [整页翻] 收起态 9 个/页、展开态 36 个/页：于是新一页第 1 行 = 原来第 5 行
-    if start >= k then start = 0 end  -- 翻过头就回到第一页，绝不留空窗口
+    -- 只在真的翻过头时才回到第一页；早停时 k 就是「候选总数不足 need」，判定不变。
+    if start >= k then start = 0 end
+    do
+      local dt = (os.clock() - t0) * 1000
+      if dt > 15 then
+        core.debug_log(("[vmenu] 候选遍历偏慢 %.1fms (k=%d lim=%d page=%d)"):format(dt, k, lim, page))
+      end
+    end
     for i = start + 1, math.min(k, start + lim) do
       yield(buf[i])
     end
@@ -88,12 +105,14 @@ local function filter(input, env)
 
   local buf = {}
   local n = 0
+  local lim = core.grid_limit(ctx)
   for cand in input:iter() do
     if want ~= nil then
       -- v 相关模式：只留自己的候选
       if cand.type == want or cand.type == "vact" then
         n = n + 1
         buf[n] = cand
+        if n >= lim then break end   -- 【卡顿修复】够一屏就停
       end
     else
       -- 正常打字：全收，顺便把已经存在的同一条收藏候选去掉，避免重复
@@ -102,6 +121,7 @@ local function filter(input, env)
       else
         n = n + 1
         buf[n] = cand
+        if n >= lim then break end   -- 【卡顿修复】够一屏就停（收藏还占 1 位，多收 1 个也无妨）
       end
     end
   end
@@ -113,7 +133,6 @@ local function filter(input, env)
     end
     -- 同样受当前状态限制：收起时最多 9 个（一行，不换行），按 ↓ 展开后才能看到最多 36 个，
     -- 也就是「每行 9 个」，第 10 个及以后靠展开查看。
-    local lim = core.grid_limit(ctx)
     for i = 1, math.min(n, lim) do
       -- v 菜单的序号同样交给 Weasel 的标签槽（按高亮行 1-9）。
       -- 候选自带的注释（如快捷输入的「按 1 · …」）保持原样，不再拼数字。
@@ -126,7 +145,6 @@ local function filter(input, env)
   local c = Candidate("vfav", 0, #code, fav.word, "常用语")
   c.quality = 500000
   local out = place(buf, 2, c)
-  local lim = core.grid_limit(ctx)
   for i = 1, #out do
     if i > lim then break end
     yield(out[i])

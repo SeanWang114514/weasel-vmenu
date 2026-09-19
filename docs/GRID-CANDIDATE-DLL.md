@@ -428,39 +428,55 @@ $log = Get-ChildItem "$env:LOCALAPPDATA\Temp\rime.weasel\*.log" | Sort LastWrite
 
 ---
 
-## 7.1 已写好、但**用户选择暂不部署**的补丁：候选方格「统一列宽」严格对齐
+## 7.1 ✅ 已部署（第九轮，2026-09-19）：候选方格「统一列宽」严格对齐
 
-**用户诉求**：「能不能让每个候选词严格地整齐地在一行」。
+**用户诉求**：「还有下方的预选词要对齐 最好要完全对齐 并且每个预选词都用同一个长度
+（如果实在太长 可以允许压缩到少几个预选词（行列对齐））」
 
-**根因**：`WeaselUI/HorizontalLayout.cpp::DoLayout` 是**按每个候选的真实宽度逐个累加** `w`
-（`w += size.cx * textFontValid` 等），所以「这个」比「这」宽一格，**每行第 2 列的起点都不一样**，
-展开后的 9×4 网格参差不齐（收起态单行看不出来）。
+**根因**：`WeaselUI/HorizontalLayout.cpp::DoLayout` 原来**按每个候选的真实宽度逐个累加** `w`
+（`w += size.cx * textFontValid` …），于是每格宽度不同：第 1 行带序号（「数字 + 空格」比「两个空格」
+宽约 8px）整体右移，第 2–4 行各格之间又随词长参差 → 逐列**累积漂移**（实测最大 93px）。
 
-**补丁内容**（已提交在本地 `weasel-grid-build` 分支，commit `f0c47b6`，**未编入任何已部署的 DLL**）：
+**最终实现**（本地 `weasel-grid-build` 分支，已编进部署的 DLL；旧 commit `f0c47b6` 是第一版，有 bug）：
 
-1. 在候选循环**之前**先量出**统一列宽** `col_width`：遍历所有候选，取
-   「标签（`GetLabelText`）+ `hilite_spacing` + 候选词 +（注释）」里最宽的一格，再加 `candidate_spacing`；
-2. 循环里记录 `vmenu_cell_start`，每个候选走完后把 `w` **补齐**到 `cell_start + col_width` ——
-   下一列必从固定 x 开始，这是「每列严格对齐」的关键一步；
-3. 高亮块 `_candidateRects[i]` 在网格态 = **完整一格**（等宽等高），不再被末尾那段
-   「把最后一个候选拉到窗口右缘」的代码拉伸（那句已加 `!grid_multi_row` 保护）；
-4. `grid_multi_row` / `kGridCols` / `col_width` 提到 `if (candidates_count)` 之外，让两段 pass 都能用。
+1. 循环前量出**统一列宽** `col_width` = 所有候选里最宽的一格（统一序号槽宽 `grid_label_w`
+   + `hilite_spacing` + 词 + 注释）+ `candidate_spacing`；
+2. 每格走完后把光标**按列号**钉死：
+   `w = offsetX + real_margin_x + ((i % cols) + 1) * col_width - _style.candidate_spacing`；
+3. 序号槽宽度 `grid_label_w` 对所有行统一（高亮行画 `1 `–`9 `，其余行两个空格占位）；
+4. 高亮块 `_candidateRects[i]` = **完整一格**（等宽）；「把最后一个候选拉到窗口右缘」那句加
+   `!grid_uniform` 保护；
+5. **收起态（单行 9 个）也等宽** —— 用户要「每个预选词都用同一个长度」；若一行 `9 × col_width`
+   超出屏幕（有超长候选）则退回自然宽度，并按屏幕宽度反算每行最多几列（下限 3）。
 
-**为什么没部署**：本机 VS18 **缺 ATL 组件**（`atlmfc` 不存在）→ `WeaselTSF`/`WeaselUI` **编不出来**✗；
-本地从零编还要先编 Boost（约 40 分钟）+ librime，且仍会卡在 ATL；用户明确要求**不要推 GitHub**，
-因此 2026-09-18 决定**保持现状**（源码留档，随时可编）。
+**踩过的坑（第一版补丁的 bug，务必别再犯）**：第一版用循环里 `w` 的快照 `vmenu_cell_start` 来
+「补齐」列宽。**换行时 `w` 被重置成新行行首，而 `vmenu_cell_start` 还是上一行末尾的值** →
+第 2/3/4 行只有**第 1 格**在正确位置，第 2–9 格被推到面板外（实测第 2–4 行各只有 1 个文字簇；
+肉眼看就是每行只剩第一个词）。
+**结论：在有「按行重置」的布局里，跨行位置必须由「行号/列号」算出来，不能沿用累加值。**
 
-**要启用时怎么做**（二选一）：
-* 用 Visual Studio Installer 勾上「**C++ ATL for latest v143 build tools**」（Microsoft 官方源，非上传），
-  然后在 `D:\weasel-build` 跑本地构建脚本（`local-build.ps1` 的流程：MSBuild 上 PATH → ATL 注入 →
-  `ci/build-boost.ps1` → `cmd /c ".\build.bat data opencc rime weasel"`），出 `output\weasel*.dll` 与
-  `WeaselServer.exe`，再按 §4.2 换 5 个文件；
-* 或者推一次 `weasel-grid-build` 触发 CI（用户当前明确禁止）。
+**验收（视觉 + 像素，工具 `tools/measure-grid-align.ps1`）**：
 
-**验收方法**（编好后）：展开态截图，量**每行第 2 列的左边缘 x 坐标是否完全一致**（改前会差几十像素）。
+| 图 | 逐列结果 |
+| --- | --- |
+| 旧 DLL `shots/c2_exp.png` | 第 1 行对第 4 行偏移 `8,16,25,32,43,59,67,80,93` → **最大 93px** ❌ |
+| 新 DLL `shots/i2_exp.png` | `0,0,0,1,0,3,0,0,5` → **最大 5px**，且这 5px 出自高亮**粗体**字的墨迹 ✅ |
+| 收起态 vs 展开态第 1 行 | 词起点完全相同 `135,241,347,454,559,670,771,877,988` ✅（展开时面板宽度不再跳变） |
+
+量法：自动学出面板底色（暗像素里出现最多的颜色）→ 切行（阈值 = 面板内每行亮像素底噪 + 20，
+否则 4 行会被并成 1 行）→ 按**簇宽度**区分「序号(窄)/候选词(宽)」并丢掉左右描边 →
+逐列比词起点 x，同时报告列距极差与「第 1 行对末行」的逐列漂移。
+
+**本机编译链**（这一轮打通，细节见 `PROGRESS.md` §1.20 ⑧）：ATL 已装；Boost 用
+`ci/build-boost.ps1` 的 `--user-config` 法编静态库 —— **x64/x86 必须各自指向自己的 cl.exe**
+（`Hostx64\x64\cl.exe` / `Hostx64\x86\cl.exe`），只改 `address-model=32` 而不换 cl，b2 会
+**复用同名目标文件**，编出来的「x86 库」其实是 x64（dumpbin 看机器类型仍是 `8664`）；
+`rime.lib` 由 `rime.dll` 导出表生成（抓**名字列**）；RC 段缺 `afxres.h` 用本地 shim（已 gitignore）。
+
+**已知残留**：32 位 `weasel.dll`（`C:\Windows\SysWOW64\weasel.dll`）仍是旧版 → 32 位程序里
+看不到对齐效果（见 `PROGRESS.md` §5 第 21 条）。
 
 ---
-
 ## 7. 未做 / 待确认
 
 | 项 | 说明 |

@@ -3,6 +3,26 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 本项目在真机（Windows 11 + Weasel 0.17.4 + librime 1.13.1 + rime-ice）上验证。
 
+## [0.2.7] — 2026-09-19
+
+候选方格**严格对齐**上线（本机首次编出 `weaselx64.dll` 并部署到 `System32\weasel.dll`）：
+
+* **统一列宽**：所有候选格等宽；光标按**列号**钉在 `offsetX + margin + (列号+1) × 列宽`。
+  序号槽宽度也钉死 —— 「数字+空格」比「两个空格」宽 8px，那正是残留漂移的来源。
+* **修掉第一版补丁的换行 bug**：换行后仍用上一行的 `cell_start` 补齐 → 第 2–4 行只剩第 1 格可见。
+* **收起态（单行 9 个）同样等宽** → 「每个预选词都用同一个长度」；一行 9 格超屏（超长候选）时
+  退回自然宽度并按屏幕宽度下调列数，绝不把面板撑出屏幕。
+* 验收：第 1 行对末行逐列漂移 **93px → ≤5px**（5px 是高亮粗体字的墨迹差）；
+  收起态与展开态第 1 行词起点完全一致。
+* **卡顿复检**：候选遍历加早停（rime-ice 上千条只取本页）、收藏命中加 3 秒 TTL 缓存
+  （实测 10 次调用只读盘 1 次）、删掉对不存在 API 的 pcall 死代码；
+  端到端按键延迟与英文模式基线同量级 → 输入法无额外延迟。
+* 新增工具：`tools/measure-grid-align.ps1`（行列对齐客观量）、`tools/measure-key-latency.ps1`（按键延迟）。
+
+md5：`weaselx64.dll` / `System32\weasel.dll` = `EB2A8B8667F3AA11F9DC2A6F7440D9B7`（1180672 B）。
+32 位 `weasel.dll`（`SysWOW64`）仍是旧版。详见
+[`docs/GRID-CANDIDATE-DLL.md`](docs/GRID-CANDIDATE-DLL.md) §7.1 与
+[`docs/PROGRESS.md`](docs/PROGRESS.md) §1.20。
 ## [0.2.6] — 2026-09-19
 
 候选方格翻页收尾，**第一次在本机编出 `WeaselServer.exe`**（不再依赖 CI）：
