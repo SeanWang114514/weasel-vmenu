@@ -945,6 +945,45 @@ inline std::string _GetLabelText(const std::vector<Text>& labels,
   return wtou8(std::wstring(buffer));
 }
 
+// v 功能菜单（vmenu_*.lua）：输入框里那一串其实是**内部编码**
+// （vclip = 剪贴板 / vqi = 快捷输入 / vfav = 常用语 / vset* = 设置 / v = 功能菜单）。
+// 用户明确要求「不要显示这个内部代码」，所以这里按前缀换成中文名再交给前端显示。
+//   * 首字母不是 v 的一律不动：普通拼音、以及 cC / rq / sj / U / N / R 这些前缀照旧显示；
+//   * 原符号模式（vraw_mode，菜单第 5 项）下也完全不动 —— 那时 v 开头是用户自己敲的符号编码。
+// 注意：文案一律写成宽字符的 \u 转义再由 wtou8 转 UTF-8。本工程没有 /utf-8 编译开关，
+//       直接写中文窄字符串会被按系统代码页（GBK）处理，出来的字节不是 UTF-8，前端就是乱码。
+inline bool _VMenuLabel(RimeApi* api,
+                        RimeSessionId session_id,
+                        const char* code,
+                        std::string* label) {
+  if (!api || !code || code[0] != 'v')
+    return false;
+  if (api->get_option(session_id, "vraw_mode"))
+    return false;
+  std::string input(code);
+  if (input.size() == 1) {
+    *label = wtou8(L"\u529f\u80fd\u83dc\u5355");  // 功能菜单
+    return true;
+  }
+  if (input.compare(0, 5, "vclip") == 0) {
+    *label = wtou8(L"\u526a\u8d34\u677f");  // 剪贴板
+    return true;
+  }
+  if (input.compare(0, 4, "vqi") == 0) {
+    *label = wtou8(L"\u5feb\u6377\u8f93\u5165");  // 快捷输入
+    return true;
+  }
+  if (input.compare(0, 4, "vfav") == 0) {
+    *label = wtou8(L"\u5e38\u7528\u8bed");  // 常用语
+    return true;
+  }
+  if (input.compare(0, 4, "vset") == 0) {
+    *label = wtou8(L"\u8bbe\u7f6e");  // 设置
+    return true;
+  }
+  return false;
+}
+
 bool RimeWithWeaselHandler::_Respond(WeaselSessionId ipc_id, EatLine eat) {
   std::set<std::string> actions;
   std::list<std::string> messages;
@@ -1007,7 +1046,20 @@ bool RimeWithWeaselHandler::_Respond(WeaselSessionId ipc_id, EatLine eat) {
             break;
           }
           // no preview, fall back to composition
-        case UIStyle::COMPOSITION:
+        case UIStyle::COMPOSITION: {
+          std::string vlabel;
+          if (_VMenuLabel(rime_api, session_id, ctx.composition.preedit,
+                          &vlabel)) {
+            // v 功能菜单：不把内部编码显示出来，只显示它代表的功能名（无高亮范围）
+            messages.push_back(std::string("ctx.preedit=") +
+                               escape_string<char>(vlabel.c_str()) + '\n');
+            int vlen = utf8towcslen(vlabel.c_str(), (int)vlabel.size());
+            messages.push_back(std::string("ctx.preedit.cursor=") +
+                               std::to_string(vlen) + ',' +
+                               std::to_string(vlen) + ',' +
+                               std::to_string(vlen) + '\n');
+            break;
+          }
           messages.push_back(std::string("ctx.preedit=") +
                              escape_string<char>(ctx.composition.preedit) +
                              '\n');
@@ -1025,11 +1077,17 @@ bool RimeWithWeaselHandler::_Respond(WeaselSessionId ipc_id, EatLine eat) {
                 '\n');
           }
           break;
-        case UIStyle::PREVIEW_ALL:
+        }
+        case UIStyle::PREVIEW_ALL: {
           CandidateInfo cinfo;
           _GetCandidateInfo(cinfo, ctx);
+          std::string vlabel;
+          const bool v_menu = _VMenuLabel(rime_api, session_id,
+                                          ctx.composition.preedit, &vlabel);
+          std::string preedit_show =
+              v_menu ? vlabel : std::string(ctx.composition.preedit);
           std::string topush = std::string("ctx.preedit=") +
-                               escape_string<char>(ctx.composition.preedit) +
+                               escape_string<char>(preedit_show.c_str()) +
                                "  [";
           for (auto i = 0; i < ctx.menu.num_candidates; i++) {
             std::string label =
@@ -1051,7 +1109,7 @@ bool RimeWithWeaselHandler::_Respond(WeaselSessionId ipc_id, EatLine eat) {
                       escape_string(comment);
           }
           messages.push_back(topush + " ]\n");
-          if (ctx.composition.sel_start <= ctx.composition.sel_end) {
+          if (!v_menu && ctx.composition.sel_start <= ctx.composition.sel_end) {
             messages.push_back(
                 std::string("ctx.preedit.cursor=") +
                 std::to_string(utf8towcslen(ctx.composition.preedit,
@@ -1065,6 +1123,7 @@ bool RimeWithWeaselHandler::_Respond(WeaselSessionId ipc_id, EatLine eat) {
                 '\n');
           }
           break;
+        }
       }
     }
     if (ctx.menu.num_candidates) {
@@ -1618,16 +1677,23 @@ void RimeWithWeaselHandler::_GetContext(Context& weasel_context,
   RIME_STRUCT(RimeContext, ctx);
   if (rime_api->get_context(session_id, &ctx)) {
     if (ctx.composition.length > 0) {
-      weasel_context.preedit.str = u8tow(ctx.composition.preedit);
-      if (ctx.composition.sel_start < ctx.composition.sel_end) {
-        TextAttribute attr;
-        attr.type = HIGHLIGHTED;
-        attr.range.start =
-            utf8towcslen(ctx.composition.preedit, ctx.composition.sel_start);
-        attr.range.end =
-            utf8towcslen(ctx.composition.preedit, ctx.composition.sel_end);
+      std::string vlabel;
+      if (_VMenuLabel(rime_api, session_id, ctx.composition.preedit,
+                      &vlabel)) {
+        // v 功能菜单：前端只看到功能名，看不到 vclip / vqi / vfav 这类内部编码
+        weasel_context.preedit.str = u8tow(vlabel.c_str());
+      } else {
+        weasel_context.preedit.str = u8tow(ctx.composition.preedit);
+        if (ctx.composition.sel_start < ctx.composition.sel_end) {
+          TextAttribute attr;
+          attr.type = HIGHLIGHTED;
+          attr.range.start =
+              utf8towcslen(ctx.composition.preedit, ctx.composition.sel_start);
+          attr.range.end =
+              utf8towcslen(ctx.composition.preedit, ctx.composition.sel_end);
 
-        weasel_context.preedit.attributes.push_back(attr);
+          weasel_context.preedit.attributes.push_back(attr);
+        }
       }
     }
     if (ctx.menu.num_candidates) {
