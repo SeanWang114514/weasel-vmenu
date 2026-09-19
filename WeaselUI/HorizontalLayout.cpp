@@ -113,6 +113,8 @@ void HorizontalLayout::DoLayout(CDCHandle dc, PDWR pDWR) {
   // only when there are candidates
   // [vmenu-grid] 统一列宽的量：作用域要覆盖下面「定位」与「设置 rect」两段 pass
   const int kGridCols = 9;
+  // [vmenu-grid] 只有「排满一页」才强制等宽（收起 = 9、展开 = 36）。见下面 grid_uniform 的注释。
+  const int kGridUniformMin = 8;
   const bool grid_multi_row = (candidates_count > kGridCols);
   int col_width = 0;
   int grid_label_w = 0;                // 网格态统一序号槽宽（见下面注释）
@@ -168,9 +170,12 @@ void HorizontalLayout::DoLayout(CDCHandle dc, PDWR pDWR) {
     // 统一列宽在**展开态一律启用**（要的就是严格行列对齐）；
     // 收起态（单行 9 个）也启用，让每一格等宽 —— 用户要求「每个预选词都用同一个长度」，
     // 收起态量出来 95/100/101 这种 ±3px 的抖动就是各格自然宽度不同造成的。
+    // 但**必须排满一页才启用**：像 v 菜单那样只有 5–6 条、每条还带长短不一的注释，
+    // 强制等宽会把面板按「最宽那条 × 条数」撑大（实测 700px → 1117px），
+    // 那种列表保持自然宽度更紧凑；而候选页（收起 9 / 展开 36）永远是满的。
     // 唯一的例外：这一行 9 格会超出屏幕（候选超长）时退回自然宽度，别把面板撑出屏幕。
     const bool grid_uniform =
-        (candidates_count > 1 && col_width > 0 &&
+        (candidates_count >= kGridUniformMin && col_width > 0 &&
          (grid_multi_row || grid_budget <= 0 ||
           kGridCols * col_width <= grid_budget));
     for (auto i = 0; i < candidates_count && i < MAX_CANDIDATES_COUNT; ++i) {
