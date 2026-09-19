@@ -1,4 +1,4 @@
-Add-Type -TypeDefinition @'
+﻿Add-Type -TypeDefinition @'
 using System; using System.Runtime.InteropServices;
 public class M5 {
  [DllImport("user32.dll")] public static extern bool MoveWindow(IntPtr h,int x,int y,int w,int ht,bool r);

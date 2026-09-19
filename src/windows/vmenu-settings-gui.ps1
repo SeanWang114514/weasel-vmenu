@@ -101,6 +101,14 @@ function Save-Settings {
   $script:pageSize = $Page
 }
 
+function Clip-Stamp {
+  # 剪贴板缓存文件的指纹（修改时间 + 长度），用来发现「别处改过它」：
+  # v 菜单里清空历史、后台 clipboard-sync 新增了一条，都会改这个文件。
+  $fi = Get-Item -LiteralPath $CLIP_PATH -ErrorAction SilentlyContinue
+  if ($null -eq $fi) { return 'missing' }
+  return ('{0}:{1}' -f $fi.LastWriteTimeUtc.Ticks, $fi.Length)
+}
+
 function Load-Clipboard {
   $list = New-Object System.Collections.ArrayList
   foreach ($line in (Read-AllLines -Path $CLIP_PATH)) {
@@ -236,6 +244,7 @@ $clipHint.Text = "输入法里按 v → 2 可以快速取用。`n`n双击某一�
 
 function Refresh-Clipboard {
   Load-Clipboard
+  $script:clipStamp = Clip-Stamp
   $clipList.BeginUpdate()
   $clipList.Items.Clear()
   for ($i = 0; $i -lt $script:clip.Count; $i++) {
@@ -798,6 +807,12 @@ while (-not $form.IsDisposed) {
   if ($null -ne $flagText) {
     # 标记文件里写 hide 表示「隐藏窗口」（测试用）
     if ($flagText -eq 'hide') { Hide-SettingsWindow } else { Show-SettingsWindow }
+  }
+  # 文件被别处改动（v 菜单清空历史 / 后台同步新增了一条）→ 自动重载列表。
+  # 不重载的话窗口里显示的是旧列表；那份旧列表一旦被「保存」写回去，
+  # 已经清空的剪贴板历史就会复活（就是用户报的那个毛病）。
+  if ($form.Visible) {
+    if ((Clip-Stamp) -ne $script:clipStamp) { Refresh-Clipboard }
   }
   Start-Sleep -Milliseconds 60
 }

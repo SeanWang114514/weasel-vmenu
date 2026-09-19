@@ -1,4 +1,4 @@
-# 把 CI 编出来的 weasel.dll / weaselx64.dll / WeaselServer.exe 装进小狼毫安装目录，
+﻿# 把 CI 编出来的 weasel.dll / weaselx64.dll / WeaselServer.exe 装进小狼毫安装目录，
 # **并同步换掉系统目录里那两个 TSF 客户端 DLL**。
 #
 # 网格布局（WeaselUI/HorizontalLayout）、序号（GetLabelText 覆写）和方向键导航

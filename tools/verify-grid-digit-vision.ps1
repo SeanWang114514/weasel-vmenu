@@ -1,4 +1,4 @@
-Add-Type -AssemblyName System.Drawing
+﻿Add-Type -AssemblyName System.Drawing
 Add-Type -TypeDefinition 'using System;using System.Runtime.InteropServices;public class VS{[DllImport("user32.dll")]public static extern bool MoveWindow(IntPtr h,int x,int y,int w,int ht,bool r);[DllImport("user32.dll")]public static extern bool SetForegroundWindow(IntPtr h);[DllImport("user32.dll")]public static extern void keybd_event(byte vk,byte sc,uint f,UIntPtr e);[DllImport("user32.dll")]public static extern uint MapVirtualKey(uint c,uint t);}'
 function Tap([byte]$vk){ $sc=[VS]::MapVirtualKey([uint32]$vk,0); [VS]::keybd_event($vk,[byte]$sc,0,[UIntPtr]::Zero); Start-Sleep -Milliseconds 60; [VS]::keybd_event($vk,[byte]$sc,2,[UIntPtr]::Zero); Start-Sleep -Milliseconds 130 }
 function Shot([string]$p){ $bmp=New-Object Drawing.Bitmap 1040,460; $g=[Drawing.Graphics]::FromImage($bmp)

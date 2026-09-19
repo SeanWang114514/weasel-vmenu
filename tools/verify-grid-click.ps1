@@ -1,4 +1,4 @@
-Add-Type -TypeDefinition @'
+﻿Add-Type -TypeDefinition @'
 using System; using System.Runtime.InteropServices; using System.Text; using System.Collections.Generic;
 public class EN2 {
  public delegate bool EnumProc(IntPtr h, IntPtr l);
