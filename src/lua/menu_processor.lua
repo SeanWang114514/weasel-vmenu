@@ -228,7 +228,7 @@ local function handle(key, env)
     if k == "4" or k == "n" then replace_input(ctx, "N" .. os.date("%Y%m%d")) return 1 end
     if k == "5" or k == "h" then replace_input(ctx, "R") return 1 end
     if k == "6" or k == "u" then replace_input(ctx, "U") return 1 end
-    if k == "7" or k == "q" then ctx:clear() return 1 end
+    if k == "7" or k == "q" then replace_input(ctx, "v") return 1 end
     return 2
   end
   -- ===== 设置根菜单 =====
