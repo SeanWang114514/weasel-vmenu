@@ -61,6 +61,11 @@ $MIN_PAGE = 20
 $MAX_PAGE = 50
 $STEP = 10
 
+# 防误触（与 lua/vmenu_core.lua 的 M.MISINPUT_* 常量保持一致）
+$MI_DEFAULT = 30   # 推荐值（ms）：人类最快打字 ≈ 300ms/键，30ms 远低于人类下限
+$MI_MIN = 10
+$MI_MAX = 200
+
 $script:pageSize = $MIN_PAGE
 $script:clip = @()
 $script:favs = @()
@@ -85,10 +90,19 @@ function Write-TextFile {
 
 function Load-Settings {
   $script:pageSize = $MIN_PAGE
+  $script:miEnabled = $true
+  $script:miInterval = $MI_DEFAULT
   foreach ($line in (Read-AllLines -Path $SET_PATH)) {
     if ($line -match '^\s*clip_page\s*=\s*(\d+)') {
       $n = [int]$Matches[1]
       if ($n -ge $MIN_PAGE -and $n -le $MAX_PAGE) { $script:pageSize = $n }
+    }
+    if ($line -match '^\s*misinput_interval\s*=\s*(\d+)') {
+      $n = [int]$Matches[1]
+      if ($n -ge $MI_MIN -and $n -le $MI_MAX) { $script:miInterval = $n }
+    }
+    if ($line -match '^\s*misinput_protect\s*=\s*(\w+)') {
+      $script:miEnabled = ($Matches[1] -eq 'true')
     }
   }
 }
@@ -97,8 +111,27 @@ function Save-Settings {
   param([int]$Page)
   if ($Page -lt $MIN_PAGE) { $Page = $MIN_PAGE }
   if ($Page -gt $MAX_PAGE) { $Page = $MAX_PAGE }
-  Write-TextFile -Path $SET_PATH -Text "# v 功能菜单设置`nclip_page=$Page`n"
   $script:pageSize = $Page
+  Save-AllSettings
+}
+
+function Save-AllSettings {
+  # 一次写全所有字段：任何一处保存都不会冲掉其它设置
+  # （输入法端 lua 的 write_page / write_misinput 也是这种写法，两边一致）。
+  $miOn = if ($script:miEnabled) { 'true' } else { 'false' }
+  Write-TextFile -Path $SET_PATH -Text ("# v 功能菜单设置`nclip_page=$($script:pageSize)`nmisinput_protect=$miOn`nmisinput_interval=$($script:miInterval)`n")
+}
+
+function Update-MiControls {
+  # 把当前设置刷到防误触页的控件上（初始载入与每次重新显示窗口时调用）
+  if ($null -eq $chkMiEnable) { return }
+  $chkMiEnable.Checked = [bool]$script:miEnabled
+  $n = [int]$script:miInterval
+  if ($n -lt $MI_MIN) { $n = $MI_MIN }
+  if ($n -gt $MI_MAX) { $n = $MI_MAX }
+  $trkMi.Value = $n
+  $txtMi.Text = "$n"
+  $lblMiState.Text = "当前：$(if ($script:miEnabled) { '启用' } else { '关闭' }) · $n ms"
 }
 
 function Clip-Stamp {
@@ -188,6 +221,8 @@ $tabFav = New-Object Windows.Forms.TabPage
 $tabFav.Text = '  常用语  '
 $tabSet = New-Object Windows.Forms.TabPage
 $tabSet.Text = '  设置与缓存  '
+$tabMi = New-Object Windows.Forms.TabPage
+$tabMi.Text = '  防误触  '
 
 $status = New-Object Windows.Forms.StatusStrip
 $statusLabel = New-Object Windows.Forms.ToolStripStatusLabel
@@ -476,6 +511,89 @@ $btnNative.Add_Click({
 })
 $grpNative.Controls.AddRange(@($lblNative, $btnNative))
 
+# ===== 防误触页 =====
+# 两次按键间隔 < 阈值时吞掉后一个键（键盘抖动 / 手滑连击）。
+# 阈值与开关写在 vmenu-settings.txt 的 misinput_* 字段，由 lua/menu_processor.lua 每键读取。
+$tabMi.Padding = New-Object Windows.Forms.Padding(16)
+
+$grpMi = New-Object Windows.Forms.GroupBox
+$grpMi.Text = '防误触（间隔太短的连续按键自动吞掉）'
+$grpMi.Left = 16; $grpMi.Top = 16; $grpMi.Width = 900; $grpMi.Height = 240
+$grpMi.Anchor = 'Top,Left,Right'
+
+$chkMiEnable = New-Object Windows.Forms.CheckBox
+$chkMiEnable.Text = '启用防误触'
+$chkMiEnable.Left = 18; $chkMiEnable.Top = 30; $chkMiEnable.Width = 140
+
+$lblMiInterval = New-Object Windows.Forms.Label
+$lblMiInterval.Text = '最小间隔（毫秒）：'
+$lblMiInterval.Left = 18; $lblMiInterval.Top = 68; $lblMiInterval.Width = 130
+
+$txtMi = New-Object Windows.Forms.TextBox
+$txtMi.Left = 152; $txtMi.Top = 64; $txtMi.Width = 70
+$txtMi.TextAlign = 'Center'
+
+$lblMiRange = New-Object Windows.Forms.Label
+$lblMiRange.Text = "（范围 $MI_MIN ~ $MI_MAX ms，推荐 $MI_DEFAULT ms）"
+$lblMiRange.Left = 232; $lblMiRange.Top = 68; $lblMiRange.Width = 300
+$lblMiRange.ForeColor = [Drawing.Color]::FromArgb(120, 120, 120)
+
+# 恢复推荐值：↺（逆时针圆环箭头）
+$btnMiReset = New-Object Windows.Forms.Button
+$btnMiReset.Text = [string][char]0x21BA + " 恢复推荐"
+$btnMiReset.Font = New-Object Drawing.Font('Segoe UI Symbol', 10)
+$btnMiReset.Left = 546; $btnMiReset.Top = 60; $btnMiReset.Width = 130; $btnMiReset.Height = 30
+$btnMiReset.FlatStyle = 'Flat'
+$btnMiReset.Cursor = [Windows.Forms.Cursors]::Hand
+
+$trkMi = New-Object Windows.Forms.TrackBar
+$trkMi.Minimum = $MI_MIN
+$trkMi.Maximum = $MI_MAX
+$trkMi.TickFrequency = 10
+$trkMi.SmallChange = 5
+$trkMi.LargeChange = 10
+$trkMi.Left = 18; $trkMi.Top = 104; $trkMi.Width = 500; $trkMi.Height = 45
+
+$lblMiRec = New-Object Windows.Forms.Label
+$lblMiRec.Left = 18; $lblMiRec.Top = 156; $lblMiRec.Width = 640; $lblMiRec.Height = 60
+$lblMiRec.ForeColor = [Drawing.Color]::FromArgb(0, 110, 190)
+$lblMiRec.Text = "推荐 ${MI_DEFAULT} ms：人类最快打字约 300 ms/键、反应时间约 150 ms，30 ms`n远在人类极限之下，只拦键盘抖动与手滑连击；点 ↺ 恢复推荐。"
+
+$lblMiState = New-Object Windows.Forms.Label
+$lblMiState.Left = 660; $lblMiState.Top = 68; $lblMiState.Width = 220; $lblMiState.Height = 24
+$lblMiState.ForeColor = [Drawing.Color]::FromArgb(0, 140, 60)
+
+$btnMiSave = New-Object Windows.Forms.Button
+$btnMiSave.Text = '保存'
+$btnMiSave.Left = 770; $btnMiSave.Top = 190; $btnMiSave.Width = 110; $btnMiSave.Height = 30
+
+# --- 事件 ---
+$trkMi.Add_ValueChanged({ $txtMi.Text = "$($trkMi.Value)" })
+$txtMi.Add_TextChanged({
+  $v = 0
+  if ([int]::TryParse($txtMi.Text, [ref]$v) -and $v -ge $MI_MIN -and $v -le $MI_MAX) {
+    if ($trkMi.Value -ne $v) { $trkMi.Value = $v }
+  }
+})
+$btnMiReset.Add_Click({
+  $chkMiEnable.Checked = $true
+  $trkMi.Value = $MI_DEFAULT
+  $txtMi.Text = "$MI_DEFAULT"
+  $statusLabel.Text = "已恢复推荐：启用 · $MI_DEFAULT ms（点保存生效）"
+})
+$btnMiSave.Add_Click({
+  $v = 0
+  if (-not [int]::TryParse($txtMi.Text, [ref]$v)) { $v = $MI_DEFAULT }
+  if ($v -lt $MI_MIN) { $v = $MI_MIN }
+  if ($v -gt $MI_MAX) { $v = $MI_MAX }
+  $script:miEnabled = [bool]$chkMiEnable.Checked
+  $script:miInterval = $v
+  Save-AllSettings
+  Update-MiControls
+  $statusLabel.Text = "防误触已保存：$(if ($script:miEnabled) { '启用' } else { '关闭' }) · $v ms"
+})
+$grpMi.Controls.AddRange(@($chkMiEnable, $lblMiInterval, $txtMi, $lblMiRange, $btnMiReset, $trkMi, $lblMiRec, $lblMiState, $btnMiSave))
+
 # ---------------------------------------------------------------------------
 # 事件
 # ---------------------------------------------------------------------------
@@ -667,10 +785,12 @@ $grpPage.Controls.AddRange(@($lblPage, $cmbPage, $btnPageSave, $lblPageHint))
 $grpClear.Controls.AddRange(@($lblClear, $btnClearClip, $btnClearFav))
 $grpFiles.Controls.Add($tbFiles)
 $tabSet.Controls.AddRange(@($grpPage, $grpClear, $grpFiles, $grpNative))
+$tabMi.Controls.Add($grpMi)
 
 [void]$tabs.TabPages.Add($tabClip)
 [void]$tabs.TabPages.Add($tabFav)
 [void]$tabs.TabPages.Add($tabSet)
+[void]$tabs.TabPages.Add($tabMi)
 [void]$form.Controls.Add($tabs)
 [void]$form.Controls.Add($status)
 
@@ -681,6 +801,7 @@ $tabFav.Add_Resize({ Layout-Tabs })
 Load-Settings
 $cmbPage.SelectedItem = "$($script:pageSize)"
 if ($null -eq $cmbPage.SelectedItem) { $cmbPage.SelectedIndex = 0 }
+Update-MiControls
 Layout-Tabs
 Refresh-Clipboard
 Refresh-Favorites
@@ -760,6 +881,7 @@ function Show-SettingsWindow {
     Load-Settings
     $cmbPage.SelectedItem = "$($script:pageSize)"
     if ($null -eq $cmbPage.SelectedItem) { $cmbPage.SelectedIndex = 0 }
+    Update-MiControls
     Refresh-Clipboard
     Refresh-Favorites
     Layout-Tabs
