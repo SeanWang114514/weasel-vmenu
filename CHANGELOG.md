@@ -3,6 +3,54 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 本项目在真机（Windows 11 + Weasel 0.17.4 + librime 1.13.1 + rime-ice）上验证。
 
+## [0.2.21] - 2026-09-24
+
+### 修复
+
+* **v2 剪贴板里按空格有概率把内部编码 `vclip` 原样上屏**（用户报障原话：「v2按空格会有概率出现vclip」）。
+  * **根因**（读 librime 源码确认）：`vclip` 这类 v 系编码没有分支接空格，按键一路放行到
+    express_editor → `Editor::Confirm` → `Context::ConfirmCurrentSelection`；一旦按下瞬间
+    `GetSelectedCandidate()` 为 **nil**（菜单重建空窗 / 高亮下标越界 / 剪贴板缓存被
+    clipboard-sync 重写的瞬间），该函数回退成「确认原始输入」→ `ctx->Commit()` →
+    `Composition::GetCommitText` 对没有候选的段直接取 `input_.substr(...)` → 字面量 `vclip`
+    上屏。菜单正常时按空格本应上屏高亮条目 —— 「有概率」就是撞上 nil 候选窗口的概率。
+  * **修法**（`menu_processor.lua`，紧跟「退格整条取消」分支）：v 系编码的空格先问
+    `ctx:get_selected_candidate()` —— 有真候选 → 照旧放行（rime 正常确认 = 上屏高亮那条，
+    与普通选词手感一致）；拿不到候选 → **吞掉空格**（宁可这次没反应，也绝不把内部编码打进文档）；
+    pcall 异常 → 退回原行为，不误伤正常上屏。
+  * **验证**：新探针 `tools/v2-space-probe.ps1`：v2+空格 ×6（150–1200ms 变时序）、下移高亮后空格、
+    `+` 翻页后空格、回车 —— 全部无 `vclip` 泄漏，空格仍正常上屏高亮条目。
+    改 Lua 后需重启 `WeaselServer`（Lua 在服务进程启动时加载）。
+
+## [0.2.20] - 2026-09-24
+
+### 新增
+
+* **防误触（可调阈值）**：两次按键间隔 < 阈值 → 第二下直接吞掉（不进任何分支、绝不上屏）。
+  配置为 `vmenu-settings.txt` 的 `misinput_protect` / `misinput_interval`（推荐 30ms），
+  `menu_processor.handle()` **每次按键开头实时读取** —— 设置面板保存后立即生效，不用重启。
+* **设置窗口新增「防误触」标签页**（开关 / 滑块 / ↺恢复推荐30ms / 保存），读写同两个字段（`56333bd`）。
+
+### 修复
+
+* **剪贴板路径修复**：同步脚本统一以 `D:\rime-sandbox\clipboard-cache.txt` 为准（同 0.2.20 提交）。
+* **看门狗进程风暴**（`6974be7`，powershell 一度涨到 200+ 进程，把输入法拖到「无法使用」）：
+  * 根因：PS 5.1 的 `Get-Process` **没有 `CommandLine` 属性**，守护脚本「查已有实例」恒失败 →
+    每轮监测都重新拉起新实例，无限增殖。
+  * 修法：检测改用 `Get-CimInstance Win32_Process` + 排除自身 PID + **5 秒重生冷却** +
+    单实例命名互斥体（`RimeVMenuWatcher` / `RimeClipboardSync` / `RimeVMenuSettingsGui`）。
+  * 教训：结束进程的匹配串不能字面量写在自己的 `-Command` 里（会匹配到自己），要运行时拼装、
+    并排除 `-Command` 进程与自身 PID。
+
+## [0.2.19.1] - 2026-09-24
+
+### 修复（常用语提交规则，第二十二轮）
+
+* **纯数字编码**（如 `131`）：打完按 **Enter** = 直接上屏该条常用语；按空格**不**提交
+  （吞掉，不再落进 `selector`）。
+* **字母编码**（如 `wsl`）：Enter 不提交常用语（只靠候选栏数字键 `2` 选）。
+* 两条规则都由 `menu_processor` 显式接管，不再依赖「整屏只有一个候选时回车上屏」的巧合。
+
 ## [0.2.19] - 2026-09-19
 
 ### 收起态框跟着候选词走 / 展开态同步最长候选 / 数字编码去掉「数字本身」候选与序号

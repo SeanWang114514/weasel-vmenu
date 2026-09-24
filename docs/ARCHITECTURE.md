@@ -506,6 +506,14 @@ v 功能的输入编码（`v` / `vclip` / `vqi` / `vfav` / `vset*`）是给 Lua 
 * 中文文案写成宽字符 `\uXXXX` + `wtou8()`：工程无 `/utf-8`，中文窄字符串会被按 GBK 编码输出。
 * 同一套判断也决定**退格**行为：v 功能里按 Backspace = 整条输入作废（Lua 侧 `is_v_func()`），
   输入一空，显示层自然什么都不剩。
+* **空格（0.2.21）**：v 功能里按空格先问 `ctx:get_selected_candidate()` —— 有真候选 → `return 2`
+  放行给 rime 的 `Editor::Confirm`（上屏**高亮那条**，与普通选词手感一致，正常路径零改动）；
+  拿不到候选 → **吞掉空格**；pcall 异常 → 退回原行为。
+  根因（用户报障「v2按空格会有概率出现vclip」）：候选为 nil 时
+  `Context::ConfirmCurrentSelection` 回退成「确认原始输入」→ `ctx->Commit()` →
+  `Composition::GetCommitText` 对没有候选的段直接取 `input_.substr(...)`，于是字面量 `vclip`
+  被打进文档。「有概率」= 按下瞬间撞上 nil 候选窗口（菜单重建 / 高亮越界 / 剪贴板缓存被
+  clipboard-sync 重写）的概率。修在 `menu_processor.lua`「退格整条取消」分支之后。
 
 ## 4. 结构性配置（`build/rime_ice.schema.yaml`）
 

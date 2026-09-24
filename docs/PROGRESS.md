@@ -572,6 +572,58 @@ Lua `src/lua/vmenu_core.lua` / `menu_filter.lua` / `menu_processor.lua`（三份
 `weasel.dll` 1039360 B `99913B9D076A226252054B5C75B7369E`。
 
 ---
+### 1.33 第二十二轮：数字 / 字母编码的 Enter、空格提交规则（0.2.19.1，2026-09-24）
+
+用户诉求（原话）：「只有在按下enter才输入候选词 其他的如123或空格都没有」；随后修正：
+「如果是字母如 wsl 就在第2个候选词栏目显示 并且只有在按下2才输入候选词 其他的如enter都没用」。
+
+* **纯数字编码**（`131` 等）：打完按 `Enter` = 直接上屏该条常用语（`fav_exact` 显式接管）；
+  按空格**不**提交（数字分支里吞掉，不落进 `selector`）。
+* **字母编码**（`wsl` 等）：`Enter` 不提交常用语（吞掉），只靠候选栏数字键 `2` 选。
+* 提交：`1f8bfa7`。
+
+### 1.34 第二十三轮：防误触（可调阈值）+ 设置面板标签页（0.2.20，2026-09-24）
+
+用户诉求（原话）：「在极短的人类几乎无法达到的时间内无法连续按下两个键」。
+
+* `menu_processor.handle()` **每次按键开头**读 `vmenu-settings.txt` 的
+  `misinput_protect` / `misinput_interval`（推荐 30ms）：距上一键 < 阈值 → `return 1` 吞掉，
+  且这一步在**一切模式判断之前** —— 被吞的键不进任何分支（含空格），所以防误触吞键
+  绝不会引发上屏。实时读 = 设置面板保存后立即生效，不用重启。
+* 设置窗口新增「防误触」标签页（开关 / 滑块 / ↺恢复推荐30ms / 保存），读写同两个字段（`56333bd`）。
+* 同版顺手统一剪贴板路径为 `D:\rime-sandbox\clipboard-cache.txt`（`45c0bde`）。
+* 注意：本机当前 `misinput_interval=10`（用户调过），代码默认 30。
+
+### 1.35 第二十四轮：看门狗进程风暴（2026-09-24）
+
+现象：powershell 进程涨到 200+，机器卡顿；用户报的「v1 又无法使用了」实为被风暴拖垮。
+
+* 根因：PS 5.1 的 `Get-Process` **没有 `CommandLine` 属性**，守护脚本「查已有实例」恒失败
+  → 每轮监测都重新拉起新实例，无限增殖。
+* 修法（`6974be7`）：检测改用 `Get-CimInstance Win32_Process` + 排除自身 PID +
+  **5 秒重生冷却** + 单实例命名互斥体（`RimeVMenuWatcher` / `RimeClipboardSync` / `RimeVMenuSettingsGui`）。
+* 教训（自杀陷阱）：结束进程的匹配串不能字面量写在自己的 `-Command` 里（会匹配到自己那行命令），
+  要运行时拼装、并排除 `-Command` 进程与自身 PID。
+* 验证：清零后稳定观察 30s 进程数 = 3；两个看门狗各拉起一次即停，复活测试通过。
+
+### 1.36 第二十五轮：v2 按空格有概率把 `vclip` 原样上屏（0.2.21，2026-09-24）
+
+用户报障（原话）：「v2按空格会有概率出现vclip」。
+
+* **根因链**（librime 源码确认）：`vclip` 没有分支接空格 → `menu_processor` `return 2` 放行 →
+  express_editor `XK_space → Editor::Confirm` → `Context::ConfirmCurrentSelection`：
+  按下瞬间 `GetSelectedCandidate()` 为 **nil**（菜单重建空窗 / 高亮下标越界 / 剪贴板缓存被
+  clipboard-sync 重写的瞬间）时，该函数回退成「确认原始输入」→ `ctx->Commit()` →
+  `Composition::GetCommitText` 对没有候选的段直接取 `input_.substr(...)` → 字面量 `vclip` 上屏。
+  「有概率」= 撞上 nil 候选窗口的概率；菜单正常时按空格本应上屏高亮条目。
+* **修法**：`menu_processor.lua` 在「退格整条取消」分支后新增空格守卫（限 `is_v_func(cur)`）：
+  `ctx:get_selected_candidate()` 拿到真候选 → `return 2` 照旧交 rime 确认（正常路径零改动）；
+  拿不到 → **吞掉空格**；pcall 异常 → 退回原行为。
+* **验证**：新探针 `tools/v2-space-probe.ps1` —— v2+空格 ×6（150–1200ms 变时序）、下移高亮后空格、
+  `+` 翻页后空格、回车，全部无 `vclip` 泄漏；空格仍正常上屏高亮条目。改 Lua 后重启 `WeaselServer` 生效。
+* **测试注意**：外部剪贴板活动会让列表第 1 条中途变化（本轮实测撞上），期望值要动态读缓存首行；
+  测试脚本聚焦失败要先重试聚焦、失败即弃测，别把按键打进别的窗口。
+
 ## 2. 时间线（2026-09-13）
 
 | 时间 | 事件 |

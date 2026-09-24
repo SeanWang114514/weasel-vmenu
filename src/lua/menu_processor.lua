@@ -167,6 +167,29 @@ local function handle(key, env)
     return 1
   end
 
+  -- ===== v 功能里按空格：绝不把内部编码原样上屏 =====
+  -- 用户报障（原话）：「v2按空格会有概率出现vclip」。
+  -- 根因：vclip 这类编码没有分支接空格 → 一路放行到 librime 的 express_editor
+  --   → Editor::Confirm → Context::ConfirmCurrentSelection：一旦「当前选中候选
+  --   恰好为 nil」（菜单为空 / 高亮越界 / 菜单重建的瞬时空窗），该函数回退成
+  --   「确认原始输入」，Composition::GetCommitText 对没有候选的段直接取
+  --   input_.substr → 字面量 "vclip" 上屏。这就是那个「有概率」。
+  -- 修法：先问 context 要当前选中候选 ——
+  --   * 拿得到（绝大多数时候）→ 照旧放行，rime 正常「确认」= 上屏高亮那条，
+  --     手感与普通打字按空格选词完全一致，正常路径零改动；
+  --   * 拿不到 → 吞掉空格。宁可这次按键没反应，也绝不把内部编码打进文档。
+  if cur ~= "" and is_v_func(cur) and repr == "space" then
+    local ok_c, cand = pcall(function() return ctx:get_selected_candidate() end)
+    if ok_c then
+      if cand and cand.text and cand.text ~= "" then
+        return 2  -- 有真实候选：交给 rime 的 confirm 正常上屏高亮条目
+      end
+      core.debug_log("[vmenu] 空格时没有可选候选，吞掉以免内部编码上屏 <" .. cur .. ">")
+      return 1
+    end
+    return 2  -- 问不到候选（API 异常）：退回原行为，保住正常上屏不被误伤
+  end
+
   -- [第二十二轮] 收藏编码「打完 + 回车」= 直接调用收藏内容。
   -- 纯数字编码（如 131）本来靠「整屏只有一个候选时回车上屏」这个巧合生效，
   -- 这里显式接管：数字编码、字母编码一律支持，行为统一，也不再依赖巧合。
