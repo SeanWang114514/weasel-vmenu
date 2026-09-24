@@ -126,6 +126,16 @@ local function handle(key, env)
       end)
       if ok_commit then return 1 end
     end
+    -- [第二十二轮] 纯数字编码输入时，空格不应提交常用语候选。
+    -- 用户诉求：「只有在按下enter才输入候选词 其他的如123或空格都没有」。
+    -- 数字键已经由上面处理了（能延伸就并入，不能就上屏数字+插符号），
+    -- 空格在这里拦截：不让它落到 selector 里去提交候选。
+    if cur ~= "" and cur:match("^%d+$") and repr == "space" then
+      local ok_pre2, is_pre2 = pcall(core.digit_prefix, cur)
+      if ok_pre2 and is_pre2 then
+        return 1  -- 吞掉空格，不做任何事
+      end
+    end
   end
 
   -- ===== v 功能里「退格 = 整条输入全部丢掉」=====
@@ -140,10 +150,34 @@ local function handle(key, env)
     return 1
   end
 
-  -- 收藏编码「打完 + 回车」= 直接调用收藏内容。
+  -- [第二十二轮] 收藏编码「打完 + 回车」= 直接调用收藏内容。
   -- 纯数字编码（如 131）本来靠「整屏只有一个候选时回车上屏」这个巧合生效，
   -- 这里显式接管：数字编码、字母编码一律支持，行为统一，也不再依赖巧合。
   -- 只有输入和某条编码完全一致时才接管，其余回车行为原样放行。
+  --
+  -- ★ 第二十二轮修正：只有**纯数字编码**才用 Enter 上屏常用语。
+  --   用户诉求（原话）：「如果是字母如 wsl 就在第2个候选词栏目显示，
+  --   并且只有在按下2才输入候选词 其他的如enter都没用」。
+  --   字母编码的常用语（如 wsl）靠数字键 2 选，Enter 不管它。
+  if repr == "Return" and cur ~= "" and not core.mode_of(cur) then
+    local is_digit_code = cur:match("^%d+$") ~= nil
+    local ok_hit, hit = pcall(core.fav_exact, cur)
+    if ok_hit and hit then
+      if is_digit_code then
+        -- [第二十二轮] 纯数字编码：Enter 上屏常用语（用户要求「只有enter才输入候选词」）。
+        local ok_commit = pcall(function()
+          env.engine:commit_text(hit.word)
+          ctx:clear()
+        end)
+        if ok_commit then return 1 end
+      else
+        -- [第二十二轮] 字母编码：Enter 不提交常用语（用户要求「enter都没用」）。
+        -- 吞掉 Enter，不让 rime 把常用语当成选中候选提交。
+        return 1
+      end
+    end
+  end
+
   -- 候选窗口展开/收起 + 加减号翻页。
   -- ★ v 功能的「列表型」子模式（剪贴板 vclip / 常用语 vfav / 管理列表 vsetc·vsetf）：
   --   [一行 2 个] 用户要求剪贴板与常用语「一行 2 个、默认显示 3 行、默认展开」，
