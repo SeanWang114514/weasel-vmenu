@@ -28,6 +28,23 @@ end
 local function handle(key, env)
   if key:release() then return 2 end
 
+  -- [防误触] 两次按键之间的间隔太短 → 吞掉本次按键。
+  --   用户诉求（原话）：「在极短的人类几乎无法达到的时间内无法连续按下两个键」。
+  --   原理：记录上一次按键的时间戳（os.clock），如果距今 < 阈值就 return 1（吞掉）。
+  --   os.clock() 在 Windows 上精度 ≈ 1ms（QueryPerformanceCounter），足够分辨 10ms 级间隔。
+  --   配置存储在 vmenu-settings.txt 的 misinput_protect / misinput_interval 字段，
+  --   由设置面板（vmenu-settings-gui.ps1）读写。
+  local now = os.clock()
+  local ok_protect, protect_enabled = pcall(function() return core.read_misinput() end)
+  if ok_protect and protect_enabled then
+    local _, interval = core.read_misinput()
+    local interval_s = (interval or 30) / 1000.0  -- ms → 秒
+    if core._last_key_time and (now - core._last_key_time) < interval_s then
+      return 1  -- 吞掉本次按键
+    end
+  end
+  core._last_key_time = now
+
   local ctx = env.engine.context
   local repr = key:repr() or ""
   local cur = ctx.input or ""

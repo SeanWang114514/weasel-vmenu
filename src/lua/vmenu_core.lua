@@ -11,6 +11,13 @@ M.MAX_PAGE = 50       -- 上限（超出丢弃最旧的）
 M.STEP = 10           -- 每次「显示更多」+10
 M.WINDOW = 9          -- 管理/删除模式每屏条数，与 menu/page_size 保持一致
 
+-- [防误触] 两次按键之间的最小间隔（毫秒）。低于这个间隔的连续按键会被吞掉。
+-- 推荐值 30ms：人类最快打字速度 ≈ 200 WPM ≈ 300ms/键，30ms 远低于人类下限，
+-- 但能拦住键盘抖动、系统重复、手滑连击等误输入。
+M.MISINPUT_DEFAULT = 30    -- 推荐值（ms）
+M.MISINPUT_MIN = 10        -- 允许的最小值（再小就没意义了）
+M.MISINPUT_MAX = 200       -- 允许的最大值（再大会影响正常打字）
+
 local raw_flag = false
 
 local function user_dir()
@@ -349,12 +356,65 @@ function M.write_page(n)
   n = tonumber(n) or M.DEFAULT_PAGE
   if n < M.MIN_PAGE then n = M.MIN_PAGE end
   if n > M.MAX_PAGE then n = M.MAX_PAGE end
+  -- [防误触] 读出现有设置，保留其它字段
+  local old = M._read_settings()
   local path = M.set_path()
   local tmp = path .. ".tmp"
   local f = io.open(tmp, "w")
   if not f then return false end
   f:write("# v 功能菜单设置\n")
   f:write("clip_page=" .. tostring(n) .. "\n")
+  f:write("misinput_protect=" .. (old.misinput_protect or "true") .. "\n")
+  f:write("misinput_interval=" .. tostring(old.misinput_interval or M.MISINPUT_DEFAULT) .. "\n")
+  f:close()
+  os.remove(path)
+  return os.rename(tmp, path) and true or false
+end
+
+-- [防误触] 读取所有设置（内部辅助）
+function M._read_settings()
+  local s = { clip_page = M.DEFAULT_PAGE, misinput_protect = true, misinput_interval = M.MISINPUT_DEFAULT }
+  local f = io.open(M.set_path(), "r")
+  if not f then return s end
+  for line in f:lines() do
+    local k1, v1 = line:match("^%s*([%w_]+)%s*=%s*(%d+)")
+    if k1 == "clip_page" then
+      local n = tonumber(v1)
+      if n and n >= M.MIN_PAGE and n <= M.MAX_PAGE then s.clip_page = n end
+    elseif k1 == "misinput_interval" then
+      local n = tonumber(v1)
+      if n and n >= M.MISINPUT_MIN and n <= M.MISINPUT_MAX then s.misinput_interval = n end
+    end
+    local k2, v2 = line:match("^%s*([%w_]+)%s*=%s*(%a+)")
+    if k2 == "misinput_protect" then
+      s.misinput_protect = (v2 == "true")
+    end
+  end
+  f:close()
+  return s
+end
+
+-- [防误触] 读取防误触开关和间隔（供 menu_processor 调用）
+-- 返回两个值：enabled (bool), interval_ms (number)
+function M.read_misinput()
+  local s = M._read_settings()
+  return s.misinput_protect, s.misinput_interval
+end
+
+-- [防误触] 写入防误触设置（供设置面板调用）
+function M.write_misinput(enabled, interval)
+  interval = tonumber(interval) or M.MISINPUT_DEFAULT
+  if interval < M.MISINPUT_MIN then interval = M.MISINPUT_MIN end
+  if interval > M.MISINPUT_MAX then interval = M.MISINPUT_MAX end
+  local old = M._read_settings()
+  local path = M.set_path()
+  local tmp = path .. ".tmp"
+  local f = io.open(tmp, "w")
+  if not f then return false end
+  f:write("# v 功能菜单设置\n")
+  f:write("clip_page=" .. tostring(old.clip_page or M.DEFAULT_PAGE) .. "\n")
+  f:write("misinput_protect=" .. (enabled and "true" or "false") .. "\n")
+  f:write("misinput_interval=" .. tostring(interval) .. "\n")
   f:close()
   os.remove(path)
   return os.rename(tmp, path) and true or false
