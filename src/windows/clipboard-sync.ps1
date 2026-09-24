@@ -27,6 +27,19 @@ param(
 # scripts as ANSI, which breaks quoting when non-ASCII comments are present.
 
 $ErrorActionPreference = 'SilentlyContinue'
+
+# Single instance: watchdog respawns and boot autostart must never produce two
+# competing writers of clipboard-cache.txt. Any mutex error other than
+# "abandoned because the previous owner was killed" fails CLOSED (exit):
+# failing open once let a respawn storm keep 50+ copies alive at once.
+$mutex = New-Object System.Threading.Mutex($false, 'RimeClipboardSync')
+if ($null -eq $mutex) { exit 1 }
+$owned = $false
+try { $owned = $mutex.WaitOne(0) }
+catch [System.Threading.AbandonedMutexException] { $owned = $true }
+catch { $owned = $false }
+if (-not $owned) { exit 0 }
+
 New-Item -ItemType Directory -Force -Path $RimeDir | Out-Null
 $cache = Join-Path $RimeDir 'clipboard-cache.txt'
 $utf8 = New-Object Text.UTF8Encoding($false)

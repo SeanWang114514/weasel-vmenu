@@ -923,6 +923,29 @@ $form.Hide()
 
 if ($ShowNow) { Show-SettingsWindow } else { $statusLabel.Text = '后台常驻 · v→1 打开' }
 
+# --- 互为看门狗 ---
+# 用户报过两次「后台进程被顺手关掉后功能就死了」：本进程点 X 只隐藏不退出、
+# 杀不掉，所以由它兼任保活中枢：每隔约 2 秒检查剪贴板同步与看门狗脚本，
+# 死了就以完全隐藏方式重新拉起（任务栏无按钮，无法被误关）。
+$script:wdTick = 0
+$script:wdDir = if ($PSScriptRoot) { $PSScriptRoot } else { 'D:\rime-sandbox' }
+# 每个目标 5 秒重生冷却：即使某次检测被误判，也掀不起进程风暴。
+$script:wdLastSync = [DateTime]::MinValue
+$script:wdLastWatch = [DateTime]::MinValue
+# 检测必须走 CIM：Windows PowerShell 5.1 的 Get-Process 根本没有 CommandLine
+# 属性，用 $_.CommandLine -match 恒为假 → 看门狗以为目标永远是死的 →
+# 每 2 秒无条件重生（曾经炸出 200+ 进程，整机卡死）。
+function Test-WdAlive([string]$scriptName) {
+  $me = $PID
+  $procs = @(Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" -ErrorAction SilentlyContinue)
+  foreach ($p in $procs) {
+    if ($p.ProcessId -ne $me -and $p.CommandLine -and $p.CommandLine.IndexOf($scriptName) -ge 0) {
+      return $true
+    }
+  }
+  return $false
+}
+
 while (-not $form.IsDisposed) {
   [System.Windows.Forms.Application]::DoEvents()
   $flagText = Take-Flag
@@ -935,6 +958,28 @@ while (-not $form.IsDisposed) {
   # 已经清空的剪贴板历史就会复活（就是用户报的那个毛病）。
   if ($form.Visible) {
     if ((Clip-Stamp) -ne $script:clipStamp) { Refresh-Clipboard }
+  }
+  # 保活：每 ~2 秒查一次剪贴板同步与看门狗（60ms × 33 ≈ 2s）
+  $script:wdTick++
+  if ($script:wdTick -ge 33) {
+    $script:wdTick = 0
+    try {
+      $now = Get-Date
+      if ((-not (Test-WdAlive 'clipboard-sync.ps1')) -and
+          (Test-Path (Join-Path $script:wdDir 'clipboard-sync.ps1')) -and
+          ($now - $script:wdLastSync).TotalSeconds -ge 5) {
+        $script:wdLastSync = $now
+        Start-Process powershell.exe -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File',`
+          (Join-Path $script:wdDir 'clipboard-sync.ps1') -WindowStyle Hidden
+      }
+      if ((-not (Test-WdAlive 'vmenu-watcher.ps1')) -and
+          (Test-Path (Join-Path $script:wdDir 'vmenu-watcher.ps1')) -and
+          ($now - $script:wdLastWatch).TotalSeconds -ge 5) {
+        $script:wdLastWatch = $now
+        Start-Process powershell.exe -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File',`
+          (Join-Path $script:wdDir 'vmenu-watcher.ps1') -WindowStyle Hidden
+      }
+    } catch { }
   }
   Start-Sleep -Milliseconds 60
 }
