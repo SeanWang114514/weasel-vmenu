@@ -101,11 +101,14 @@ end
 --   * 框里看得见自己敲的数字；
 --   * `.` `,` 这些标点上屏时提交的是**数字本身**（13 → 「13。」），常用语仍然只有回车才出。
 -- type 用 "raw"：与 librime 自己的「原样上屏」候选同类，数字/小数点的识别逻辑也认它。
-local function digit_cand(code)
-  local c = Candidate("raw", 0, #code, code, "")
-  c.quality = 1000000
-  return c
-end
+-- [第二十一轮] digit_cand 已删除 —— 用户诉求（原话）：
+--   「把第一个 131 删除 只留下第二个（这个也最好不要显示序号）」
+--   纯数字编码输入时只保留「常用语预览」（第 2 位，质量最高），
+--   不再在第 1 位插一条「数字本身」的候选（否则用户看到两个带序号的条目很困惑）；
+--   序号也由服务端 ctx.grid_2d=2 通知客户端不画（见 HorizontalLayout.cpp GetLabelText）。
+--   menu_processor.lua 那边的「数字分支」已经足够：
+--   数字能延伸编码 → 并进；延伸不了 → 直接上屏；- / = / + → 上屏数字再插符号。
+--   数字作为候选对齐方格已经没必要了，去掉反而干净。
 
 local function filter(input, env)
   local ctx = env.engine.context
@@ -148,12 +151,8 @@ local function filter(input, env)
     end
   end
 
-  -- [第二十轮] 正在敲纯数字编码（如 131）？是的话候选第 1 位放「数字本身」，见 digit_cand。
-  local raw_digit = nil
-  if want == nil and type(code) == "string" and code:match("^%d+$") then
-    local ok_pre, is_pre = pcall(core.digit_prefix, code)
-    if ok_pre and is_pre then raw_digit = digit_cand(code) end
-  end
+  -- [第二十一轮] raw_digit 已删除（见文件顶部注释）。纯数字编码的常用语预览由
+  --   下面的 fav 分支自动产出（只占第 2 位，且服务端通知前端不画序号）。
 
   if want == nil and fav == nil then
     -- 正常打字、没命中收藏：只放出当前状态允许的个数
@@ -163,14 +162,6 @@ local function filter(input, env)
     -- （序号由 Weasel 标签槽按当前可见行给）。窗口逻辑见上面的 window_of。
     local lim = core.grid_limit(ctx)
     local buf, start, k = window_of(input, ctx, lim)
-    if raw_digit then
-      -- 数字本身占第 1 位，剩下的位置留给真正的候选（少收 1 个）
-      yield(raw_digit)
-      for i = start + 1, math.min(k, start + lim - 1) do
-        if buf[i] then yield(buf[i]) end
-      end
-      return
-    end
     for i = start + 1, math.min(k, start + lim) do
       if buf[i] then yield(buf[i]) end
     end
@@ -238,12 +229,10 @@ local function filter(input, env)
     return
   end
 
-  -- 收藏固定占第 2 位
+  -- 收藏固定占第 2 位（数字编码输入时这就是唯一的候选：常用语预览）
   local c = Candidate("vfav", 0, #code, fav.word, "常用语")
   c.quality = 500000
   local out = place(buf, 2, c)
-  -- [第二十轮] 纯数字编码：数字本身占第 1 位（= 常用语仍在第 2 位，用户按 2 之前先看到自己敲的数字）
-  if raw_digit then out = place(out, 1, raw_digit) end
   for i = 1, #out do
     if i > lim then break end
     yield(out[i])
