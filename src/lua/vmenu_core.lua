@@ -280,6 +280,17 @@ function M.grid_key(ctx, repr)
   if not (ok_menu and has) then return false end
   if repr == "Down" then
     if not grid_open(ctx) then
+      -- 【第二十七轮 / 关闭后重开必回第 1 页】用户报障（原话）：
+      --   「翻到第二页 → 按上键收起 → 再次打开，仍显示关闭前那一页；
+      --     关闭后重新打开无论如何显示默认第一页」。
+      -- 根因：页码 vmenu_page_* 是会话级 option，收起动作只写 vmenu_grid、不清页码，
+      -- 重开后 menu_filter.window_of 仍按 old page * lim 取窗口起点 → 停在关闭前那一页。
+      -- 修法：在**展开的瞬间**无条件复位页码 —— 不管它怎么残留，重开必从第 1 屏开始。
+      -- 页码复位放在 grid_set **之前**：中间帧 = (收起, 第1页) = 正常单行，先写 grid
+      -- 则会先画出 (展开, 第2页) 这个怪画面。page_set 有「值没变不写 option」守卫，
+      -- 页码本来就是 0 时只多一次 get_option、零额外重翻译；pcall 隔离保证展开必完成。
+      debug_log(("[vmenu] 展开网格：复位前 page=%d"):format(M.page_get(ctx)))
+      pcall(M.page_reset, ctx)
       grid_set(ctx, true)     -- 第一次 ↓：展开成 4 行 × 9 列
       return true
     end
@@ -293,6 +304,12 @@ function M.grid_key(ctx, repr)
     if grid_open(ctx) then
       -- ↑ 只在「选中项位于第一行」时折叠：Weasel 侧补丁发现 -9 越界才会把按键放行到这里，
       -- 越界正说明当前在第一行，所以这里折叠是正确的；在下面几行时补丁会先处理掉按键。
+      -- 【第二十七轮】收起时把页码一并拉回第 1 页：否则残留 page=1 时，收起后的单行
+      -- 会显示第 10-18 个候选（关了栏反而更靠后，同样违背「关闭 = 回到默认」）；
+      -- 页码在写 grid **之前**复位，中间帧 = (展开, 第1页) = 正常画面，
+      -- 反过来则会先画出 (收起, 第2页)。pcall 隔离：页码复位失败也必须完成收起。
+      debug_log(("[vmenu] 收起网格：复位前 page=%d"):format(M.page_get(ctx)))
+      pcall(M.page_reset, ctx)
       grid_set(ctx, false)    -- ↑：收回单行
       return true
     end
