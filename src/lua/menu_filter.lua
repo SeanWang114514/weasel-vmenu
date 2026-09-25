@@ -226,6 +226,21 @@ local function filter(input, env)
       -- 候选自带的注释（如快捷输入的「按 1 · …」）保持原样，不再拼数字。
       if buf[i] then yield(buf[i]) end
     end
+    -- [诊断] v 功能候选的本页窗口（翻页排查用）：和上面 DEBUG_CAND 同一个开关。
+    -- 只在 v 模式下写，普通打字路径不受影响（见 core.DEBUG_CAND 注释）。
+    if core.DEBUG_CAND then
+      local dbg = {}
+      for i = start + 1, math.min(n, start + lim) do
+        local c = buf[i]
+        if c then
+          local t = tostring(c.text):sub(1, 24):gsub("[\128-\191]+$", "")  -- 截断不留半个汉字
+          dbg[#dbg + 1] = t
+        end
+      end
+      core.debug_log(("[vmenu] v候选 page=%d start=%d lim=%d n=%d code=%s :: %s")
+        :format(core.page_get(ctx), start, lim, n, tostring(code),
+          table.concat(dbg, " | ")))
+    end
     return
   end
 

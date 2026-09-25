@@ -4,7 +4,7 @@
 > 接手前请先读 [`AGENT-HANDOFF.md`](AGENT-HANDOFF.md)（环境事实与约束），
 > 再看 [`ARCHITECTURE.md`](ARCHITECTURE.md)（设计原理）。
 
-最后更新：2026-09-19（本机时间，第二十一轮：收起态框跟候选词 / 展开态统一最长 / 数字编码去候选与序号 —— 见 §1.32）
+最后更新：2026-09-25（本机时间，第二十七轮：回车泄漏 `vclip` + 剪贴板列表翻页 + Shift 泄漏 —— 见 §1.38）
 
 ---
 
@@ -641,6 +641,41 @@ Lua `src/lua/vmenu_core.lua` / `menu_filter.lua` / `menu_processor.lua`（三份
 * **测试注意**：PowerShell 里别把辅助函数命名成单字母（`H` 撞 `Get-History` 别名会静默报错），
   本轮改名 `PH` 后高度断言才真正生效；含中文的 `.ps1` 写完必须补 UTF-8 BOM。
 
+### 1.38 第二十七轮：回车泄漏 `vclip` + 剪贴板列表翻页 + Shift 泄漏（0.2.24，2026-09-25）
+
+用户报障（原话）：「这个 v2 的剪切板在太久就没有启用后第一次启用选择候选词并输入有概率会出现
+vclip 的内部代码 还有剪切板的候选词无法翻页 没有办法继续选择下一个候选词」，
+随后自己定位到回车：「找到问题了 是在打出 v2 后按下 enter 会打出 vclip v3 等也一样」。
+
+* **回车泄漏（必现）**：express_editor 把 Return 绑到 `CommitRawInput` → `ClearNonConfirmedComposition()`
+  （弹掉未确认段且不再重组）→ `Commit()` → 空段 `GetCommitText` 取 `input_.substr(0)` → 字面量上屏。
+  修法（`menu_processor.lua` 回车分支）：列表型（`vclip`/`vfav`/`vsetc`/`vsetf`）回车 = 上屏高亮条目
+  （拿不到候选就吞）；静态菜单（`v`/`vqi`/`vset*`）回车只吞不上屏（菜单文案不是内容）。
+* **翻页两条根因**：① 服务端补丁只在高亮越界时把 ↓↑ 放行给 Lua，而列表模式旧代码只吞 ↑、
+  从不 `page_next` → 末行 ↓ 毫无反应；② 主键盘 `+` = Shift+=，`KeyEvent::repr()` 拼成
+  `shift+plus` → `repr == "plus"` 精确匹配全落空 → 漏到 express_editor `DirectCommit`
+  **整段上屏、候选窗直接消失**（「按 + 列表就没了」）。修法：`handle()` 开头截掉 repr 的修饰符前缀
+  （取最后一个 `+` 之后的名字，`Return`/`space`/`Down`/`equal` 等全部匹配一并受益），
+  + 列表模式补整屏翻页（末行 ↓ → `page_next`；首行 ↑ → `page_prev`，第 1 屏吞掉、不收起）。
+* **Shift 点按泄漏（`vclip` 的第二条路径）**：`default.yaml` 的
+  `ascii_composer/switch_key/Shift_L: commit_code` —— **500ms 内点按 Shift**（中间没夹别的键，
+  或夹的键被本处理器吃掉，正是「按 `+`」）→ `AsciiComposer::SwitchAsciiMode` →
+  `ClearNonConfirmedComposition() + Commit()` → 与回车同一条 `input_.substr` 路径 →
+  字面量上屏 + `ascii_mode` 置真。修法：v 系编码/原符号组合期间吞掉 Shift 的按下与松开；
+  非 v 场景（普通打字点按 Shift 切中英文）原行为保留。
+* **验证**（真机按键 + 截图 + `vmenu-debug.log`，`tools/v2-enter-paging-probe.ps1`）：
+  A1–A5 回车/空格五例全部只上屏真实条目；B1 连按 ↓ 第 1 屏 1–6 条 → 第 2 屏 7–12 条（截图对比）；
+  B2 `Shift+=` / `=` / `-` / `PageDown` / `PageUp` 逐键翻页，页码日志 page 0→1→2→3→2，
+  末页 668x75 只剩 2 条；B3 翻页后按 `1` 精确上屏第 7 条（与期望整段一致）；
+  D1 点按 Shift 后列表仍在（1059x219）且 `shi`+空格仍出「是」；D2 `Shift+回车`、D3 `Shift+A` 不泄漏。
+  回归 `tools/final-regression.ps1` 全过：普通打字 `shi`→`是`、网格 896x74→1413x285→896x74、
+  原生 Shift 中英往返（`shi ` / `是`）、v2 空格/回车/翻页/退格；测试垫进程只加载 `weasel.dll`（没被 WeType 抢权）。
+* **测试注意**：`AttachThreadInput` 在 **user32.dll**（不是 kernel32，P/Invoke 写错会 EntryPointNotFound）；
+  PS 字面量哈希表键**大小写不敏感**（`'a'` 与 `'A'` 同表直接解析报错）；
+  探针里的 `esc` 只撤最近一段（往输入里推过标点后 Esc 不整条清空）——每轮判定必须以
+  `Clr` + 读 `typed.txt` 为准，别假设组合已清空，否则上一轮的残留会让数字键走网格选词，
+  产生「莫名其妙上屏一整条」的假阳性（本轮 C 段扫描曾被此坑误导）。
+
 ## 2. 时间线（2026-09-13）
 
 | 时间 | 事件 |
@@ -891,3 +926,55 @@ Lua `src/lua/vmenu_core.lua` / `menu_filter.lua` / `menu_processor.lua`（三份
    静态 v 菜单不受它影响（自己按内容宽度排一行）。
 9. **（第二十轮）测试脚本注入按键要用虚拟键码**（详见 §1.31 末尾）：字母的 VK = 大写字母 ASCII，
    写成字符码会变成小键盘的 `.`/`9`。改测试脚本时**先跑 `ni` + `1` 自检**。
+---
+
+## （2026-09-25 下午）前后鼻音模糊输入 + 词中灰字拼音 —— ✅ 全链路完成
+
+**功能**：`yinda` 在开启状态下出 `应 ying 答`（灰色小字拼音夹在词中间），关闭状态下只剩严格匹配候选。
+**上屏**：选中模糊词提交的文本纯净（实测 `硬打` = U+786C U+6253，无任何拼音/协议残留）。
+
+四层实现（全部落地）：
+1. **prism**：`rime_ice.schema.yaml` algebra 10 条 derive 对（ang/an、en/eng、in/ing、ian/iang、uan/uang 双向）；
+   `patch-build-schema.ps1` 预扫描补丁 + VERIFY 校验（ASCII-only，源/根副本 MD5 同步）。
+2. **lua 开关** `fuzzy_filter.lua`：filters 第一位（corrector 前）；读 `fuzzy-settings.txt`
+   （`nasal=`、每秒 ≤1 次、默认 true）；关→丢弃模糊候选，开→写 comment 协议 `\2<位>:<拼音>`；
+   非纯字母输入放行；三处 lua（repo 单源 + D:\rime-sandbox + %APPDATA%\Rime）MD5 一致。
+3. **WeaselUI**：`InlineAnnot.h`（Parse/BuildRuns，代理对安全）+ `HorizontalLayout.cpp` 按 runs
+   计宽 + `WeaselPanel.cpp` 逐 run 绘制；协议命中时尾部 comment 不再画。build-vmenu.ps1 -Only all
+   3 目标 OK → deploy-grid-dlls.ps1 -SourceDir 部署 5 文件（备份 dll-backup\20260925-140810）。
+4. **设置 GUI**：设置与缓存页顶部新卡片（勾选即写文件、下一次按键生效）；UIA TogglePattern
+   实测 `true→false→true` 往返写入 + 状态标签同步。
+
+**验证截图**（shots/）：t42-off（关：应答消失）、t43-on / v43（开：`应 ying 答` 灰字词中）、
+t46-commit（上屏纯净）、t64/v64（GUI 卡片：勾选✓绿字「当前：开启」+ 三行说明）、
+v66（v 菜单回归 ✓，网格 9 列在各候选截图中均正常）。
+
+**排查过程中的坑（下次直接绕开）**：
+* **`edit` 工具会剥掉 .ps1 的 UTF-8 BOM** —— 每次 edit 之后必须
+  `[IO.File]::WriteAllText($p,$txt,(New-Object Text.UTF8Encoding($true)))` 重建 BOM
+  + PSParser 0 error 复查；否则 PS5.1 按 ANSI 解析，中文串里炸出「意外的标签 }」。
+* **设置 GUI 单实例**：第二实例写 `open-settings.flag`（时间戳）后退出，由第一实例的
+  主循环 `Take-Flag` 响应；窗口默认隐藏、靠 watcher/信号显示（`-ShowNow` 可直接开）。
+  用 `MainWindowTitle` 匹配杀进程会漏掉隐藏实例 → 用 CIM `CommandLine -like` 按命令行杀。
+* **GUI 卡片控件必须 `card.Controls.AddRange`**——只把 card 加进 tab 不会显示里面的子控件。
+* **截图读取**：图片桥对同一 sha 的复读会串图；每次先 `Copy-Item + 追加 1 字节` 换新 sha 只读一次。
+* **lua pattern 无 `|` 交替**（数码点的 `cp_len` 曾因此返 0）；lua 里的 `io.open` 每秒节流读安全，
+  但 `os.time()` 节流在诊断时造成“读一次再也不读”的误判——读文件本身是好的（debug 日志证实逐次读取）。
+---
+
+## （2026-09-25 晚）模糊词降权排序 + read_switch 首行注释 bug 修复
+
+* **需求**：调低模糊输入的权重。实现：`fuzzy_filter.lua` 开启时除模糊命中外一切候选保持
+  原序，仅把模糊命中的候选整体挪到「最后一个精确命中」之后 —— 实测
+  `yinda → 1 瘾大 2 因打 3 硬 ying 打 4 应 ying 答 5 应 6 因 …`（精确在前、模糊紧随带灰拼音、
+  长尾不动）；`jia → 1 加 2 + 3 假 …`（无模糊对的输入顺序零变化）；关闭 → 模糊词消失（与改前一致）。
+  classify 现返回 `{fuzz=bool, segs}`（fuzz=false = 精确命中，供排序定位用）。
+* **顺手抓到的真 bug**：GUI 保存的 `fuzzy-settings.txt` 首行是注释标题，而 `read_switch`
+  原来只 `read("*l")` 读第一行匹配 `nasal=` → **开关实际失效**（文件改了、filter 永远读不到）。
+  改为 `read("*a")` 读全文匹配；带注释头文件实测 ON/OFF 端到端生效（t79b OFF / t80 ON）。
+  教训：GUI 写文件与 lua 读文件要按「同一份实际格式」联测，别只测各自半边。
+* **GUI 卡片文案**更新为「…排在精确匹配之后（例：输 yinda 先出「瘾大 因打」，再出「应 ying 答」）」，
+  实拍 3 行无裁切（t81）；BOM EF BB BF、parse 0 错。
+* **图片桥本会话再次串图**（同一 sha 两次渲染不同画面、不同 sha 渲染出根本不存在的窗口）：
+  本次改用 `modlens_read_image` 直读磁盘文件作为可信通道，全部结论由它复核。
+  教训依旧：桥复读不可信；优先 modlens / 换 sha 只读一次。

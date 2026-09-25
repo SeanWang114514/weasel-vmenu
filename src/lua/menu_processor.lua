@@ -26,6 +26,40 @@ local function is_back_key(repr)
 end
 
 local function handle(key, env)
+  local ctx = env.engine.context
+
+  -- ===== 按键名规范化：截掉修饰符前缀 =====
+  -- librime 的 KeyEvent::repr() 会把修饰符拼在名字前面：Shift+= 报上来的是
+  -- `shift+plus`（客户端把键码转成了 XK_plus，但 Shift 位仍在）、Shift+回车是
+  -- `shift+Return`、Ctrl+回车是 `ctrl+Return`。带前缀时本文件里所有
+  -- `repr == "..."` 精确匹配**全部落空**，按键一路漏到最后 return 2 →
+  -- express_editor 的 DirectCommit / CommitScriptText → 整段被提交
+  -- （现象：v 菜单里按 + 候选窗直接消失、按 Shift+回车泄漏内部编码）。
+  -- 本文件没有任何分支需要区分修饰符，统一取最后一个 '+' 之后的名字。
+  local repr_raw = key:repr() or ""
+  local plus_at = repr_raw:find("+", 1, true)
+  local repr = plus_at and repr_raw:sub(plus_at + 1) or repr_raw
+  local cur = ctx.input or ""
+
+  -- ===== v 功能里按 Shift（按下与松开都拦）：防 ascii_composer 把内部编码原样上屏 =====
+  -- 用户报障的 v2 泄漏除了回车还有一条：default.yaml 配的是
+  -- `ascii_composer/switch_key/Shift_L: commit_code` —— **500ms 内点按 Shift**（没夹别的键，
+  -- 或夹的键被本处理器吃掉，正是「按 + 翻页」这种）就会走
+  -- AsciiComposer::SwitchAsciiMode → ClearNonConfirmedComposition() + Commit()
+  -- → Composition::GetCommitText 对空段取 input_ → 字面量 `vclip` 上屏，并顺手切到英文模式。
+  -- 在 v 功能组合期间把 Shift 的按下/松开一律吞掉：ascii_composer 就记不上
+  -- 「Shift 按过」，松开时不会触发切换；`+`/`Shift+回车` 等组合键照常由下面的分支处理。
+  -- 非 v 功能（普通打字、英文模式）不受影响，点按 Shift 切中英文的原行为保留。
+  if repr == "Shift_L" or repr == "Shift_R" then
+    if cur ~= "" and (is_v_func(cur) or core.raw(ctx)) then
+      local ok_a, a = pcall(function() return ctx:get_option("ascii_mode") end)
+      if not (ok_a and a) then
+        core.debug_log("[vmenu] 吞掉 Shift（防 commit_code 泄漏内部编码）<" .. cur .. ">")
+        return 1
+      end
+    end
+  end
+
   if key:release() then return 2 end
 
   -- [防误触] 两次按键之间的间隔太短 → 吞掉本次按键。
@@ -44,10 +78,6 @@ local function handle(key, env)
     end
   end
   core._last_key_time = now
-
-  local ctx = env.engine.context
-  local repr = key:repr() or ""
-  local cur = ctx.input or ""
 
   -- 英文 / ASCII 模式：v 功能整体关闭，按键原样放行
   local ok_ascii, ascii = pcall(function() return ctx:get_option("ascii_mode") end)
@@ -190,6 +220,39 @@ local function handle(key, env)
     return 2  -- 问不到候选（API 异常）：退回原行为，保住正常上屏不被误伤
   end
 
+  -- ===== v 功能里按回车：绝不把内部编码原样上屏 =====
+  -- 用户报障（原话）：「打出v2后按下enter会打出vclip，v3等也一样」。
+  -- 根因（读 librime 源码确认）：express_editor 把 Return 绑到 `Editor::CommitRawInput`
+  --   → `ClearNonConfirmedComposition()` 先把未确认的整段弹掉（composition 变空、
+  --     **且不触发重组**）→ 紧接着 `Context::Commit()` → `OnCommit` →
+  --     `Composition::GetCommitText()`：段循环 0 次，最后 `input_.substr(0)` =
+  --     字面量 `vclip` / `vqi` / `vfav` 上屏 → `Clear()`。
+  --   这条路径**与候选是否存在无关**，按一次泄漏一次（空格那条是「概率」，回车是「必现」）。
+  -- 修法（按类型分流，都吞掉这条按键，绝不放行给 express_editor）：
+  --   * 列表型（剪贴板 vclip / 常用语 vfav / 管理列表 vsetc·vsetf）：回车 = 上屏当前
+  --     高亮那条，手感与按空格一致（拿不到候选就吞掉，宁可没反应也不泄编码）；
+  --   * 静态菜单（v / vqi / vset*）：回车只吞掉、什么都不上屏 —— 菜单文案
+  --     （「设置」「剪贴板」这些）不是内容，不该被敲进文档。
+  if cur ~= "" and is_v_func(cur) and repr == "Return" then
+    local ok_c, cand = pcall(function() return ctx:get_selected_candidate() end)
+    local text = nil
+    if ok_c and cand and type(cand.text) == "string" and cand.text ~= "" then
+      text = cand.text
+    end
+    if core.is_list_code(cur) and text then
+      local ok_commit = pcall(function()
+        env.engine:commit_text(text)
+        ctx:clear()
+      end)
+      if ok_commit then
+        core.debug_log("[vmenu] 回车上屏高亮条目 <" .. cur .. ">")
+        return 1
+      end
+    end
+    core.debug_log("[vmenu] 回车取消（不提交内部编码） <" .. cur .. ">")
+    return 1
+  end
+
   -- [第二十二轮] 收藏编码「打完 + 回车」= 直接调用收藏内容。
   -- 纯数字编码（如 131）本来靠「整屏只有一个候选时回车上屏」这个巧合生效，
   -- 这里显式接管：数字编码、字母编码一律支持，行为统一，也不再依赖巧合。
@@ -276,11 +339,27 @@ local function handle(key, env)
       -- 用户要求「一行 2 个、默认显示 3 行、用正常候选词的逻辑选择（但拓展栏默认展开）」，
       -- 并补充「按上键不要收起，默认就是展开态」。所以：
       --   ① 每个按键都把「展开」钉住（服务端的数字键 / 方向键 / 翻页补丁以它为门槛）；
-      --   ② ↑ 在第一行时不再收起 —— 补丁发现 -2 越界会把按键放行到这里，直接吞掉；
-      --   ③ ↓ / ← / → 的逐格移动、以及「最后一行再按 ↓ = 翻页」都由补丁完成，
-      --      落到这里只可能是「跑的是没有补丁的原版 server」，此时不拦，交回 rime。
+      --   ② ↓ / ← / → 的逐格移动由补丁完成；补丁只在**越界**时才把键放行到这里。
+      --   ③ 【翻页修复 · 用户报障「剪贴板的候选词无法翻页、没办法继续选择下一个候选词」】
+      --      放行下来的 ↓ = 高亮已在最后一行（再往下没有候选了）→ 这里按「下一屏」处理；
+      --      放行下来的 ↑ = 高亮已在第一行 → 有上一屏就翻上去，第 1 屏则吞掉
+      --      （保留「按上键不要收起」的原要求）。
+      --      补丁放行 ↓ 后会把高亮摆回**同列第一行**，所以翻页后光标仍在原列。
+      --      没有补丁的原版 server 会把每一下 ↓↑ 都送到这里（逐格移动失效、变成整屏翻），
+      --      与本项目「必须部署自编 server」的前提一致（见 docs/AGENT-HANDOFF.md）。
       pcall(core.grid_lock, ctx)
-      if repr == "Up" then return 1 end
+      if repr == "Down" then
+        local np = pcall(core.page_next, ctx)
+        core.debug_log("[vmenu] 列表 ↓ 翻页 <" .. cur .. ">")
+        if np then return 1 end
+      end
+      if repr == "Up" then
+        if core.page_get(ctx) > 0 then
+          pcall(core.page_prev, ctx)
+          core.debug_log("[vmenu] 列表 ↑ 翻回上一屏 <" .. cur .. ">")
+        end
+        return 1   -- 第 1 屏按 ↑：吞掉（不收起、不环绕）
+      end
     else
       local ok_grid, handled = pcall(core.grid_key, ctx, repr)
       if ok_grid and handled then return 1 end

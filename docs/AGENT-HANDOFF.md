@@ -64,7 +64,9 @@
 | 一页候选数 | 方案键 `menu/page_size` = **36**（= 9 × 4；历史上是 9 → 18 → 36），写在 `rime_ice.custom.yaml` + `build/rime_ice.schema.yaml` |
 | 候选方格（**已实测**） | 收起 = **1 行 9 个**（候选窗深色区高 **64px**，宽度随内容变长、不换行）；按 `↓` 展开 = 最多 36 个（4 行 × 9 列，`zhe'g` → 高 **274px**）；**`↓↓` 不收起**，而是高亮跳到第 2 行（实测差分 **5938** 点，x[90..212] y[197..327]）；展开态 `→` 在同一行内右移（11374 点，x[90..294]）；**第一行按 `↑` 才收起**（高回到 64px）。方向键移动选中项是**自编 DLL 的补丁**（`RimeWithWeasel.cpp` 里调 `highlight_candidate_on_current_page`，就是鼠标悬停选词那条通路），**不是** Lua（Lua 没有这个 API）。`vmenu_core.lua` 的 `GRID_COLS = 9` / `GRID_ROWS = 4` / option `vmenu_grid` 必须与之一致 |
 | 候选序号 | 由自编 DLL 的 `HorizontalLayout::GetLabelText` 覆写写在**标签槽**（唯一在候选词**左**边的位置），按 `this->id / 9 == id / 9` 判断「本候选是否在高亮那一行」：是高亮行给 1-9，其余行给两个空格保证左边缘对齐。**「只有第一行有 1-9」就是「高亮在第一行」的特例**。旧做法（`menu_filter.number_row1` 往候选注释里塞数字）已删除——注释渲染在词**后面**（实测「这个1 这股2」），而且是翻译阶段生成的，移动高亮不会重跑过滤器，永远不可能「按高亮行重新编号」。`menu/alternative_select_labels` 对 Weasel **无效**，别再试 |
-| `+` 号下翻（用户要求） | 收起态一行只有 9 个，按 `+` 把可见窗口后移 9 个（第 10-18 个候选），数字仍是 1-9；`GRID_PAGES = 4` 页，第 4 次按回到第 0 页。实测三页候选互不重复（这个/这股/遮盖… → 这关/遮光/这该… → 折股/这鬼/折桂…）。实现：rime 里 `KP_Add → send: plus`，**默认 `plus` 是标点会直接上屏**（实测 `zhe` 变「着+」），所以由 `menu_processor.lua` 拦下 → `vmenu_core.page_next()`（页码用 `vmenu_page_0..3` 四个布尔 option 存，因为 option 只能存布尔）→ `menu_filter.lua` 按页切片。**`+` 在 v 菜单剪贴板列表里不翻页**（翻译器忽略 `vclip` 后缀，Lua 的 `is_more_key` 只对已撤掉的 `vsetc*` 生效） |
+| `+` 号下翻（用户要求） | 收起态一行只有 9 个，按 `+` 把可见窗口后移 9 个（第 10-18 个候选），数字仍是 1-9；`GRID_PAGES = 4` 页，第 4 次按回到第 0 页。实测三页候选互不重复（这个/这股/遮盖… → 这关/遮光/这该… → 折股/这鬼/折桂…）。实现：rime 里 `KP_Add → send: plus`，**默认 `plus` 是标点会直接上屏**（实测 `zhe` 变「着+」），所以由 `menu_processor.lua` 拦下 → `vmenu_core.page_next()`（页码用 `vmenu_page_0..3` 四个布尔 option 存，因为 option 只能存布尔）→ `menu_filter.lua` 按页切片。**0.2.24 起 `+`/`=`/`-`/PageDown/PageUp 与末行 `↓`、首行 `↑` 在剪贴板/常用语列表里都能整屏翻页**（旧的「`+` 在 vclip 列表不翻页」已过时：当时没接 `is_next`，且主键盘 `+` 的 repr 是 `shift+plus` 匹配不上） |
+| ★ `repr` 带修饰符前缀（大坑） | librime 的 `KeyEvent::repr()` 会把修饰符拼在键名前：Shift+= → `shift+plus`、Shift+回车 → `shift+Return`。**`repr == "xxx"` 的精确匹配对组合键全部落空**，按键会漏到 express_editor 的 `DirectCommit`/`CommitRawInput` → **整段被提交（v 菜单消失、内部编码上屏）**。`menu_processor.handle()` 开头统一截掉前缀（取最后一个 `+` 之后的名字）—— 新增按键分支直接用裸键名即可，但**别再引入需要区分修饰符的判断** |
+| ★ 点按 Shift 会泄漏内部编码 | `default.yaml` 的 `ascii_composer/switch_key/Shift_L: commit_code`：**500ms 内点按 Shift**（中间没夹别的键，或夹的键被 `menu_processor` 吃掉——「按 `+`」就是）→ `AsciiComposer::SwitchAsciiMode` → `ClearNonConfirmedComposition()+Commit()` → 空段 `input_.substr` → 字面量 `vclip` 上屏 + 切英文。已在 `menu_processor` 里对「v 系编码组合期间」吞掉 Shift 按下/松开；**普通打字点按 Shift 切中英文是原生行为，别顺手吞掉** |
 | `v`→`5` 快捷输入 | 已生效：子模式 `vqi`，9 项（计算 / 日期 / 时间 / 星期 / 日期时间 / 农历 / 数字大写 / Unicode / 部件拆字）+ 返回；机制是「填前缀 + 完全放行」，见 `ARCHITECTURE.md` §3.9 |
 | 部件拆字前缀 | **单字母 `u`**（`rime_ice.custom.yaml`：`radical_lookup/prefix: u` + `recognizer/patterns/radical_lookup: "^u[a-z]+$"`）；旧写法 `uU` 已失效 |
 | 用户补丁文件（改这里） | `<RimeUserDir>\rime_ice.custom.yaml`（`menu/page_size`、部件拆字前缀）、`<RimeUserDir>\weasel.custom.yaml`（`max_width`）；仓库里同步维护 `examples/rime_ice.custom.example.yaml` / `examples/weasel.custom.example.yaml` |
@@ -579,3 +581,29 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\vmenu-tray-setup.ps1
    不是代理就先改名成 `.real.exe`（覆盖旧真身）再装代理；实测重跑输出符合预期。
 10. **`weasel.dll` / `weaselx64.dll` 的语言栏菜单文字是否也改**（见 `PROGRESS.md` §5 开放问题 7）：
     本次没做 —— 注入所有进程的 IME 模块，改了要重启所有程序才生效。
+
+---
+
+## 功能速查：前后鼻音模糊输入 + 词中灰字拼音（2026-09-25 完成）
+
+| 层 | 文件 | 作用 |
+|---|---|---|
+| 拼音 | `rime_ice.schema.yaml`（3 镜像）`spelling_hints/algebra` | 10 条 derive 对 = prism 永久模糊 |
+| 补丁 | `src/windows/patch-build-schema.ps1`（根副本同 MD5） | 预扫描插 `lua_filter@*fuzzy_filter` + VERIFY |
+| 开关 | `src/lua/fuzzy_filter.lua`（同步到 `D:\rime-sandbox\lua\`、`%APPDATA%\Rime\lua\`） | filters 第一位；`fuzzy-settings.txt` **读全文**找 `nasal=`（首行注释免疫）、每秒 ≤1 读；关丢/开写协议；开启时模糊命中整体挪到「最后一个精确命中」之后（降权但首页可见，其余候选原序不动） |
+| 协议 | comment = `\2<码点位>:<拼音>[;…]`（`\2`=STX，`应答`→`\21:ying`） | 只有主翻译的 `［提示］` 候选会命中；其它原样 |
+| 渲染 | `WeaselUI/InlineAnnot.h`、`HorizontalLayout.cpp`、`WeaselPanel.cpp` | Parse+BuildRuns；按 run 计宽/绘制；协议命中不画尾部 comment |
+| GUI | `vmenu-settings-gui.ps1` 设置与缓存页 `$cardFuzzy` | 勾选写 `fuzzy-settings.txt`，下一次按键生效 |
+
+构建/部署：`pwsh -NoProfile -File D:\weasel-build\build-vmenu.ps1 -Only all` →
+`repo\weasel-vmenu\tools\deploy-grid-dlls.ps1 -SourceDir 'D:\weasel-build\weasel\output'`
+（停服务→5 文件→起服务；客户端 DLL 在进程内，测新渲染要**重开应用**）。
+
+验证口径（全部已过）：开 `yinda→应 ying 答`；关 `yinda→应答消失`；上屏纯净（剪贴板码点验证）；
+GUI 往返 true→false→true；网格/v 菜单/普通输入回归正常。
+
+**红线**：
+* `edit` 改完非 ASCII `.ps1` 必须重建 BOM（EF BB BF）+ PSParser 复查。
+* lua 三处必须 MD5 一致；改 lua 要重启 WeaselServer（module 按进程缓存）。
+* 测截图每次换 sha（copy+追加字节）只读一次，防图片桥串图。
+* 杀 GUI 实例用 CIM CommandLine，别用 MainWindowTitle（隐藏实例会漏）。

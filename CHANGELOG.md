@@ -3,6 +3,44 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 本项目在真机（Windows 11 + Weasel 0.17.4 + librime 1.13.1 + rime-ice）上验证。
 
+## [0.2.24] - 2026-09-25
+
+### 修复
+
+* **打出 v2 后按回车会把内部编码 `vclip` 原样上屏（v3/v4/v 菜单同理）**（用户报障原话：「是在打出 v2 后按下 enter 会打出 vclip，v3 等也一样」）。
+  * **根因**（读 librime 源码确认）：express_editor 把 Return 绑到 `Editor::CommitRawInput` → `ClearNonConfirmedComposition()`（弹掉未确认段、composition 变空且**不再重组**）→ `Context::Commit()` → `Composition::GetCommitText()` 段循环 0 次 → `input_.substr(0)` = 字面量 `vclip` / `vqi` / `vfav` 上屏。**与候选是否存在无关，按一次泄漏一次**（0.2.21 修的空格是概率，回车是必现）。
+  * **修法**（`menu_processor.lua`，空格守卫之后新增回车分支）：列表型编码（`vclip`/`vfav`/`vsetc`/`vsetf`）回车 = 上屏当前高亮条目（拿不到候选就吞掉，宁可没反应也不泄编码）；静态菜单（`v`/`vqi`/`vset*`）回车只吞掉、不上屏——菜单文案（「设置」「剪贴板」）不是内容，不该敲进文档。
+  * **验证**（`tools/v2-enter-paging-probe.ps1`，真机模拟按键 + 截图 + 日志）：A1 `v2`+回车上屏高亮条目、A2/A3 `v3`/`v` 回车后文档为空、A4 `v4` 上屏收藏、A5 空格回归；日志出现 `回车上屏高亮条目 <vclip>`、`回车取消（不提交内部编码） <vqi>`。
+
+* **剪贴板（v2）候选词无法翻页、没法继续选下一个候选**（用户报障原话：「剪切板的候选词无法翻页 没有办法继续选择下一个候选词」）。两条根因叠加：
+  * **根因一（↓↑ 不翻页）**：自编服务端补丁只在高亮越界（末行按 ↓、首行按 ↑）时才把按键放行给 Lua，而旧的 `menu_processor` 在列表模式只吞掉 ↑、从不调 `page_next` → 末行再按 ↓ 毫无反应。
+  * **根因二（按 + 直接关掉列表）**：主键盘 `+` 是 Shift+=，librime 的 `KeyEvent::repr()` 会把修饰符拼在名字前（`shift+plus`，客户端虽把键码转成 XK_plus 但 Shift 位仍在）→ `is_next` 里 `repr == "plus"` 的**精确匹配全部落空** → 按键一路漏到 `return 2` → express_editor `DirectCommit` → **整段被提交、候选窗直接消失**（用户看到的就是「按 + 没翻页反而列表没了」）。
+  * **修法**：① `handle()` 开头统一截掉 repr 的修饰符前缀（取最后一个 `+` 之后的名字），`plus`/`equal`/`Return`/`space`/`Down` 等所有精确匹配对 Shift/Ctrl 组合键同时生效；② 列表模式补整屏翻页：末行放行下来的 ↓ → `page_next`、首行的 ↑ → `page_prev`（第 1 屏吞掉、保持「按上键不收起」），补丁在放行后把高亮摆回同列。
+  * **验证**：B1 连按 ↓ 截图（第 1 屏 1–6 条 → 第 2 屏 7–12 条）；B2 `Shift+=` / `=` / `-` / `PageDown` / `PageUp` 逐键截图 + 页码日志（page 0→1→2→3→2，末页 668x75 仅剩 2 条）；B3 翻页后按 `1` 精确上屏第 7 条剪贴板内容。
+
+* **在 v 功能里点按 Shift（含「按 + 翻页」带出的那一下）会把内部编码原样上屏并切到英文**——`vclip` 泄漏的第二条路径。
+  * **根因**：`default.yaml` 配的 `ascii_composer/switch_key/Shift_L: commit_code`——**500ms 内点按 Shift**（中间没夹别的键，或夹的键被本处理器吃掉，正是「按 +」）→ `AsciiComposer::SwitchAsciiMode` → `ClearNonConfirmedComposition()` + `Commit()` → 与回车同一条 `input_.substr` 路径 → 字面量 `vclip` 上屏，同时 `ascii_mode` 被置真。
+  * **修法**（`menu_processor.lua`）：v 系编码 / 原符号组合期间，把 Shift 的**按下与松开**一律吞掉（`ascii_composer` 记不上「Shift 按过」，松开时不会触发切换）；非 v 场景（普通打字点按 Shift 切中英文）不受影响。
+  * **验证**：D1 `v2`+点按 Shift 文档为空、列表仍在（1059x219）、紧接着 `shi`+空格仍出「是」（英文模式没被误切）；D2 `Shift+回车` 上屏高亮条目不泄编码；D3 `Shift+A` 不泄漏；R3 正常打字里点按 Shift 依旧能切中英文（原生行为保留）。
+
+### 新增
+
+* **真机探针脚本**：`tools/v2-enter-paging-probe.ps1`（回车泄漏 + ↓↑/+/=/PageDown 翻页 + 翻页后数字选词 + Shift 泄漏 + 标点扫描，全程截图 `panel-b*.png`）、`tools/punct-commit-probe.ps1`（v2 内敲标点是否误上屏的定点复测）、`tools/final-regression.ps1`（普通打字、网格展开/收起、原生 Shift 切换、v2 空格/回车/翻页/退格回归，截图 `final-*.png`）、`tools/quick-state-probe.ps1`（输入法状态速查）。
+
+## [0.2.23] - 2026-09-25
+
+### 新增
+
+* **前后鼻音模糊输入（an/ang、en/eng、in/ing、ian/iang、uan/uang），模糊命中的候选在词中间用灰色小字标出真实拼音**（例：输 `yinda` 出 `应 ying 答`，上屏仍是纯净的「应答」）。
+  * **拼音层**：`rime_ice.schema.yaml` 的 algebra 取消 10 条 derive 对注释（三份镜像同步；`patch-build-schema.ps1` 增加预扫描——`engine/filters` 里缺 `lua_filter@*fuzzy_filter` 才插入，且 VERIFY 步骤校验其存在），prism 层永久支持模糊拼写（部署日志 54,040B prism 已确认重建）。
+  * **开关层**：新 lua 过滤器 `fuzzy_filter.lua`，注册在 `engine/filters` **第一位**（corrector 之前，避免 `［提示］` 被清掉）。读 `<user_dir>/fuzzy-settings.txt`（`nasal=true|false`，默认 true，每秒至多读一次，读失败维持当前值）；关闭时丢弃仅前后鼻音不同的候选，开启时保留并把真实拼音写进 comment 的内联标注协议 `\2<码点位>:<拼音>;…`（`应答` → `\21:ying`）。非纯字母输入（v 菜单、符号等）整段放行。
+  * **渲染层**：WeaselUI 新增 `InlineAnnot.h`（`Parse` 解析 `\2` 协议 / `BuildRuns` 按 UTF-8 码点切词插入拼音段，兼容代理对），`HorizontalLayout.cpp` 自然宽度按 runs 计（词段用候选字体、拼音段用注释字体，间隔 `max(2, hilite_spacing)`），`WeaselPanel.cpp` 文本遍里逐 run 绘制（拼音垂直居中、灰色注释色），协议命中时不再画尾部 comment。
+  * **设置 GUI**：「设置与缓存」页顶部新增「前后鼻音模糊输入」卡片（勾选 + 状态绿字 + 说明），勾选即写回 `fuzzy-settings.txt`，下一次按键生效，无需重新部署或重启输入法。
+  * **验证**：开——`yinda → 1 应 ying 答 …`（灰字位于词中间、布局等宽）；关——`yinda → 1 瘾大 2 因打 …`（应答/硬打消失）；上屏——选中模糊词提交 `硬打`（U+786C U+6253，无拼音/协议残留）；GUI——勾选往返 `true→false→true` 实写文件、状态标签同步；回归——网格 9 列、v 菜单 `功能菜单`、普通输入正常。
+* **模糊词降权排序 + 开关读取修复（同日追加）**。
+  * **排序**：开启时除模糊命中外一切候选保持原序，仅把模糊命中的候选整体挪到「最后一个精确命中」之后——实测 `yinda → 1 瘾大 2 因打 3 硬 ying 打 4 应 ying 答 5 应 …`：精确词在前、模糊词紧随其后（仍见首页、带灰色拼音）、长尾单字位置不变；`jia` 等无模糊对的输入顺序完全不变；关闭时行为与改前一致（模糊词消失）。
+  * **修复**：`fuzzy_filter.lua` 的 `read_switch` 原来只读**第一行**匹配 `nasal=`，而设置 GUI 写出的文件首行是注释标题（`# 前后鼻音模糊输入…`）→ 开关实际失效（改了文件 filter 读不到）。改为读全文匹配后，带注释头的文件实测开/关均即时生效。
+
 ## [0.2.22] - 2026-09-24
 
 ### 修复
