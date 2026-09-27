@@ -49,6 +49,38 @@ local function debug_log(msg)
 end
 M.debug_log = debug_log
 
+-- ---------------------------------------------------------------------------
+-- 【卡顿修复·设置读盘】vmenu-settings.txt 的 1 秒 TTL 缓存
+-- 用户报障（原话）：「现在在输入的时候有轻微的卡顿」。
+-- 根因：menu_processor 每个按键都要问一次防误触开关（misinput_protect=true 时
+--   原来还问两遍 —— read_misinput 被调用两次），而 read_misinput → _read_settings
+--   每次都是真实 io.open + 逐行解析设置文件。实测本机打开这个文件 ≈1~2ms，
+--   每个按键 2 次 = 打字热路径上最大的固定磁盘开销（0.2.7 给收藏读盘加了 TTL，
+--   但 0.2.20 加防误触时引入的这两次设置读盘漏掉了，违反本文件开头
+--   「普通打字路径完全不读写文件」的设计原则）。
+-- 修法：与 fuzzy_filter / en_gate 同构 —— os.time() 秒级节流，同一秒内复用，
+--   每秒最多读 1 次盘；设置由 GUI（外部进程）写入，最迟 1 秒生效（无感）；
+--   Lua 自己的写函数（write_page / write_misinput）写成功后立刻失效缓存。
+-- 读盘 >1ms 时记一条日志（限速：只有真的读盘才可能写），作为卡顿取证通道。
+-- ---------------------------------------------------------------------------
+local _set_cache, _set_at = nil, -1
+
+local function settings_invalidate()
+  _set_cache, _set_at = nil, -1
+end
+M.settings_invalidate = settings_invalidate
+
+local function settings_cached()
+  local now = os.time()
+  if _set_cache ~= nil and now == _set_at then return _set_cache end
+  local t0 = os.clock()
+  _set_cache = M._read_settings()
+  _set_at = now
+  local dt = (os.clock() - t0) * 1000
+  if dt > 1 then debug_log(("[vmenu] 设置读盘 %.2fms"):format(dt)) end
+  return _set_cache
+end
+
 -- 请求打开「可视化设置界面」。
 -- 这里只写一个标记文件，绝不在这里启动子进程：在 Rime 输入线程里创建进程
 -- （io.popen / os.execute）正是之前 v2 卡死的根因。
@@ -385,7 +417,9 @@ function M.write_page(n)
   f:write("misinput_interval=" .. tostring(old.misinput_interval or M.MISINPUT_DEFAULT) .. "\n")
   f:close()
   os.remove(path)
-  return os.rename(tmp, path) and true or false
+  local ok = os.rename(tmp, path) and true or false
+  if ok then settings_invalidate() end  -- 自己刚写完：缓存立刻失效，读到新值
+  return ok
 end
 
 -- [防误触] 读取所有设置（内部辅助）
@@ -413,8 +447,10 @@ end
 
 -- [防误触] 读取防误触开关和间隔（供 menu_processor 调用）
 -- 返回两个值：enabled (bool), interval_ms (number)
+-- ★ 这是**每个按键**都会走的热路径：走 1 秒 TTL 缓存（settings_cached），
+--   不再每个键 io.open 设置文件 —— 这正是「输入轻微卡顿」的来源。
 function M.read_misinput()
-  local s = M._read_settings()
+  local s = settings_cached()
   return s.misinput_protect, s.misinput_interval
 end
 
@@ -434,7 +470,9 @@ function M.write_misinput(enabled, interval)
   f:write("misinput_interval=" .. tostring(interval) .. "\n")
   f:close()
   os.remove(path)
-  return os.rename(tmp, path) and true or false
+  local ok = os.rename(tmp, path) and true or false
+  if ok then settings_invalidate() end  -- 自己刚写完：缓存立刻失效，读到新值
+  return ok
 end
 
 -- ---------------------------------------------------------------------------

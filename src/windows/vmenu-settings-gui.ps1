@@ -8,6 +8,9 @@
 #   <RimeDir>\clipboard-cache.txt        剪贴板历史，一行一条，最新在最前，上限 50
 #   <RimeDir>\cn_dicts\favorites.dict.yaml  收藏，正文在 "..." 之后，格式 内容<Tab>键<Tab>词频
 #   <RimeDir>\vmenu-settings.txt         clip_page=<20|30|40|50>
+#   <RimeDir>\voice-settings.txt          punct_to_space=true|false（语音识别标点改空格）
+#     语音单独放一个文件：lua 的 write_page / write_misinput 会整文件重写
+#     vmenu-settings.txt，不认识的字段会被冲掉，放一起会丢开关状态。
 # 所有文件都以「UTF-8 无 BOM」写出：带 BOM 会让第一条剪贴板内容多出不可见字符。
 #
 # 本文件必须保存为「UTF-8 带 BOM」，否则 Windows PowerShell 5.1 会按 ANSI 解析，
@@ -55,6 +58,7 @@ $CLIP_PATH = Join-Path $RimeDir 'clipboard-cache.txt'
 $FAV_PATH = Join-Path $RimeDir 'cn_dicts\favorites.dict.yaml'
 $SET_PATH = Join-Path $RimeDir 'vmenu-settings.txt'
 $FLAG_PATH = Join-Path $RimeDir 'open-settings.flag'
+$VOICE_SET_PATH = Join-Path $RimeDir 'voice-settings.txt'
 
 $MAX_CLIP = 50
 $MIN_PAGE = 20
@@ -120,6 +124,22 @@ function Save-AllSettings {
   # （输入法端 lua 的 write_page / write_misinput 也是这种写法，两边一致）。
   $miOn = if ($script:miEnabled) { 'true' } else { 'false' }
   Write-TextFile -Path $SET_PATH -Text ("# v 功能菜单设置`nclip_page=$($script:pageSize)`nmisinput_protect=$miOn`nmisinput_interval=$($script:miInterval)`n")
+}
+
+# --- 语音输入设置（独立文件：lua 会整文件重写 vmenu-settings.txt，
+#     标点开关放那里会被冲掉；voice-overlay.py 读的也是这个文件） ---
+function Load-VoiceSettings {
+  $script:punctSpace = $true   # 默认开：识别结果里的标点转成空格
+  foreach ($line in (Read-AllLines -Path $VOICE_SET_PATH)) {
+    if ($line -match '^\s*punct_to_space\s*=\s*(\S+)') {
+      $script:punctSpace = ($Matches[1] -match '^(1|true|on|yes)$')
+    }
+  }
+}
+
+function Save-VoiceSettings {
+  $v = if ($script:punctSpace) { 'true' } else { 'false' }
+  Write-TextFile -Path $VOICE_SET_PATH -Text ("# 语音输入设置（voice-overlay.py 读取）`npunct_to_space=$v`n")
 }
 
 function Update-MiControls {
@@ -223,6 +243,8 @@ $tabSet = New-Object Windows.Forms.TabPage
 $tabSet.Text = '  设置与缓存  '
 $tabMi = New-Object Windows.Forms.TabPage
 $tabMi.Text = '  防误触  '
+$tabVoice = New-Object Windows.Forms.TabPage
+$tabVoice.Text = '  语音输入  '
 
 $status = New-Object Windows.Forms.StatusStrip
 $statusLabel = New-Object Windows.Forms.ToolStripStatusLabel
@@ -480,7 +502,7 @@ $tbFiles.Multiline = $true
 $tbFiles.ReadOnly = $true
 $tbFiles.ScrollBars = 'Vertical'
 $tbFiles.BackColor = [Drawing.Color]::White
-$tbFiles.Text = "剪贴板历史：$CLIP_PATH`r`n常用语：$FAV_PATH`r`n设置：$SET_PATH`r`n`r`n" +
+$tbFiles.Text = "剪贴板历史：$CLIP_PATH`r`n常用语：$FAV_PATH`r`n设置：$SET_PATH`r`n语音设置：$VOICE_SET_PATH`r`n`r`n" +
   "提示：改完这里的内容后无需重启输入法；输入法每次打开 v 菜单都会重新读取。`r`n" +
   "若在输入法里改了内容想在这里看到，点「重新载入」即可。"
 
@@ -510,6 +532,39 @@ $btnNative.Add_Click({
   }
 })
 $grpNative.Controls.AddRange(@($lblNative, $btnNative))
+
+# ===== 语音输入页 =====
+# 标点转空格开关：写 voice-settings.txt（独立文件，见 Load-VoiceSettings 注释），
+# 由常驻的 voice-overlay.py 在每次识别结果上生效，改完**下一次识别**即生效，
+# 不需要重启悬浮球。
+$tabVoice.Padding = New-Object Windows.Forms.Padding(16)
+
+$grpPunct = New-Object Windows.Forms.GroupBox
+$grpPunct.Text = '识别结果里的标点符号'
+$grpPunct.Left = 16; $grpPunct.Top = 16; $grpPunct.Width = 900; $grpPunct.Height = 170
+$grpPunct.Anchor = 'Top,Left,Right'
+
+$chkPunct = New-Object Windows.Forms.CheckBox
+$chkPunct.Text = '把标点符号转换成空格（，。！？、；：… → 空格）'
+$chkPunct.Left = 18; $chkPunct.Top = 32; $chkPunct.Width = 560
+
+$lblPunctState = New-Object Windows.Forms.Label
+$lblPunctState.Left = 600; $lblPunctState.Top = 34; $lblPunctState.Width = 280
+$lblPunctState.ForeColor = [Drawing.Color]::FromArgb(0, 140, 60)
+
+$lblPunctHint = New-Object Windows.Forms.Label
+$lblPunctHint.Left = 18; $lblPunctHint.Top = 68; $lblPunctHint.Width = 860; $lblPunctHint.Height = 86
+$lblPunctHint.Text = "勾选后：识别出的「今天天气真好，我们去散步吧。」→「今天天气真好 我们去散步吧」。`n" +
+  "数字里的小数点 / 千分位（3.14、1,000）不会被拆开。`n" +
+  "改动即时保存，下一次语音识别即生效（流式增量与最终结果同步生效），无需重启悬浮球。"
+
+$chkPunct.Add_CheckedChanged({
+  $script:punctSpace = $chkPunct.Checked
+  Save-VoiceSettings
+  $lblPunctState.Text = "当前：$(if ($script:punctSpace) { '标点 → 空格' } else { '保留标点' })"
+  $statusLabel.Text = "语音设置已保存：$(if ($script:punctSpace) { '标点转空格（下一次识别生效）' } else { '保留标点（下一次识别生效）' })"
+})
+$grpPunct.Controls.AddRange(@($chkPunct, $lblPunctState, $lblPunctHint))
 
 # ===== 防误触页 =====
 # 两次按键间隔 < 阈值时吞掉后一个键（键盘抖动 / 手滑连击）。
@@ -786,10 +841,12 @@ $grpClear.Controls.AddRange(@($lblClear, $btnClearClip, $btnClearFav))
 $grpFiles.Controls.Add($tbFiles)
 $tabSet.Controls.AddRange(@($grpPage, $grpClear, $grpFiles, $grpNative))
 $tabMi.Controls.Add($grpMi)
+$tabVoice.Controls.Add($grpPunct)
 
 [void]$tabs.TabPages.Add($tabClip)
 [void]$tabs.TabPages.Add($tabFav)
 [void]$tabs.TabPages.Add($tabSet)
+[void]$tabs.TabPages.Add($tabVoice)
 [void]$tabs.TabPages.Add($tabMi)
 [void]$form.Controls.Add($tabs)
 [void]$form.Controls.Add($status)
@@ -799,8 +856,11 @@ $tabFav.Add_Resize({ Layout-Tabs })
 
 # 初始载入
 Load-Settings
+Load-VoiceSettings
 $cmbPage.SelectedItem = "$($script:pageSize)"
 if ($null -eq $cmbPage.SelectedItem) { $cmbPage.SelectedIndex = 0 }
+$chkPunct.Checked = [bool]$script:punctSpace
+$lblPunctState.Text = "当前：$(if ($script:punctSpace) { '标点 → 空格' } else { '保留标点' })"
 Update-MiControls
 Layout-Tabs
 Refresh-Clipboard

@@ -65,7 +65,11 @@
 | 候选方格（**已实测**） | 收起 = **1 行 9 个**（候选窗深色区高 **64px**，宽度随内容变长、不换行）；按 `↓` 展开 = 最多 36 个（4 行 × 9 列，`zhe'g` → 高 **274px**）；**`↓↓` 不收起**，而是高亮跳到第 2 行（实测差分 **5938** 点，x[90..212] y[197..327]）；展开态 `→` 在同一行内右移（11374 点，x[90..294]）；**第一行按 `↑` 才收起**（高回到 64px）。方向键移动选中项是**自编 DLL 的补丁**（`RimeWithWeasel.cpp` 里调 `highlight_candidate_on_current_page`，就是鼠标悬停选词那条通路），**不是** Lua（Lua 没有这个 API）。`vmenu_core.lua` 的 `GRID_COLS = 9` / `GRID_ROWS = 4` / option `vmenu_grid` 必须与之一致 |
 | 候选序号 | 由自编 DLL 的 `HorizontalLayout::GetLabelText` 覆写写在**标签槽**（唯一在候选词**左**边的位置），按 `this->id / 9 == id / 9` 判断「本候选是否在高亮那一行」：是高亮行给 1-9，其余行给两个空格保证左边缘对齐。**「只有第一行有 1-9」就是「高亮在第一行」的特例**。旧做法（`menu_filter.number_row1` 往候选注释里塞数字）已删除——注释渲染在词**后面**（实测「这个1 这股2」），而且是翻译阶段生成的，移动高亮不会重跑过滤器，永远不可能「按高亮行重新编号」。`menu/alternative_select_labels` 对 Weasel **无效**，别再试 |
 | `+` 号下翻（用户要求） | 收起态一行只有 9 个，按 `+` 把可见窗口后移 9 个（第 10-18 个候选），数字仍是 1-9；`GRID_PAGES = 4` 页，第 4 次按回到第 0 页。实测三页候选互不重复（这个/这股/遮盖… → 这关/遮光/这该… → 折股/这鬼/折桂…）。实现：rime 里 `KP_Add → send: plus`，**默认 `plus` 是标点会直接上屏**（实测 `zhe` 变「着+」），所以由 `menu_processor.lua` 拦下 → `vmenu_core.page_next()`（页码用 `vmenu_page_0..3` 四个布尔 option 存，因为 option 只能存布尔）→ `menu_filter.lua` 按页切片。**0.2.24 起 `+`/`=`/`-`/PageDown/PageUp 与末行 `↓`、首行 `↑` 在剪贴板/常用语列表里都能整屏翻页**（旧的「`+` 在 vclip 列表不翻页」已过时：当时没接 `is_next`，且主键盘 `+` 的 repr 是 `shift+plus` 匹配不上） |
-| ★ `repr` 带修饰符前缀（大坑） | librime 的 `KeyEvent::repr()` 会把修饰符拼在键名前：Shift+= → `shift+plus`、Shift+回车 → `shift+Return`。**`repr == "xxx"` 的精确匹配对组合键全部落空**，按键会漏到 express_editor 的 `DirectCommit`/`CommitRawInput` → **整段被提交（v 菜单消失、内部编码上屏）**。`menu_processor.handle()` 开头统一截掉前缀（取最后一个 `+` 之后的名字）—— 新增按键分支直接用裸键名即可，但**别再引入需要区分修饰符的判断** |
+| ★ `repr` 带修饰符前缀（大坑） | librime 的 `KeyEvent::repr()` 会把修饰符拼在键名前：Shift+= → `shift+plus`、Shift+回车 → `shift+Return`、**Ctrl+V → `Control+v`（大写 C、全拼 `control`，不是 `ctrl`！0.2.25 TRACE 实测）**。**`repr == "xxx"` 的精确匹配对组合键全部落空**，按键会漏到 express_editor 的 `DirectCommit`/`CommitRawInput` → **整段被提交（v 菜单消失、内部编码上屏）**。`menu_processor.handle()` 开头统一截掉前缀（取最后一个 `+` 之后的名字）—— 新增按键分支直接用裸键名即可 |
+| ★ Ctrl/Alt 组合键必须整条放行（0.2.25） | 截前缀那刀会把 `Control+v` 变成裸 `v` → 落进「输入为空按 `v` → `push_input`」→ **本该粘贴的 Ctrl+V 打开了 v 菜单**（用户报障「按下 ctrl+v 会与输入法的 v 冲突」）。修法：截完前缀后立刻判断前缀里有没有 **非 Shift** 修饰符（`control`/`ctrl`/`alt`/`super`/`meta`/`mod1`，大小写不敏感），有就 `return 2` 放行。⚠️ 只匹配 `"ctrl"` 子串是**匹配不上** `control` 的（没有连续 c-t-r-l），两个都要写。Shift 不在这里拦——下面「吞 Shift 防 `commit_code` 泄漏」那段照旧生效 |
+| ★ v 主菜单回车上屏字母 `v`（0.2.25） | 用户诉求「按下 v 之后按 enter 能直接输入正常的字母 v」。`cur == "v"` 且按回车 → `commit_text("v")` + `clear()`；**只对恰好 `v` 生效**（`vqi`/`vset*` 内部编码绝不能原样上屏 = 0.2.24 的泄漏 bug），列表型回车照旧上屏高亮条目 |
+| ★ 打字热路径零读盘：设置文件也有 TTL 缓存（0.2.26） | 用户报「输入有轻微卡顿」。根因：`misinput_protect=true` 时 `handle()` **每个按键读两遍** `vmenu-settings.txt`（`read_misinput` 被调两次，每次 `io.open` ≈1~2ms）。修法：`vmenu_core.settings_cached()` 秒级 TTL（与 fuzzy/en_gate 同构），`write_page`/`write_misinput` 写后 `settings_invalidate()`。**再加按键热路径的读盘前，先看这段**：热路径唯一允许的读盘必须带 TTL |
+| ★ 慢键诊断（0.2.26） | `menu_processor` 外层包装对整键计时：≥5ms → `按键处理偏慢 … <res key pre cur push rep rest>`，**限速 1 条/秒**（无条件每键写日志 = 新的卡顿源）；`vmenu_core` 设置读盘 >1ms 单独记 `设置读盘`。分段含义：pre=取键名/组合键/Shift/防误触、cur=输入清空复位、push=主菜单 `push_input`、rep=`replace_input(clear+push)`、rest=其余分支。已知遗留：开 v 菜单首键 56~58ms、`v`→`2` 21ms（疑 `set_option` 整管线重翻译），正常打字 0 慢键 |
 | ★ 点按 Shift 会泄漏内部编码 | `default.yaml` 的 `ascii_composer/switch_key/Shift_L: commit_code`：**500ms 内点按 Shift**（中间没夹别的键，或夹的键被 `menu_processor` 吃掉——「按 `+`」就是）→ `AsciiComposer::SwitchAsciiMode` → `ClearNonConfirmedComposition()+Commit()` → 空段 `input_.substr` → 字面量 `vclip` 上屏 + 切英文。已在 `menu_processor` 里对「v 系编码组合期间」吞掉 Shift 按下/松开；**普通打字点按 Shift 切中英文是原生行为，别顺手吞掉** |
 | `v`→`5` 快捷输入 | 已生效：子模式 `vqi`，9 项（计算 / 日期 / 时间 / 星期 / 日期时间 / 农历 / 数字大写 / Unicode / 部件拆字）+ 返回；机制是「填前缀 + 完全放行」，见 `ARCHITECTURE.md` §3.9 |
 | 部件拆字前缀 | **单字母 `u`**（`rime_ice.custom.yaml`：`radical_lookup/prefix: u` + `recognizer/patterns/radical_lookup: "^u[a-z]+$"`）；旧写法 `uU` 已失效 |
@@ -158,6 +162,17 @@ src/lua/           → 复制到 <RimeUserDir>\lua\ 和 %APPDATA%\Rime\lua\
                         按 core.grid_limit(ctx) 截断候选个数（收起 9 / 展开 36），
                         并按 core.page_get(ctx) 做「+ 下翻」的切片
                         （⚠️ 序号**不再**写注释，改由自编 DLL 的标签槽实现，见 §4）
+  predict_filter.lua  ★ filter（排 v_filter 之后、pin_cand 之前）：下一个候选词预测。
+                        上下文 = preedit 已锁定汉字，否则 commit_history:back() 的最后一个 CJK 字；
+                        查 <RimeUserDir>\predict-bigram.txt（12MB / 11773 上字，RIMEBI1 头 + 字节偏移索引，
+                        **0 基偏移，Lua sub 要 +1**），P(候选首字|上字) ≥ 0.02 提前（最多 3 个）。
+                        数据在 M.init 一次性读入（打字路径零 IO）；重建：
+                        corpus\build_bigram.py（工作区 D:\VibeCoding\输入法\corpus\，
+                        语料 = 中文维基**全量 6 分片** parquet → extract_all.py 拼接 → build_bigram.py，
+                        当前参数 --min-total 10 --min-cnt 3 --topk 512，语料 10.5 亿字符；
+                        ⚠️ 语料原料（6 个 parquet + wiki-zh*.txt，4.3GB）已于 2026-09-26 清理，
+                        重建需重新下载分片（URL 见 PROGRESS §1.40）；成品备份在 corpus\predict-bigram-v2.txt）
+                        ⚠️ bucket 偏移必须 = header + **索引区总长**（build 已带 assert）
 
 src/windows/       → 放到任意目录（脚本间用 %~dp0 互相调用，必须保持同目录）
   vmenu-settings-gui.ps1  ★ 常驻设置窗口（WinForms）：三个标签页 + 标记文件轮询 + 离屏预建
@@ -372,6 +387,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\vmenu-tray-setup.ps1
 | 工具 | 用途 | 例子 |
 | --- | --- | --- |
 | `type-and-shot.ps1` | **抢焦点 + 真按键 + 截图**（`AttachThreadInput` + ALT 解锁，能打赢 Chrome 抢焦点） | `-Target notepad -Keys 'esc,w,s,l,enter' -Out shots\x.png -ShotX 0 -ShotY 40 -ShotW 1700 -ShotH 560` |
+| `test-clean.ps1` | **更稳的按键+截图**：起记事本后先 `Ctrl+N` 强制新标签（绕开会话恢复的旧标签页），**标题不匹配 `TitleMatch` 就拒绝拍照** | `-Keys 'y,a,n,space,j,i,n,g' -Out shots\x.png -TitleMatch '^\*'` |
 | `ime-test.ps1` | 老版按键+截图（会把记事本移到 80,60） | `-Keys 'esc,v,1' -Out shots\x.png` |
 | `run-vmenu-tests.ps1` | 把 18 个菜单流程步骤各截一张图 | 无参数 |
 | `v1-latency-test.ps1` | 标记文件 → 窗口出现在屏幕上的延迟（轮询 5 ms） | `-Runs 3` |
@@ -396,6 +412,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\vmenu-tray-setup.ps1
    对它是 0 个元素。只能「截图找行 + 真实鼠标」，并且进程要先 `SetProcessDPIAware()`
    （否则坐标被 1.5 倍缩放，点到别的行）。模态弹框要用 `EnumWindows` + `GetWindowTextW` 找
    （它不进 `Process.MainWindowTitle`）。现成实现：`tools/gui-dblclick-test.ps1`。
+6. **截图有两个已知假象（2026-09-25 踩过）**：① Windows11 记事本的**会话恢复**会把上一轮的
+   旧标签页盖在截图区域上（键其实打进的是新窗口）——用 `test-clean.ps1` 或拍前强制 `Ctrl+N`；
+   ② **无人值守的会话里 `CopyFromScreen` 可能拿到冻结帧**（不同两次按键拍出字节相同的 PNG）。
+   所以候选顺序的**最终判据 = 窗口标题（`AFTER=`）+ `vmenu-debug.log` 的「本页」行**
+   （`vmenu_core.lua` 里临时 `DEBUG_CAND = true` 重启，每键一行、带每个候选的 text/type/comment，
+   改完记得关回 `false`——它每个按键都写文件）。
 
 ---
 

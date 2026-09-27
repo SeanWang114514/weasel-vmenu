@@ -3,9 +3,15 @@
 -- 整个处理体用 pcall 包裹：任何异常都退化为「不处理」，绝不阻塞输入。
 local core = require("vmenu_core")
 
+-- [诊断·分段耗时] 由最外层包装函数在每次按键前置空/新建，handle 在关键分段打点。
+-- 只有整键 ≥5ms 时才会被拼进日志（限速 1 条/秒），平时只是几次 os.clock 调用（µs 级）。
+local PH = nil
+
 local function replace_input(ctx, s)
+  if PH then PH.rep0 = os.clock() end
   ctx:clear()
   ctx:push_input(s)
+  if PH then PH.rep1 = os.clock() end
 end
 
 local function is_more_key(repr)
@@ -31,15 +37,38 @@ local function handle(key, env)
   -- ===== 按键名规范化：截掉修饰符前缀 =====
   -- librime 的 KeyEvent::repr() 会把修饰符拼在名字前面：Shift+= 报上来的是
   -- `shift+plus`（客户端把键码转成了 XK_plus，但 Shift 位仍在）、Shift+回车是
-  -- `shift+Return`、Ctrl+回车是 `ctrl+Return`。带前缀时本文件里所有
+  -- `shift+Return`、Ctrl+回车是 `Control+Return`（实测修饰符是**大写全拼**
+  -- `Control+`，不是 `ctrl+`，见下面 Ctrl/Alt 放行分支的注释）。带前缀时本文件里所有
   -- `repr == "..."` 精确匹配**全部落空**，按键一路漏到最后 return 2 →
   -- express_editor 的 DirectCommit / CommitScriptText → 整段被提交
   -- （现象：v 菜单里按 + 候选窗直接消失、按 Shift+回车泄漏内部编码）。
-  -- 本文件没有任何分支需要区分修饰符，统一取最后一个 '+' 之后的名字。
+  -- 本文件绝大多数分支不需要区分修饰符，统一取最后一个 '+' 之后的名字。
   local repr_raw = key:repr() or ""
   local plus_at = repr_raw:find("+", 1, true)
   local repr = plus_at and repr_raw:sub(plus_at + 1) or repr_raw
   local cur = ctx.input or ""
+
+  -- ===== Ctrl / Alt / Super 组合键一律原样放行 =====
+  -- 用户报障（原话）：「现在按下 ctrl+v 会与输入法的 v 冲突」。
+  -- 根因：上面那刀把前缀一截，`ctrl+v` 就成了裸 `v`，正好落进最下面的
+  --   「输入为空时按下 v → push_input("v")」分支 → 本该粘贴的 Ctrl+V 把
+  --   v 菜单打开了（菜单里按 Ctrl+数字 / Ctrl+字母 同理会被误当选择键）。
+  -- 修法：截前缀照旧（下面的分支仍按裸键名匹配），但只要前缀里带
+  --   **非 Shift** 修饰符（ctrl / alt / super / meta / mod1），本处理器立刻
+  --   return 2 放行 —— 按键原样回到 Weasel 再交还应用：
+  --   Ctrl+V 粘贴、Ctrl+C 复制、Ctrl+A 全选、Ctrl+回车 … 全部恢复原生行为。
+  -- Shift 不在这里拦：下面「v 功能里吞掉 Shift 防 commit_code 泄漏」那段照旧生效。
+  -- ★ 实测 repr 是 `Control+v`（**大写 C、全拼 control**，不是 `ctrl+v`）——
+  --   所以必须同时匹配 "control" 与 "ctrl"，只找 "ctrl" 子串永远匹配不上
+  --   （"control" 里根本没有连续的 c-t-r-l，第一版就是这么漏掉的，见 TRACE 日志）。
+  local prefix_l = (plus_at and repr_raw:sub(1, plus_at - 1) or ""):lower()
+  local pf_ctrl = prefix_l:find("control", 1, true) or prefix_l:find("ctrl", 1, true)
+  if pf_ctrl or prefix_l:find("alt", 1, true)
+    or prefix_l:find("super", 1, true) or prefix_l:find("meta", 1, true)
+    or prefix_l:find("mod1", 1, true) then
+    core.debug_log("[vmenu] 放行组合键 <" .. repr_raw .. ">")
+    return 2
+  end
 
   -- ===== v 功能里按 Shift（按下与松开都拦）：防 ascii_composer 把内部编码原样上屏 =====
   -- 用户报障的 v2 泄漏除了回车还有一条：default.yaml 配的是
@@ -69,15 +98,20 @@ local function handle(key, env)
   --   配置存储在 vmenu-settings.txt 的 misinput_protect / misinput_interval 字段，
   --   由设置面板（vmenu-settings-gui.ps1）读写。
   local now = os.clock()
-  local ok_protect, protect_enabled = pcall(function() return core.read_misinput() end)
-  if ok_protect and protect_enabled then
-    local _, interval = core.read_misinput()
+  -- 【卡顿修复】一次调用同时拿回开关与阈值：原来 misinput_protect 开着时
+  --   read_misinput 被调**两遍**（一遍问开关、一遍问阈值），每遍都真实 io.open
+  --   设置文件 —— 本机实测 ≈1~2ms/次，每个按键白付 2~4ms，正是「输入时轻微卡顿」。
+  --   现在 pcall 一次拿两个返回值；read_misinput 在 core 里已做 1 秒 TTL 缓存，
+  --   热路径上通常零读盘（设置面板改了开关最迟 1 秒生效，无感）。
+  local ok_protect, protect_on, interval = pcall(core.read_misinput)
+  if ok_protect and protect_on then
     local interval_s = (interval or 30) / 1000.0  -- ms → 秒
     if core._last_key_time and (now - core._last_key_time) < interval_s then
       return 1  -- 吞掉本次按键
     end
   end
   core._last_key_time = now
+  if PH then PH.mis = os.clock() end
 
   -- 英文 / ASCII 模式：v 功能整体关闭，按键原样放行
   local ok_ascii, ascii = pcall(function() return ctx:get_option("ascii_mode") end)
@@ -96,6 +130,7 @@ local function handle(key, env)
     -- 「下翻」页码也要复位，否则下一次打字会从上一轮的第 2 页开始。
     pcall(core.page_reset, ctx)
   end
+  if PH then PH.cur = os.clock() end
   -- ===== 原符号模式：按键也照**普通打字**来处理 =====
   -- 用户反馈：「v5 的候选词选择逻辑没有和正常的候选词选择逻辑同步」。
   -- 原符号模式以前是「完全不拦截、全交给原版」，但候选窗是照普通打字的网格画的
@@ -185,6 +220,30 @@ local function handle(key, env)
     end
   end
 
+  -- ===== 数字编码「光标逃逸」：← 已经顶到输入框最左边时，放行给应用 =====
+  -- 用户诉求（第二十四轮，原话）：
+  --   「比如输入 这是测试1 之后光标在1的位置无法直接移到测试中间的位置」
+  -- 根因：打完中文后敲的数字会停在「纯数字编码」的候选态（上面那条规则，
+  --   数字是常用语的编码），此时 ← 只能在「1」这个输入框内部移动，
+  --   移到最左（caret_pos == 0）之后 librime 的 Rewind 只会把它弹回末尾，
+  --   光标永远出不了输入框 —— 看起来就是「移不出去」。
+  -- 修法：已经顶到最左再按 ← 时，把这串数字**原样上屏**（不是提交常用语），
+  --   清空输入，然后 return 2 把 ← 交给应用 → 文档里的光标继续左移，
+  --   下一次 ← 就能进到「测试」中间了。
+  if cur ~= "" and cur:match("^%d+$") and repr == "Left" then
+    local ok_cp, cp = pcall(function() return ctx.caret_pos end)
+    if ok_cp and cp == 0 then
+      local ok_esc = pcall(function()
+        env.engine:commit_text(cur)
+        ctx:clear()
+      end)
+      if ok_esc then
+        core.debug_log("[vmenu] 数字编码光标逃逸 <" .. cur .. ">")
+        return 2
+      end
+    end
+  end
+
   -- ===== v 功能里「退格 = 整条输入全部丢掉」=====
   -- 用户诉求：「back 键全部删除 不显示」：不管当前是 v 菜单、v2 剪贴板、v3 快捷输入、
   -- 常用语还是设置，一按退格这条输入就整条作废 —— ctx:clear() 之后输入为空，
@@ -234,6 +293,22 @@ local function handle(key, env)
   --   * 静态菜单（v / vqi / vset*）：回车只吞掉、什么都不上屏 —— 菜单文案
   --     （「设置」「剪贴板」这些）不是内容，不该被敲进文档。
   if cur ~= "" and is_v_func(cur) and repr == "Return" then
+    -- [新增] v 主菜单按回车 = 直接输入字母 v。
+    -- 用户诉求（原话）：「增加按下 v 之后按 enter 能直接输入正常的字母 v」。
+    -- 主菜单以前是「回车只吞掉、什么都不上屏」，想打个字母 v 只能切英文或退格重来；
+    -- 现在 cur == "v" 时回车 → 字面量 `v` 上屏并清空输入（Esc 取消仍然保留）。
+    -- 只对**恰好是 `v`** 的主菜单生效：`vqi` / `vset*` 这些内部编码绝不能原样上屏
+    -- （那正是「打 v2 回车泄漏 vclip」的旧 bug），列表型则照旧上屏高亮条目。
+    if cur == "v" then
+      local ok_vcommit = pcall(function()
+        env.engine:commit_text("v")
+        ctx:clear()
+      end)
+      if ok_vcommit then
+        core.debug_log("[vmenu] 主菜单回车 → 上屏字母 v")
+        return 1
+      end
+    end
     local ok_c, cand = pcall(function() return ctx:get_selected_candidate() end)
     local text = nil
     if ok_c and cand and type(cand.text) == "string" and cand.text ~= "" then
@@ -386,7 +461,9 @@ local function handle(key, env)
 
   -- ===== 主菜单 =====
   if cur == "" and repr == "v" then
+    if PH then PH.push0 = os.clock() end
     ctx:push_input("v")
+    if PH then PH.push1 = os.clock() end
     return 1
   end
   if cur == "v" then
@@ -547,8 +624,45 @@ local function handle(key, env)
   return 2
 end
 
+-- [诊断·按键耗时] 单次按键处理 ≥5ms 才记一条日志，且**每秒最多 1 条** ——
+-- 限速是关键：如果无条件每键写日志，诊断本身就成了新的卡顿源（每个键一次文件写入）。
+-- 用户报「输入有轻微卡顿」时，先看 vmenu-debug.log 里有没有这行、耗时多少、
+-- 对应哪类按键；长时间为 0 = 本处理器不是瓶颈，问题在滤镜/翻译/渲染侧。
+local _slow_at = 0
+local SLOW_MS = 5
+
 return function(key, env)
+  local t0 = os.clock()
+  PH = {}
   local ok, res = pcall(handle, key, env)
-  if ok and type(res) == "number" then return res end
-  return 2
+  local ph = PH
+  PH = nil
+  local r = 2
+  if ok and type(res) == "number" then r = res end
+  local tEnd = os.clock()
+  local dt = (tEnd - t0) * 1000
+  if dt >= SLOW_MS then
+    if tEnd - _slow_at >= 1 then
+      _slow_at = tEnd
+      local rk = "?"
+      pcall(function() rk = key:repr() or "?" end)
+      -- 分段拆解：pre=取键名/组合键/Shift/防误触  cur=输入清空时的复位
+      --          push/rep=把内容写进输入框（会触发 rime 重翻译）  rest=其余
+      local parts, lm = {}, t0
+      local function seg(name, a, b)
+        if a and b and b >= a then
+          parts[#parts + 1] = ("%s=%.1f"):format(name, (b - a) * 1000)
+          lm = b
+        end
+      end
+      seg("pre", t0, ph.mis)
+      seg("cur", ph.mis, ph.cur)
+      seg("push", ph.push0, ph.push1)
+      seg("rep", ph.rep0, ph.rep1)
+      parts[#parts + 1] = ("rest=%.1f"):format((tEnd - lm) * 1000)
+      core.debug_log(("[vmenu] 按键处理偏慢 %.1fms <res=%d key=%s %s>"):format(
+        dt, r, rk, table.concat(parts, " ")))
+    end
+  end
+  return r
 end

@@ -53,13 +53,74 @@ $drop = @(
   '    - "lua_translator@*favorite"',
   '    clipboard: "^v2$"',
   '    favorite: "^v3.*$"',
-  '    vmenu: "^v$"'
+  '    vmenu: "^v$"',
+  # phrase_first (word-first ordering) supersedes long_word_filter; the custom
+  # yaml no longer lists it, so drop it from the compiled schema as well.
+  '    - "lua_filter@*long_word_filter"'
 )
 
 $epoch = [long]((Get-Date (Get-Item $custom).LastWriteTimeUtc -UFormat %s))
 $out = New-Object System.Collections.Generic.List[string]
 $changes = New-Object System.Collections.Generic.List[string]
+# fuzzy_filter must sit FIRST in engine/filters (it has to read the
+# spelling-hints comment before corrector clears it). Insert it right before
+# the corrector entry if this build schema does not carry it yet.
+$addedFuzzy = $false
 foreach ($l in $lines) {
+  if ($l -match '^\s+- "?lua_filter@\*fuzzy_filter"?\s*$') { $addedFuzzy = $true; break }
+}
+# en_gate (中文模式英文候选开关) sits right after reduce_english_filter.
+$addedEn = $false
+foreach ($l in $lines) {
+  if ($l -match '^\s+- "?lua_filter@\*en_gate"?\s*$') { $addedEn = $true; break }
+}
+# predict_filter (next-candidate bigram prediction) sits right after v_filter,
+# before pin_cand_filter, so pins / long words / fav slot 2 stay authoritative.
+$addedPred = $false
+foreach ($l in $lines) {
+  if ($l -match '^\s+- "?lua_filter@\*predict_filter"?\s*$') { $addedPred = $true; break }
+}
+# phrase_first (word-first ordering) sits between v_filter and predict_filter:
+# it reorders the raw candidates, then predict / pin_cand get the last word and
+# can still push a favourite to position 1.
+$addedPhrase = $false
+foreach ($l in $lines) {
+  if ($l -match '^\s+- "?lua_filter@\*phrase_first"?\s*$') { $addedPhrase = $true; break }
+}
+foreach ($l in $lines) {
+  if (-not $addedFuzzy -and $l -match '^(\s+)- "?lua_filter@\*corrector"?\s*$') {
+    $out.Add("$($Matches[1])- `"lua_filter@*fuzzy_filter`"")
+    $changes.Add('added fuzzy_filter before corrector')
+    $addedFuzzy = $true
+    $out.Add($l)
+    continue
+  }
+  if (-not $addedPred -and $l -match '^(\s+)- "?lua_filter@\*v_filter"?\s*$') {
+    $out.Add($l)
+    if (-not $addedPhrase) {
+      $out.Add("$($Matches[1])- `"lua_filter@*phrase_first`"")
+      $changes.Add('added phrase_first after v_filter')
+      $addedPhrase = $true
+    }
+    $out.Add("$($Matches[1])- `"lua_filter@*predict_filter`"")
+    $changes.Add('added predict_filter after v_filter')
+    $addedPred = $true
+    continue
+  }
+  if (-not $addedPhrase -and $l -match '^(\s+)- "?lua_filter@\*v_filter"?\s*$') {
+    $out.Add($l)
+    $out.Add("$($Matches[1])- `"lua_filter@*phrase_first`"")
+    $changes.Add('added phrase_first after v_filter')
+    $addedPhrase = $true
+    continue
+  }
+  if (-not $addedEn -and $l -match '^(\s+)- "?lua_filter@\*reduce_english_filter"?\s*$') {
+    $out.Add($l)
+    $out.Add("$($Matches[1])- `"lua_filter@*en_gate`"")
+    $changes.Add('added en_gate after reduce_english_filter')
+    $addedEn = $true
+    continue
+  }
   if ($drop -contains $l) { $changes.Add("removed: $($l.Trim())"); continue }
   if ($l -match '^(\s+)v2: \[\]\s*$') { $out.Add("$($Matches[1])v2: $v2"); $changes.Add('restored punctuator/symbols/v2'); continue }
   if ($l -match '^(\s+)v3: \[\]\s*$') { $out.Add("$($Matches[1])v3: $v3"); $changes.Add('restored punctuator/symbols/v3'); continue }
@@ -84,5 +145,10 @@ if ($verify -match '(?m)^\s+(clipboard|favorite|vmenu):') { $bad += 'stale recog
 if ($verify -match '(?m)^\s+v[23]: \[\]\s*$') { $bad += 'v2/v3 still empty' }
 if ($verify -notmatch 'lua_processor@\*menu_processor') { $bad += 'menu_processor missing' }
 if ($verify -notmatch 'lua_filter@\*menu_filter') { $bad += 'menu_filter missing' }
+if ($verify -notmatch 'lua_filter@\*fuzzy_filter') { $bad += 'fuzzy_filter missing' }
+if ($verify -notmatch 'lua_filter@\*en_gate') { $bad += 'en_gate missing' }
+if ($verify -notmatch 'lua_filter@\*predict_filter') { $bad += 'predict_filter missing' }
+if ($verify -notmatch 'lua_filter@\*phrase_first') { $bad += 'phrase_first missing' }
+if ($verify -match 'lua_filter@\*long_word_filter') { $bad += 'stale long_word_filter still present' }
 if ($verify -notmatch 'lua_translator@\*lua_menu') { $bad += 'lua_menu missing' }
 if ($bad.Count -eq 0) { 'VERIFY OK' } else { foreach ($x in $bad) { "VERIFY FAIL: $x" }; exit 1 }
