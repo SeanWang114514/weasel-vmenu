@@ -30,11 +30,13 @@ class HorizontalLayout : public StandardLayout {
   //   所以收起态那一行和展开后每一行的同一列严格对齐（用户要求）。
   mutable int visible_cols_ = 0;  // 0 = 不裁（全部画）
   // [vmenu-grid] 序号算法（服务端 ctx.grid_2d）：
-  //   true  = 按「行 × 列」编号（列表 / 普通打字的展开网格：第 2 行的标签是 1-4，
-  //           数字键在服务端也是按行 × 列换算的，两边必须一致）；
-  //   false = 按 1..N 顺序编号（静态 v 菜单：v 主菜单 5 项、v3 快捷输入 7 项，
-  //           数字键是顺序选的，所以每一行都要把序号显示出来）。
+  //   0 = 按 1..N 顺序编号（静态 v 菜单：v 主菜单 5 项、v3 快捷输入 7 项，
+  //       数字键是顺序选的，所以每一行都要把序号显示出来）；
+  //   1 = 按「行 × 列」编号（列表 / 普通打字的展开网格：第 2 行的标签是 1-4，
+  //       数字键在服务端也是按行 × 列换算的，两边必须一致）；
+  //   2 = **不画序号**（[vmenu-nolabel] 纯数字编码输入：候选里只剩「常用语预览」一条，
+  //       用户要求「这个也最好不要显示序号」）。
   // 与 cols_per_row_ 同理，用 mutable 缓存上一帧 DoLayout 收到的值。
-  mutable bool grid_2d_ = true;
+  mutable int grid_seq_mode_ = 1;
 };
 };  // namespace weasel

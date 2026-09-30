@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include "HorizontalLayout.h"
+#include "InlineAnnot.h"
 
 using namespace weasel;
 
@@ -26,15 +27,32 @@ std::wstring HorizontalLayout::GetLabelText(const std::vector<Text>& labels,
                                             int id,
                                             const wchar_t* format) const {
   const int cols = (cols_per_row_ > 0) ? cols_per_row_ : 9;
+  // [vmenu-nolabel] grid_2d = 2：这条候选不画序号。第二十一轮用户诉求（原话）：
+  //   「把第一个 131 删除 只留下第二个（这个也最好不要显示序号）」——
+  //   纯数字编码输入时候选里只剩「常用语预览」一条，序号「1」既没用又占地方。
+  if (grid_seq_mode_ == 2)
+    return L"";
   // [vmenu-grid] 静态 v 菜单（v 主菜单 / v3 快捷输入）：数字键是顺序选的（Lua 的 cur=="v"
   // 分支），所以整块按 1..N 顺序编号，且**每一行都要显示**（否则第 2 行的「5 原符号」
   // 没有序号，用户看不出该按几）。服务端用 ctx.grid_2d=0 通知这种情形。
-  if (!grid_2d_) {
+  if (grid_seq_mode_ == 0) {
     if (id < 0)
       return L"  ";
     return std::to_wstring(id + 1) + L" ";
   }
   const int hl_row = this->id / cols;
+  // [vpick] grid_2d = 3：符号面板（v5）—— 与 1 同样按「行 × 列」画序号，
+  //   但第 1 行是「大栏」：只有前 4 格（4 个大栏）编号 1-4，5-9 是占位空格，
+  //   画上序号就是一排没用的数字，所以返回两个空格（与「数字+空格」等宽，
+  //   保证大栏行与下面小栏行的左边缘对齐）。其余行照旧 1-9。
+  if (grid_seq_mode_ == 3) {
+    if (id < 0) return L"  ";
+    const int row3 = id / cols;
+    const int col3 = id % cols;
+    if (row3 == hl_row && !(row3 == 0 && col3 >= 4))
+      return std::to_wstring(col3 + 1) + L" ";
+    return L"  ";
+  }
   const int row = id / cols;
   if (row == hl_row)
     return std::to_wstring(id % cols + 1) + L" ";
@@ -122,17 +140,41 @@ void HorizontalLayout::DoLayout(CDCHandle dc, PDWR pDWR) {
   // [vmenu-grid] 统一列宽的量：作用域要覆盖下面「定位」与「设置 rect」两段 pass
   //   基准列数：普通打字 9；**v 功能菜单 4**（服务端用 ctx.grid_cols 下发，用户要求
   //   「一行显示 4 个」，展开后 4 行 × 4 = 16 个）。旧服务端不发这个键 → 0 → 退化为 9。
-  const int kGridCols = (_context.grid_cols > 0) ? _context.grid_cols : 9;
   const bool explicit_cols = (_context.grid_cols > 0);
-  // [vmenu-grid] 只有「排满一页」才强制等宽（收起 = 9、展开 = 36）。见下面 grid_uniform 的注释。
-  const int kGridUniformMin = 8;
+  // [vmenu-line] 静态 v 菜单（v 主菜单 5 项 / v→3 快捷输入 7 项）—— 服务端用 ctx.grid_2d = 0 下发。
+  //   用户诉求（第二十轮，原话）：「让 v 功能的页面的候选词在同一行显示」。
+  //   这两张菜单是人手定的、条目本来就只有 5~7 条，之前按 4 列 / 2 列折行
+  //   （v 主菜单排成 4+1、快捷输入排成 2 列 × 4 行），现在改成：
+  //     * **一行排开**（列数 = 候选数，永不折行）；
+  //     * **按各格自然宽度**（不统一拉成最宽那一格）—— 条目短，自然宽度既短又贴合内容；
+  //     * **不裁列、不截断**（菜单项不允许被藏起来）。
+  //   它们永远不会展开成方格，所以不涉及「收起态与展开后各列对齐」那套约束。
+  //   旧服务端不发 grid_2d → 缺省 1 → 这里自动退回老行为。
+  const bool static_menu = explicit_cols && (_context.grid_2d == 0);
+  const int kGridCols =
+      static_menu ? max(1, min(candidates_count, MAX_CANDIDATES_COUNT))
+                  : ((_context.grid_cols > 0) ? _context.grid_cols : 9);
+  // [vmenu-hug] 「排满一页才强制等宽」这条老规则第二十一轮起由 `grid_uniform = grid_multi_row`
+  //   取代（收起态一律自然宽度），所以 kGridUniformMin 不再需要。
   // [vmenu-fixed] 剪贴板 / 常用语「固定格宽」占屏幕宽度的百分比：用户定 20%（= 屏宽 1/5，
   //   相对整屏宽度算是「减少 4/5」）。改这一个数字就能整体调宽/调窄（往下还有 120px 的字宽保底）。
   const int kVMenuFixedCellPercent = 20;
-  const bool grid_multi_row = (candidates_count > kGridCols);
+  const bool grid_multi_row = !static_menu && (candidates_count > kGridCols);
   int col_width = 0;
   int grid_label_w = 0;                // 网格态统一序号槽宽（见下面注释）
   int draw_cols = kGridCols;           // 本行实际画几格（<= kGridCols，见下面「少放几个」）
+  // [vmenu-hug] 每格「自然宽度」（标签 + 间距 + 候选词 + 注释，不含格间间距）。
+  //   第二十一轮：收起态按这些自然宽度**紧贴内容**排（框跟着候选词走），
+  //   上限超标时也用它算「删掉尾部第 n 条之后还剩多宽」。声明在 if 之外：
+  //   下面的宽度上限判断与主循环都要读。
+  int cand_widths[MAX_CANDIDATES_COUNT] = {0};
+  // [vmenu-boxwidth] 「格宽被压小」标记：长候选 + 上限挤不下时把格宽压到 上限/格数，
+  //   文字与注释按格裁成「…」。在 `if (candidates_count)` 之外声明：下面的
+  //   「末格拉到右缘」美化（第二个 if 块）也要看它。
+  bool cells_shrunk = false;
+  // [vmenu-hug] 是否启用「统一列宽」（= 展开态同步成最长的候选词）。在下面的宽度上限
+  //   判断里可能被改成 true（兜底：删到 3 条还放不下时退回等宽 + 压窄）。
+  bool grid_uniform = false;
   int& cols_per_row = cols_per_row_;   // 换行 / 编号的步长：普通 9、v 功能菜单 4
   cols_per_row = kGridCols;
   // [vmenu-fixed] 「固定格宽」= 剪贴板 / 常用语（服务端下发 grid_cols == 2 的列表模式）。
@@ -147,7 +189,10 @@ void HorizontalLayout::DoLayout(CDCHandle dc, PDWR pDWR) {
   const int kScreenW = GetSystemMetrics(SM_CXSCREEN);
   const int grid_budget =
       (kScreenW > 0) ? (kScreenW - offsetX - 2 * real_margin_x - 16) : 0;
-  const bool fixed_cells = (explicit_cols && kGridCols == 2 && grid_budget > 0);
+  // [vmenu-line] 静态 v 菜单不走固定格宽：它们的列数现在等于候选数，恰好 2 项时
+  //   （例如 vset 的二次确认页）不能被误判成「剪贴板那种 2 列固定格」。
+  const bool fixed_cells =
+      (!static_menu && explicit_cols && kGridCols == 2 && grid_budget > 0);
   // 固定格宽（含列间距）。上限 = **屏幕宽度的 27%**（用户指定：剪贴板 / 常用语每个候选框
   //   的长度上限就从原来的「可用宽度一半（≈ 屏幕 50%）」缩到 27% —— 格子更短、更整齐，
   //   装不下的候选词照样由绘制阶段裁成「…」，上屏内容仍是完整的一句）。
@@ -160,8 +205,11 @@ void HorizontalLayout::DoLayout(CDCHandle dc, PDWR pDWR) {
             120 + _style.candidate_spacing);
   }
   // [vmenu-grid] 序号算法由服务端下发：1 = 行 × 列（列表 / 普通打字的展开网格），
-  // 0 = 顺序 1..N（静态 v 菜单）。这里先记下来，GetLabelText 会在下面各次调用里用它。
-  grid_2d_ = (_context.grid_2d != 0);
+  // 0 = 顺序 1..N（静态 v 菜单），2 = 不画序号（纯数字编码输入，见 GetLabelText）。
+  grid_seq_mode_ = _context.grid_2d;
+  // [vmenu-nolabel] 不画序号时，标签槽宽度是 0，标签与候选词之间那个间距也要省掉
+  //   （否则候选词左侧会多出约 8px 的空隙，框看着不贴合）。
+  const bool no_labels = (_context.grid_2d == 2);
   if (candidates_count) {
     w = offsetX + real_margin_x;
     // [vmenu-grid] 「严格整齐」：网格态先量出**统一列宽**。
@@ -181,19 +229,39 @@ void HorizontalLayout::DoLayout(CDCHandle dc, PDWR pDWR) {
         GetTextSizeDW(lb, lb.length(), pDWR->pLabelTextFormat, pDWR, &size);
         grid_label_w = max(grid_label_w, size.cx * labelFontValid);
       }
+      // [vmenu-fuzzy] 内联拼音标注：这一格的宽度 = 词段 + 拼音段 + 段间小距，
+      // 与 WeaselPanel 的分段绘制完全一致；带协议的候选词尾不再追加注释宽度。
+      const int annot_gap = max(2, _style.hilite_spacing);
+      std::vector<vmenu_annot::Seg> annot_segs;
+      std::vector<vmenu_annot::Run> annot_runs;
       for (auto i = 0; i < candidates_count && i < MAX_CANDIDATES_COUNT; ++i) {
-        int cw = grid_label_w + _style.hilite_spacing;
-        GetTextSizeDW(candidates.at(i).str, candidates.at(i).str.length(),
-                      pDWR->pTextFormat, pDWR, &size);
-        cw += size.cx * textFontValid;
-        bool cmtOk =
-            (i == id && (_style.hilited_comment_text_color & 0xff000000)) ||
-            (i != id && (_style.comment_text_color & 0xff000000));
-        if (!comments.at(i).str.empty() && cmtFontValid && cmtOk) {
-          GetTextSizeDW(comments.at(i).str, comments.at(i).str.length(),
-                        pDWR->pCommentTextFormat, pDWR, &size);
-          cw += _style.hilite_spacing + size.cx * cmtFontValid;
+        int cw = grid_label_w + (no_labels ? 0 : _style.hilite_spacing);
+        if (vmenu_annot::Parse(comments.at(i).str, annot_segs)) {
+          vmenu_annot::BuildRuns(candidates.at(i).str, annot_segs, annot_runs);
+          int tw = 0;
+          for (const auto& r : annot_runs) {
+            GetTextSizeDW(r.s, r.s.length(),
+                          r.is_py ? pDWR->pCommentTextFormat
+                                  : pDWR->pTextFormat,
+                          pDWR, &size);
+            tw += size.cx * (r.is_py ? cmtFontValid : textFontValid);
+          }
+          cw += tw + annot_gap * (static_cast<int>(annot_runs.size()) - 1);
+        } else {
+          GetTextSizeDW(candidates.at(i).str, candidates.at(i).str.length(),
+                        pDWR->pTextFormat, pDWR, &size);
+          cw += size.cx * textFontValid;
+          bool cmtOk =
+              (i == id && (_style.hilited_comment_text_color & 0xff000000)) ||
+              (i != id && (_style.comment_text_color & 0xff000000));
+          if (!comments.at(i).str.empty() && cmtFontValid && cmtOk) {
+            GetTextSizeDW(comments.at(i).str, comments.at(i).str.length(),
+                          pDWR->pCommentTextFormat, pDWR, &size);
+            cw += _style.hilite_spacing + size.cx * cmtFontValid;
+          }
         }
+        // [vmenu-hug] 记下这一格的自然宽度：收起态直接用它排版，宽度超标时也用它算总宽。
+        cand_widths[i] = cw;
         col_width = max(col_width, cw);
       }
       col_width += _style.candidate_spacing;  // 列与列之间的间距
@@ -201,33 +269,77 @@ void HorizontalLayout::DoLayout(CDCHandle dc, PDWR pDWR) {
     // [vmenu-fixed] 固定格宽：覆盖上面「按最宽候选」量出来的列宽（本身只当兜底）。
     if (fixed_cells)
       col_width = fixed_col_width;
-    // [vmenu-grid] 统一列宽的另一面：万一有**超长候选**（例如很长的常用语 / 剪贴板长句），
-    // N 列 × 那个宽度会把面板撑得比屏幕还宽。用户允许「实在太长就少放 1-3 个」：
-    // 从基准列数往下减（9→8/7/6，v 菜单 4→3/2/1），减到这一行能完整放进屏幕为止。
+    // [vmenu-grid] 统一列宽的另一面：万一有**超长候选**（例如很长的常用语 / 剪贴板长句 /
+    // English 长词），N 列 × 那个宽度会把面板撑得几乎整屏宽。用户允许「实在太长就少放 1-3 个」：
+    // 从「这一行本来有几格」往下减，减到这一行能放进**框宽上限**为止。
     // 减掉的那几格**不画**（visible_cols_），但列位置仍钉在「列号 × 列宽」上，
     // 于是收起态那一行与展开后每一行同一列严格对齐（用户要求「上下对齐」）。
     // 注意：固定格宽（剪贴板 / 常用语）的列宽已经 ≤ budget/列数，这里不会触发裁列。
+    //
+    // [vmenu-hug] 框宽上限 = min(主题 style/layout/max_width, 屏幕可用宽度)。
+    //   第二十一轮用户诉求（原话）：「不开启折叠栏的时候候选词框的大小跟随这个候选词，
+    //   打开后就同步成最长的候选词；同时限制候选词整条栏的最长长度，如果超出就删除部分候选词」。
+    //   → 收起态（单行）：**每格用自己的自然宽度**（框紧贴候选词，最长的那个不再把整条框撑宽）；
+    //   → 展开态（4 行网格）：统一成最宽那一格（就是「同步成最长的候选词」）；
+    //   → 两种状态都受上限约束，超出的处理是**先删尾部候选**（至少留 3 条），
+    //     删到只剩 3 条还放不下才压窄格宽 + 「…」裁剪（极长词的兜底）。
+    //   max_width 是现成的主题键，所以「框最长多长」用户改主题就能调，不用改代码。
     draw_cols = kGridCols;
-    if (col_width > 0 && grid_budget > 0) {
-      const int min_cols = (kGridCols > 3) ? (kGridCols - 3) : 1;  // 最多少放 3 个
-      while (draw_cols > min_cols && draw_cols * col_width > grid_budget)
-        --draw_cols;
+    const int row_budget = (grid_budget > 0 && _style.max_width > 0)
+                               ? min(_style.max_width, grid_budget)
+                               : grid_budget;
+    // 本行「自然宽度」= 前 n 格各自的自然宽度 + 格间间距（末尾那格后面不留间距）。
+    auto natural_row_width = [&](int n) {
+      int s = 0;
+      for (int i = 0; i < n && i < MAX_CANDIDATES_COUNT; ++i)
+        s += cand_widths[i] + _style.candidate_spacing;
+      return (n > 0) ? (s - _style.candidate_spacing) : 0;
+    };
+    if (!static_menu && !fixed_cells && row_budget > 0) {
+      const int avail_cols = min(kGridCols, candidates_count);
+      // 「至少留 3 条」：候选本来就不足 3 条时全留（不为凑数删到空）。
+      const int floor_cols = min(3, avail_cols);
+      if (!grid_multi_row) {
+        int n = avail_cols;
+        while (n > floor_cols && natural_row_width(n) > row_budget)
+          --n;
+        draw_cols = n;
+        if (natural_row_width(n) > row_budget) {
+          // 兜底：3 条自然宽度也超标（极长英文词）→ 退回等宽并把格宽压到上限以内，
+          //   文字由绘制阶段裁成「…」（候选文本本身不动，上屏仍是完整的）。
+          grid_uniform = true;
+          col_width = max(row_budget / max(n, 1),
+                          120 + _style.candidate_spacing);
+          cells_shrunk = true;
+        }
+      } else if (col_width > 0) {
+        // 展开态：格子等宽，按「格数 × 格宽」超标就少放几列（列位置仍钉在列号上，
+        //   所以上下每一行省掉的是同样的那几格，仍然严格对齐）。
+        while (draw_cols > floor_cols && draw_cols * col_width > row_budget)
+          --draw_cols;
+        if (draw_cols * col_width > row_budget) {
+          col_width = max(row_budget / max(draw_cols, 1),
+                          120 + _style.candidate_spacing);
+          cells_shrunk = true;
+        }
+      }
     }
+    // [vmenu-grid] 高亮格绝不能被裁掉：高亮所在列一旦被省去，高亮块会整块消失（键盘
+    //   选词失去焦点提示），那一格的 rect 又是 (0,0,0,0)，文字会被画到窗口左上角
+    //   形成概率出现的「残影/错位」。所以高亮落到尾列时宁可这一行略宽，
+    //   也要把高亮所在的那一列画出来（最多也就多放 1 格）。
+    if (id >= 0 && id < candidates_count)
+      draw_cols = max(draw_cols, (id % kGridCols) + 1);
+    // 凡是「格宽被钉死」的两种情况，文字/注释都要裁在格子里（DirectWrite 自动画「…」）。
+    const bool clip_cells = fixed_cells || cells_shrunk;
     visible_cols_ = draw_cols;
     const bool cols_trimmed = (draw_cols < kGridCols);
-    // 统一列宽在**展开态一律启用**（要的就是严格行列对齐）；
-    // 收起态（单行）也启用，让每一格等宽 —— 用户要求「每个预选词都用同一个长度」，
-    // 收起态量出来 95/100/101 这种 ±3px 的抖动就是各格自然宽度不同造成的。
-    // 「必须排满一页才启用」的老例外保留：像 v 主菜单那样只有 5–6 条、每条还带长短不一的
-    // 注释时，自然宽度更紧凑。但现在多了两个新的启用条件：
-    //   * explicit_cols：服务端指明这是 v 功能菜单（一行 4 个）→ 收起态那一行必须与展开后
-    //     每一行**同一套格子**，否则「收起 / 展开」两态对不齐（用户明确要求对齐）；
-    //   * cols_trimmed：候选超长、本行已经「少放了几个」→ 只有等宽 + 按列号钉位才能上下对齐。
-    const bool grid_uniform =
-        (candidates_count >= kGridUniformMin || explicit_cols || cols_trimmed) &&
-        col_width > 0 &&
-        (grid_multi_row || explicit_cols || cols_trimmed || grid_budget <= 0 ||
-         kGridCols * col_width <= grid_budget);
+    // [vmenu-hug] 统一列宽**只在展开态启用**（用户要求「打开后就同步成最长的候选词」）。
+    //   收起态刻意不统一：框宽紧贴候选词的自然宽度，最长的那个不再把整条框撑宽
+    //   （用户要求「不开启折叠栏的时候候选词框的大小跟随这个候选词」）。
+    //   固定格宽（剪贴板 / 常用语）与「压窄兜底」当然也是等宽的。
+    if (!grid_uniform)
+      grid_uniform = !static_menu && grid_multi_row && col_width > 0;
     for (auto i = 0; i < candidates_count && i < MAX_CANDIDATES_COUNT; ++i) {
       // [vmenu-grid] 「实在太长就少放 1-3 个」：这一行第 draw_cols 格之后的候选不画。
       //   注意不画 ≠ 挪走：列位置仍按 kGridCols 的步长排，所以被省掉的永远是每行的**最后几格**，
@@ -269,11 +381,32 @@ void HorizontalLayout::DoLayout(CDCHandle dc, PDWR pDWR) {
       current_cand_width += lab_w;
 
       /* Text */
-      w += _style.hilite_spacing;
+      // [vmenu-nolabel] 没有序号时不加「序号—候选词」之间那个间距（no_labels 时 lab_w = 0）。
+      const int lab_gap = no_labels ? 0 : _style.hilite_spacing;
+      w += lab_gap;
+      current_cand_width += lab_gap;
       const std::wstring& text = candidates.at(i).str;
+      // [vmenu-fuzzy] 内联拼音标注：词段用正文字体、拼音段用注释字体逐段量宽求和，
+      // 段间加 annot_gap（与 WeaselPanel 的分段绘制完全一致）。
+      std::vector<vmenu_annot::Seg> annot_segs;
+      std::vector<vmenu_annot::Run> annot_runs;
+      const bool annot = vmenu_annot::Parse(comments.at(i).str, annot_segs);
       GetTextSizeDW(text, text.length(), pDWR->pTextFormat, pDWR, &size);
-      const int text_natural_w = size.cx * textFontValid;
+      int text_natural_w = size.cx * textFontValid;
       const int text_h = size.cy;
+      if (annot) {
+        vmenu_annot::BuildRuns(text, annot_segs, annot_runs);
+        const int annot_gap = max(2, _style.hilite_spacing);
+        int tw = 0;
+        for (const auto& r : annot_runs) {
+          GetTextSizeDW(r.s, r.s.length(),
+                        r.is_py ? pDWR->pCommentTextFormat : pDWR->pTextFormat,
+                        pDWR, &size);
+          tw += size.cx * (r.is_py ? cmtFontValid : textFontValid);
+        }
+        text_natural_w =
+            tw + annot_gap * (static_cast<int>(annot_runs.size()) - 1);
+      }
 
       /* Comment */
       // [vmenu-fixed] 注释要在**放候选词之前**量出来：固定格宽下注释右对齐到格子右缘，
@@ -281,8 +414,10 @@ void HorizontalLayout::DoLayout(CDCHandle dc, PDWR pDWR) {
       bool cmtFontNotTrans =
           (i == id && (_style.hilited_comment_text_color & 0xff000000)) ||
           (i != id && (_style.comment_text_color & 0xff000000));
+      // [vmenu-fuzzy] 带内联标注协议的候选：词尾不再画注释（整段已被词内拼音消费）。
       const bool cmt_drawn =
-          (!comments.at(i).str.empty() && cmtFontValid && cmtFontNotTrans);
+          (!annot && !comments.at(i).str.empty() && cmtFontValid &&
+           cmtFontNotTrans);
       int cmt_adv = 0, cmt_h = 0;
       if (cmt_drawn) {
         GetTextSizeDW(comments.at(i).str, comments.at(i).str.length(),
@@ -297,11 +432,11 @@ void HorizontalLayout::DoLayout(CDCHandle dc, PDWR pDWR) {
       int draw_text_w = text_natural_w;
       // 注释占位宽度（注释 + 与候选词之间的间距）：固定格宽下文字区与光标都要让出这块。
       const int cmt_block = cmt_drawn ? cmt_adv + _style.hilite_spacing : 0;
-      if (fixed_cells) {
+      if (clip_cells) {
         draw_text_w = min(text_natural_w, max(0, cell_right - cmt_block - w));
       }
       _candidateTextRects[i].SetRect(w, height, w + draw_text_w, height + text_h);
-      if (fixed_cells) {
+      if (clip_cells) {
         // [vmenu-fixed] 固定格宽下光标只走到「本格文字区右缘」为止。
         //   原来无条件 w += text_natural_w：剪贴板长句的自然宽度上千像素，
         //   注释 rect 就被顶到格子外面（right 远超 cell_right），
@@ -315,9 +450,12 @@ void HorizontalLayout::DoLayout(CDCHandle dc, PDWR pDWR) {
 
       if (cmt_drawn) {
         const std::wstring& comment = comments.at(i).str;
-        if (fixed_cells) {
+        if (clip_cells) {
           // [vmenu-fixed] 注释右对齐到格子右缘：所有行的注释排成整齐的一列。
           //   注释自己放不下时（格子太窄 / 注释太长）同样裁成「…」。
+          // [vmenu-boxwidth] 「格宽被压小」的情况（长候选挤不下时）走同一条路：
+          //   注释也跟着裁在格子里，不会溢到隔壁格。收起态也不做「末格拉到右缘」的美化：
+          //   格宽是压出来的，拉一下最后一格会比别的格宽，高亮块大小就不一致了。
           int cx = max(w, cell_right - cmt_adv);
           const int cw = max(0, min(cmt_adv, cell_right - cx));
           _candidateCommentRects[i].SetRect(cx, height, cx + cw, height + cmt_h);
@@ -457,10 +595,14 @@ void HorizontalLayout::DoLayout(CDCHandle dc, PDWR pDWR) {
       // make rightest candidate's rect right the same for better look
       // [vmenu-fixed] 固定格宽下**不做**这个「末格拉到右缘」的美化：格子本来就等宽，
       //   拉一下会让最后一格比其他格宽几像素，高亮块大小就不一致了。
+      //   [vmenu-boxwidth] 格宽被压小的情况同理（见上面 clip_cells 的注释）。
       if ((i < candidates_count - 1 &&
            row_of_candidate[i] < row_of_candidate[i + 1]) ||
           (i == candidates_count - 1))
-        if (!grid_multi_row && !fixed_cells)
+        // [vmenu-hug] 只有「等宽钉格」的排版才做这个美化：收起态现在是自然宽度、
+        //   框要贴着候选词走（用户要求「框的大小跟随候选词」），
+        //   把末格拉到面板右缘反而会多出一段空白。
+        if (grid_uniform && !grid_multi_row && !fixed_cells && !cells_shrunk)
           _candidateRects[i].right = width - real_margin_x;
     }
   }

@@ -8,6 +8,7 @@
 
 #include "VerticalLayout.h"
 #include "HorizontalLayout.h"
+#include "InlineAnnot.h"
 #include "FullScreenLayout.h"
 #include "VHorizontalLayout.h"
 
@@ -272,6 +273,10 @@ LRESULT WeaselPanel::OnLeftClickedUp(UINT uMsg,
   {
     // select by click
     CRect rect = m_layout->GetCandidateRect((int)m_ctx.cinfo.highlighted);
+    if (rect.IsRectEmpty()) {  // [vmenu-grid] 无高亮格：当作没点到，别撑大空 rect
+      bHandled = true;
+      return 0;
+    }
     if (m_istorepos)
       rect.OffsetRect(0, m_offsetys[m_ctx.cinfo.highlighted]);
     rect.InflateRect(DPI_SCALE(m_style.hilite_padding_x),
@@ -307,12 +312,13 @@ LRESULT WeaselPanel::OnLeftClickedDown(UINT uMsg,
   // capture
   if (m_style.click_to_capture) {
     CRect recth = m_layout->GetCandidateRect((int)m_ctx.cinfo.highlighted);
+    const bool hl_missing = recth.IsRectEmpty();  // [vmenu-grid] 无高亮格：不当作命中
     if (m_istorepos)
       recth.OffsetRect(0, m_offsetys[m_ctx.cinfo.highlighted]);
     recth.InflateRect(DPI_SCALE(m_style.hilite_padding_x),
                       DPI_SCALE(m_style.hilite_padding_y));
     // capture widow
-    if (recth.PtInRect(point))
+    if (!hl_missing && recth.PtInRect(point))
       _CaptureRect(recth);
     else {
       // if shadow_color transparent, decrease the capture rectangle size
@@ -381,6 +387,8 @@ LRESULT WeaselPanel::OnLeftClickedDown(UINT uMsg,
     // select by click relative actions
     for (size_t i = 0; i < m_candidateCount && i < MAX_CANDIDATES_COUNT; ++i) {
       CRect rect = m_layout->GetCandidateRect((int)i);
+      if (rect.IsRectEmpty())
+        continue;  // [vmenu-grid] 被裁列：空 rect 经 InflateRect 会在窗口左上角产生假命中区
       if (m_istorepos)
         rect.OffsetRect(0, m_offsetys[i]);
       rect.InflateRect(DPI_SCALE(m_style.hilite_padding_x),
@@ -441,6 +449,8 @@ LRESULT WeaselPanel::OnMouseMove(UINT uMsg,
 
   for (size_t i = 0; i < m_candidateCount && i < MAX_CANDIDATES_COUNT; ++i) {
     CRect rect = m_layout->GetCandidateRect((int)i);
+    if (rect.IsRectEmpty())
+      continue;  // [vmenu-grid] 被裁列：空 rect 经 InflateRect 会产生假悬停区
     if (m_istorepos)
       rect.OffsetRect(0, m_offsetys[i]);
     rect.InflateRect(DPI_SCALE(m_style.hilite_padding_x),
@@ -756,6 +766,10 @@ bool WeaselPanel::_DrawCandidates(CDCHandle& dc, bool back) {
         if (i == m_ctx.cinfo.highlighted || i == m_hoverIndex)
           continue;  // draw non hilited candidates only
         rect = m_layout->GetCandidateRect((int)i);
+        // [vmenu-grid] 被裁列的格子 rect=(0,0,0,0)：跳过。否则 InflateRect 会把空
+        //   rect 撑成窗口左上角的一小块背景/阴影（残影的一种）。
+        if (rect.IsRectEmpty())
+          continue;
         IsToRoundStruct rd = m_layout->GetRoundInfo(i);
         if (m_istorepos) {
           rect.OffsetRect(0, m_offsetys[i]);
@@ -775,6 +789,10 @@ bool WeaselPanel::_DrawCandidates(CDCHandle& dc, bool back) {
         if (i == m_ctx.cinfo.highlighted || i == m_hoverIndex)
           continue;
         rect = m_layout->GetCandidateRect((int)i);
+        // [vmenu-grid] 被裁列的格子 rect=(0,0,0,0)：跳过。否则 InflateRect 会把空
+        //   rect 撑成窗口左上角的一小块背景/阴影（残影的一种）。
+        if (rect.IsRectEmpty())
+          continue;
         IsToRoundStruct rd = m_layout->GetRoundInfo(i);
         if (m_istorepos) {
           rect.OffsetRect(0, m_offsetys[i]);
@@ -791,21 +809,24 @@ bool WeaselPanel::_DrawCandidates(CDCHandle& dc, bool back) {
     // draw semi-hilite background and shadow
     if (m_hoverIndex >= 0) {
       rect = m_layout->GetCandidateRect(m_hoverIndex);
-      IsToRoundStruct rd = m_layout->GetRoundInfo(m_hoverIndex);
-      if (m_istorepos) {
-        rect.OffsetRect(0, m_offsetys[m_hoverIndex]);
-        ReconfigRoundInfo(rd, m_hoverIndex, m_candidateCount);
+      // [vmenu-grid] 被裁列的格子 rect=(0,0,0,0)：不画（跳过，高亮块照常画）
+      if (!rect.IsRectEmpty()) {
+        IsToRoundStruct rd = m_layout->GetRoundInfo(m_hoverIndex);
+        if (m_istorepos) {
+          rect.OffsetRect(0, m_offsetys[m_hoverIndex]);
+          ReconfigRoundInfo(rd, m_hoverIndex, m_candidateCount);
+        }
+        rect.InflateRect(DPI_SCALE(m_style.hilite_padding_x),
+                         DPI_SCALE(m_style.hilite_padding_y));
+        _HighlightText(dc, rect,
+                       HALF_ALPHA_COLOR(m_style.hilited_candidate_back_color),
+                       HALF_ALPHA_COLOR(m_style.hilited_candidate_shadow_color),
+                       DPI_SCALE(m_style.round_corner), bkType, rd,
+                       HALF_ALPHA_COLOR(m_style.hilited_candidate_border_color));
       }
-      rect.InflateRect(DPI_SCALE(m_style.hilite_padding_x),
-                       DPI_SCALE(m_style.hilite_padding_y));
-      _HighlightText(dc, rect,
-                     HALF_ALPHA_COLOR(m_style.hilited_candidate_back_color),
-                     HALF_ALPHA_COLOR(m_style.hilited_candidate_shadow_color),
-                     DPI_SCALE(m_style.round_corner), bkType, rd,
-                     HALF_ALPHA_COLOR(m_style.hilited_candidate_border_color));
     }
     // draw highlighted background and shadow
-    {
+    if (!m_layout->GetHighlightRect().IsRectEmpty()) {
       rect = m_layout->GetHighlightRect();
       bool markSt = bar_scale_ == 1.0 || (!m_style.mark_text.empty());
       IsToRoundStruct rd = m_layout->GetRoundInfo(m_ctx.cinfo.highlighted);
@@ -875,26 +896,67 @@ bool WeaselPanel::_DrawCandidates(CDCHandle& dc, bool back) {
         rect = m_layout->GetCandidateLabelRect((int)i);
         if (m_istorepos)
           rect.OffsetRect(0, m_offsetys[i]);
-        _TextOut(rect, label.c_str(), label.length(), label_text_color,
-                 labeltxtFormat.Get());
+        // [vmenu-grid] 被裁列的格子 rect=(0,0,0,0)：不画，否则序号会被画到窗口左上角
+        if (!rect.IsRectEmpty())
+          _TextOut(rect, label.c_str(), label.length(), label_text_color,
+                   labeltxtFormat.Get());
       }
       // Draw text
       std::wstring text = candidates.at(i).str;
+      std::wstring comment = comments.at(i).str;
+      // [vmenu-fuzzy] 内联拼音标注：把「词 / 灰色小拼音」分段画进词矩形，
+      // 带协议的候选不再画词尾注释；不是协议的注释（v 菜单、反查等）走原路径。
+      std::vector<vmenu_annot::Seg> annot_segs;
+      const bool annot = vmenu_annot::Parse(comment, annot_segs);
       if (!text.empty()) {
         rect = m_layout->GetCandidateTextRect((int)i);
+        // [vmenu-grid] 「一行放不下就少放几格」把尾部格子的 rect 置成了 (0,0,0,0)：
+        //   不判断的话整段候选词（含灰色内联拼音）会被画到窗口左上角，压在面板上边缘
+        //   之外的浅色背景上 —— 就是概率出现的「残影/错位」。这里判 left/right 都为 0
+        //   而不是 IsRectEmpty：格宽被压到 0 的合法窄格（画「…」兜底，left>0）要保留。
+        const bool trimmed_cell = (rect.left == 0 && rect.right == 0);
         if (m_istorepos)
           rect.OffsetRect(0, m_offsetys[i]);
-        _TextOut(rect, text.c_str(), text.length(), candidate_text_color,
-                 txtFormat.Get(), true);
+        if (trimmed_cell) {
+          // 被裁掉的格子：不画
+        } else if (annot) {
+          std::vector<vmenu_annot::Run> runs;
+          vmenu_annot::BuildRuns(text, annot_segs, runs);
+          const int annot_gap = max(2, m_style.hilite_spacing);
+          int x = rect.left;
+          for (size_t k = 0; k < runs.size(); ++k) {
+            const auto& r = runs[k];
+            ComPtr<IDWriteTextFormat1>& fmt =
+                r.is_py ? commenttxtFormat : txtFormat;
+            CSize rs;
+            m_layout->GetTextSizeDW(r.s, r.s.length(), fmt, pDWR, &rs);
+            // 拼音小字段在词的行高中垂直居中
+            const int rtop = r.is_py
+                                 ? rect.top + max(0, (rect.Height() - rs.cy) / 2)
+                                 : rect.top;
+            CRect rr(x, rtop, x + rs.cx, rtop + rs.cy);
+            _TextOut(rr, r.s.c_str(), r.s.length(),
+                     r.is_py ? comment_text_color : candidate_text_color,
+                     fmt.Get(), false);
+            x += rs.cx;
+            if (k + 1 < runs.size())
+              x += annot_gap;
+          }
+        } else {
+          _TextOut(rect, text.c_str(), text.length(), candidate_text_color,
+                   txtFormat.Get(), true);
+        }
       }
       // Draw comment
-      std::wstring comment = comments.at(i).str;
-      if (!comment.empty() && COLORNOTTRANSPARENT(comment_text_color)) {
+      if (!annot && !comment.empty() &&
+          COLORNOTTRANSPARENT(comment_text_color)) {
         rect = m_layout->GetCandidateCommentRect((int)i);
         if (m_istorepos)
           rect.OffsetRect(0, m_offsetys[i]);
-        _TextOut(rect, comment.c_str(), comment.length(), comment_text_color,
-                 commenttxtFormat.Get(), true);
+        // [vmenu-grid] 被裁列的格子 rect=(0,0,0,0)：不画（同上）
+        if (!rect.IsRectEmpty())
+          _TextOut(rect, comment.c_str(), comment.length(), comment_text_color,
+                   commenttxtFormat.Get(), true);
       }
       drawn = true;
     }
@@ -903,6 +965,10 @@ bool WeaselPanel::_DrawCandidates(CDCHandle& dc, bool back) {
       if (!m_style.mark_text.empty() &&
           COLORNOTTRANSPARENT(m_style.hilited_mark_color)) {
         CRect rc = m_layout->GetHighlightRect();
+        // [vmenu-grid] 没有高亮格（无候选 / 极端裁列）时不画 mark，避免空 rect 被
+        //   InflateRect 撑到窗口左上角；mark 是文本通道最后一步，直接返回即可。
+        if (rc.IsRectEmpty())
+          return drawn;
         if (m_istorepos)
           rc.OffsetRect(0, m_offsetys[m_ctx.cinfo.highlighted]);
         rc.InflateRect(DPI_SCALE(m_style.hilite_padding_x),

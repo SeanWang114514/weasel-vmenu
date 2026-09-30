@@ -42,7 +42,10 @@ inline bool _VMenuLabel(RimeApi* api,
 inline bool _IsVMenu(RimeApi* api, RimeSessionId session_id, const char* code);
 inline int _VMenuCols(RimeApi* api, RimeSessionId session_id, const char* code);
 inline bool _VMenuList(RimeApi* api, RimeSessionId session_id, const char* code);
-inline bool _VMenuSeqLabels(RimeApi* api, RimeSessionId session_id, const char* code);
+inline int _VMenuSeqMode(RimeApi* api,
+                         RimeSessionId session_id,
+                         const char* code,
+                         int candidates);
 WeaselSessionId _GenerateNewWeaselSessionId(SessionStatusMap sm, DWORD pid) {
   if (sm.empty())
     return (WeaselSessionId)(pid + 1);
@@ -315,6 +318,89 @@ void RimeWithWeaselHandler::UpdateColorTheme(BOOL darkMode) {
   m_ui->style() = get_session_status(m_active_session).style;
 }
 
+// [vpick] 符号面板（v 功能菜单第 5 项，内部编码 vpick…）：前缀判断。
+// 必须与 src/lua/vmenu_core.lua 的 mode_of / is_pick_code 一致。
+// 与 _VMenuLabel 分开写是因为它在本文件里被用在 ProcessKeyEvent（早于 _VMenuLabel 定义）。
+inline bool _VPickCode(const char* code) {
+  if (!code) return false;
+  return strncmp(code, "vpick", 5) == 0;
+}
+
+// [vpick] 当前激活的大栏（option vpick_cat0..3，第一个为 true 的下标；全灭时按 0）。
+// 与 vmenu_core.lua 的 pick_cat 同一套读法。
+static int _PickGetCat(RimeApi* api, RimeSessionId session_id) {
+  if (!api) return 0;
+  char name[32];
+  for (int i = 0; i < 4; ++i) {
+    snprintf(name, sizeof(name), "vpick_cat%d", i);
+    if (api->get_option(session_id, name)) return i;
+  }
+  return 0;
+}
+
+// [vpick] 切换大栏：写 4 个 vpick_cat* option（只写有变化的），顺手把页码归到第 1 页。
+// set_option 会通知 librime 重跑候选管线 —— 这正是我们想要的（候选换成新大栏的内容）。
+// 调用方在之后必须重新 highlight(目标大栏)：重翻译会把高亮重置回第 0 格。
+void RimeWithWeaselHandler::_PickActivate(RimeSessionId session_id, int cat) {
+  if (cat < 0 || cat > 3) return;
+  const int cur = _PickGetCat(rime_api, session_id);
+  if (cur == cat) return;  // 已经在这个大栏：什么都不写（写 option = 重翻译，白花）
+  char name[32];
+  // 与 page_set 同理：先把目标大栏点亮再灭旧的，避免中途出现「全都灭着」的空窗
+  //（全灭时 Lua 的 pick_cat 按 0 处理，会闪一帧第 1 大栏的候选）。
+  snprintf(name, sizeof(name), "vpick_cat%d", cat);
+  if (!rime_api->get_option(session_id, name))
+    rime_api->set_option(session_id, name, true);
+  for (int i = 0; i < 4; ++i) {
+    if (i == cat) continue;
+    snprintf(name, sizeof(name), "vpick_cat%d", i);
+    if (rime_api->get_option(session_id, name))
+      rime_api->set_option(session_id, name, false);
+  }
+  // 换栏同时把页码归第 1 页：不然是上一栏翻过的页码，一进来小栏就是空的。
+  // 与 Lua page_set 同序：先把 0 点亮再灭旧的，避免中途出现「全都灭着」的空窗。
+  int page = -1;
+  for (int i = 0; i < 16; ++i) {
+    snprintf(name, sizeof(name), "vmenu_page_%d", i);
+    if (rime_api->get_option(session_id, name)) { page = i; break; }
+  }
+  if (page > 0) {
+    snprintf(name, sizeof(name), "vmenu_page_0");
+    if (!rime_api->get_option(session_id, name))
+      rime_api->set_option(session_id, name, true);
+    for (int i = 1; i < 16; ++i) {
+      snprintf(name, sizeof(name), "vmenu_page_%d", i);
+      if (rime_api->get_option(session_id, name))
+        rime_api->set_option(session_id, name, false);
+    }
+  }
+}
+
+// [vpick] 「刚进面板」检测 + 把高亮钉回当前大栏。
+// 背景（实测 bug）：librime 的 highlighted_candidate_index 是**跨输入保留**的 ——
+// 上一次选中的格子会一路带进新输入：比如刚上屏过小栏第 1 格「+」（下标 9），
+// 下次 v5 进面板时高亮还在 9，光标就默认落进小栏，数字键/方向键的第一下也跟着错位。
+// 用户要求「首先是大栏」，所以输入从别的东西变成 vpick 的那一帧把它钉回当前大栏。
+// 放在 _Respond 里是因为所有按键路径（含鼠标点开后客户端补的那记 VK_SELECT）
+// 都会先回数据再刷新界面：这里改完，紧接着的 get_context 拿到的就是第 0 格。
+void RimeWithWeaselHandler::_PickEntryPin(RimeSessionId session_id) {
+  if (!session_id || !rime_api) return;
+  const char* in = rime_api->get_input(session_id);
+  const bool is_pick = _VPickCode(in);
+  bool& was = m_pick_active[session_id];
+  if (is_pick && !was) {
+    // 大栏 = 当前激活的 vpick_cat*（上次关面板时停在哪一栏就还是哪一栏），
+    // 这样高亮格和小栏内容永远对得上；category 为 0 时等价于第 0 格。
+    const int tab = _PickGetCat(rime_api, session_id);
+    was = !!rime_api->highlight_candidate_on_current_page(session_id,
+                                                           (size_t)tab);
+    if (was)
+      DLOG(INFO) << "[vpick] entry: pin highlight to tab " << tab;
+    return;  // 没钉上（候选还没生成出来）就保持 false，下一帧 _Respond 再试
+  }
+  was = is_pick;
+}
+
 BOOL RimeWithWeaselHandler::ProcessKeyEvent(KeyEvent keyEvent,
                                             WeaselSessionId ipc_id,
                                             EatLine eat) {
@@ -419,6 +505,17 @@ BOOL RimeWithWeaselHandler::ProcessKeyEvent(KeyEvent keyEvent,
           // [vmenu-grid] 列数与前端一致：v 功能菜单 4 列，普通打字 9 列。
           const int cols =
               _VMenuCols(rime_api, session_id, input_str.c_str());
+          // [vpick] 大栏行（第 0 行）的数字键不选候选：
+          //   1-4 = 切换到对应大栏（与 ←/→ 同一套语义），5-9 落在占位空格上直接吞掉，
+          //   否则「常用字符」这四个字会被当成候选提交进文档。
+          if (_VPickCode(input_str.c_str()) && current >= 0 && current < 9) {
+            if (digit <= 3) {
+              _PickActivate(session_id, digit);
+              HighlightCandidateOnCurrentPage((size_t)digit, ipc_id, eat);
+              m_active_session = ipc_id;
+            }
+            return TRUE;
+          }
           const int row = (current > 0) ? (current / cols) : 0;
           const int target = row * cols + digit;
           if (target < count) {
@@ -443,6 +540,147 @@ BOOL RimeWithWeaselHandler::ProcessKeyEvent(KeyEvent keyEvent,
   //   不能把裸指针留着用（会读到已被覆盖的内存），先拷贝成 std::string。
   const std::string grid_input = rime_api->get_input(session_id);
   const bool grid_is_v = _IsVMenu(rime_api, session_id, grid_input.c_str());
+  // ===== [vpick] 符号面板（v 菜单第 5 项）：大栏 + 小栏 双层方向键导航 =====
+  // 用户诉求（2026-09-30）：
+  //   * 最上面独立一栏是「大栏」（常用字符 / 符号 / 希腊字符 / 颜文字），←/→ 选择大栏；
+  //   * 小栏是 4 行 × 9 列预览，光标在小栏时 ←/→ 在格子间移动，撞到行边界自动换行；
+  //   * ↓：大栏 → 进入小栏；↑：小栏第一行 → 回大栏，大栏上再按 ↑ = 关闭窗口。
+  // 光标 = 高亮格：0..3 = 大栏（4..8 是大栏行的 5 个占位空格，键盘永远停不到），
+  // 9..44 = 小栏 36 格。移动高亮只能在服务端做（librime-lua 没有「只移动高亮」的 API）。
+  // 大栏切换 = 写 vpick_cat* option（set_option 会重翻译 → 候选换成新大栏），
+  // 换完把高亮重新放回该大栏（重翻译会把高亮重置到第 0 格）。
+  if (!(keyEvent.mask & ibus::Modifier::RELEASE_MASK) &&
+      _VPickCode(grid_input.c_str())) {
+    const int kc = (int)keyEvent.keycode;
+    const bool kDown = (kc == (int)ibus::Keycode::Down);
+    const bool kUp = (kc == (int)ibus::Keycode::Up);
+    const bool kLeft = (kc == (int)ibus::Keycode::Left);
+    const bool kRight = (kc == (int)ibus::Keycode::Right);
+    const bool kSpace = (kc == 0x20 || kc == (int)ibus::Keycode::KP_Space);
+    const bool kReturn = (kc == 0xff0d || kc == (int)ibus::Keycode::KP_Enter);
+    const bool kPageFwd = (kc == 0x2b || kc == 0x3d || kc == 0xffbd ||
+                           kc == 0xff56 || kc == (int)ibus::Keycode::KP_Add);
+    const bool kPageBack =
+        (kc == 0x2d || kc == 0xff55 || kc == (int)ibus::Keycode::KP_Subtract);
+    if (kDown || kUp || kLeft || kRight || kSpace || kReturn || kPageFwd ||
+        kPageBack) {
+      RIME_STRUCT(RimeContext, pctx);
+      int current = -1;
+      int count = 0;
+      if (rime_api->get_context(session_id, &pctx)) {
+        current = pctx.menu.highlighted_candidate_index;
+        count = pctx.menu.num_candidates;
+        rime_api->free_context(&pctx);
+      }
+      const bool on_tab = (current >= 0 && current < 9);
+      // 大栏格下标（0..3）：4..8 是占位，就近归到 3（鼠标 hover 才可能停上去）
+      const int tab = (current < 4) ? current : 3;
+
+      // --- 空格 / 回车 ---
+      if (kSpace || kReturn) {
+        if (current >= 0 && current < 9) {
+          // 大栏上 = 切换大栏（占位格吞掉，绝不把「常用字符」写进文档）
+          if (current < 4) {
+            _PickActivate(session_id, current);
+            HighlightCandidateOnCurrentPage((size_t)current, ipc_id, eat);
+            m_active_session = ipc_id;
+          }
+          return TRUE;
+        }
+        // 小栏：直接「选中当前高亮格」= 上屏该符号并关窗。
+        // ★ 不能 return FALSE：ProcessKeyEvent 返回 FALSE = 把键交给**应用程序**，
+        //   rime（含 Lua 的 space/Return 分支）根本不会被调用 —— 实测空格和回车
+        //   原样敲进了记事本（文档变成 " \r\n"）。要交回 rime 必须自己调
+        //   process_key；而 select_candidate_on_current_page 本身就是「确认高亮
+        //   候选」，语义正好，还少一次 Lua 往返。
+        rime_api->select_candidate_on_current_page(session_id, current);
+        _Respond(ipc_id, eat);
+        _UpdateUI(ipc_id);
+        m_active_session = ipc_id;
+        return TRUE;
+      }
+
+      int target = -1;
+      bool page_fwd = false;
+      if (kLeft) {
+        if (on_tab) {
+          const int nt = (tab + 3) % 4;
+          _PickActivate(session_id, nt);
+          HighlightCandidateOnCurrentPage((size_t)nt, ipc_id, eat);
+          m_active_session = ipc_id;
+          return TRUE;
+        }
+        target = current - 1;
+        // 「撞到边界就换行」：current == 9 时再往左就出了小栏 —— 上一行正是大栏行，
+        // 落回当前大栏格（4..8 是占位空格，键盘永远停不上去，直接归到 vpick_cat*）。
+        // current >= 10 时 target >= 9，永远走不到这个分支。
+        if (target < 9) target = _PickGetCat(rime_api, session_id);
+      } else if (kRight) {
+        if (on_tab) {
+          const int nt = (tab + 1) % 4;
+          _PickActivate(session_id, nt);
+          HighlightCandidateOnCurrentPage((size_t)nt, ipc_id, eat);
+          m_active_session = ipc_id;
+          return TRUE;
+        }
+        target = current + 1;
+        if (target >= count) return TRUE;  // 小栏最后一格：吞掉
+      } else if (kDown) {
+        if (on_tab) {
+          target = 9 + (current % 4);  // 下键去小栏选择（同列往下）
+          if (target >= count) return TRUE;
+        } else {
+          target = current + 9;
+          if (target >= count) page_fwd = true;  // 小栏最后一行：整页下翻
+        }
+      } else if (kUp) {
+        if (on_tab) {
+          // 大栏上按 ↑ = 关闭窗口
+          rime_api->clear_composition(session_id);
+          _Respond(ipc_id, eat);
+          _UpdateUI(ipc_id);
+          m_active_session = ipc_id;
+          return TRUE;
+        }
+        if (current < 18)
+          target = _PickGetCat(rime_api, session_id);  // 小栏第一行 ↑ = 回到当前大栏
+        else
+          target = current - 9;
+      }
+
+      if (page_fwd || kPageFwd || kPageBack) {
+        // 整页翻（+ / - 或小栏最后一行 ↓）：键交给 rime（Lua 的 pick 分支按
+        // 36 个/页整屏翻），翻完把光标放回原处：大栏回原格，小栏回同列第一行。
+        Bool handled = rime_api->process_key(
+            session_id, keyEvent.keycode, expand_ibus_modifier(keyEvent.mask));
+        int restore = -1;
+        if (current >= 0 && current < 9)
+          restore = tab;
+        else if (current >= 9)
+          restore = 9 + (current % 9);
+        RIME_STRUCT(RimeContext, pctx2);
+        if (rime_api->get_context(session_id, &pctx2)) {
+          const int cnt = pctx2.menu.num_candidates;
+          rime_api->free_context(&pctx2);
+          if (restore >= cnt) restore = cnt - 1;
+          if (restore >= 0 && cnt > 0)
+            rime_api->highlight_candidate_on_current_page(session_id,
+                                                          (size_t)restore);
+        }
+        _Respond(ipc_id, eat);
+        _UpdateUI(ipc_id);
+        m_active_session = ipc_id;
+        return TRUE;
+      }
+      if (target >= 0 && target < count) {
+        HighlightCandidateOnCurrentPage((size_t)target, ipc_id, eat);
+        m_active_session = ipc_id;
+        return TRUE;
+      }
+      if (kLeft || kRight || kUp || kDown) return TRUE;  // 越界：吞掉，别动输入行光标
+      return FALSE;
+    }
+  }
   if (!(keyEvent.mask & ibus::Modifier::RELEASE_MASK) &&
       rime_api->get_option(session_id, "vmenu_grid") &&
       (!grid_is_v ||
@@ -568,7 +806,25 @@ void RimeWithWeaselHandler::SelectCandidateOnCurrentPage(
              << ", index = " << index;
   if (m_disabled)
     return;
-  rime_api->select_candidate_on_current_page(to_session_id(ipc_id), index);
+  RimeSessionId session_id = to_session_id(ipc_id);
+  // [vpick] 鼠标点到大栏上不许「选中上屏」：0-3 = 切换大栏，4-8 = 占位空格忽略。
+  // 否则点一下「常用字符」就把这四个字提交进了文档。
+  // ★ 9+ 是小栏格子：必须放行到下面的 select（数字键选格走的也是这条路，
+  //   以前 >=4 一律吞掉，导致小栏里按数字键没有任何反应）。
+  const char* pick_input = rime_api->get_input(session_id);
+  if (_VPickCode(pick_input)) {
+    if (index < 9) {
+      if (index < 4) {
+        // 切大栏 + 把高亮放回该大栏（set_option 重翻译会把高亮重置到第 0 格）。
+        // 这里**不**调 _Respond：本路径没有 eat（空 std::function 调用会抛异常），
+        // 客户端点完会补一个 VK_SELECT 键，走 ProcessKeyEvent 正常回数据。
+        _PickActivate(session_id, (int)index);
+        rime_api->highlight_candidate_on_current_page(session_id, index);
+      }
+      return;  // 4-8 是占位空格：什么都不做，绝不 select 上屏
+    }
+  }
+  rime_api->select_candidate_on_current_page(session_id, index);
 }
 
 bool RimeWithWeaselHandler::HighlightCandidateOnCurrentPage(
@@ -1026,6 +1282,13 @@ inline bool _VMenuLabel(RimeApi* api,
     *label = wtou8(L"\u5e38\u7528\u8bed");  // 常用语
     return true;
   }
+  // 符号面板（v 菜单第 5 项；原来的「原符号」顺延为第 6 项）。
+  // 文本用码点构造，避免源码里出现反斜杠转义 / 依赖代码页的中文字面量。
+  if (input.compare(0, 5, "vpick") == 0) {
+    *label = wtou8(std::wstring({(wchar_t)0x7B26, (wchar_t)0x53F7,
+                                 (wchar_t)0x9762, (wchar_t)0x677F}));
+    return true;
+  }
   if (input.compare(0, 4, "vset") == 0) {
     *label = wtou8(L"\u8bbe\u7f6e");  // 设置
     return true;
@@ -1054,6 +1317,9 @@ inline bool _VMenuListCode(const char* code) {
   if (!code) return false;
   const std::string s(code);
   if (s.compare(0, 5, "vclip") == 0) return true;
+  // [vpick] 符号面板也算「列表型」：数字键按二维选、方向键网格导航都由服务端接管。
+  //   列数 / 序号算法在 _VMenuCols / _VMenuSeqMode 里再单独覆盖（9 列、大栏行序号 1-4）。
+  if (s.compare(0, 5, "vpick") == 0) return true;
   if (s.compare(0, 4, "vfav") == 0) return true;
   if (s.size() >= 5 && s.compare(0, 4, "vset") == 0 &&
       (s[4] == 'c' || s[4] == 'f'))
@@ -1076,6 +1342,9 @@ inline int _VMenuCols(RimeApi* api, RimeSessionId session_id, const char* code) 
   //   所以 v3 自动获得「等宽固定格 + 屏宽 20% + 超长 … 截断」的同一套排版。
   {
     const std::string s(code ? code : "");
+    // [vpick] 符号面板：最上面一栏（大栏）整行 4 个 + 5 个占位，小栏 4 行 × 9 列，
+    //   整窗按 9 列换行 —— 大栏正好独占第 1 行。
+    if (s.compare(0, 5, "vpick") == 0) return 9;
     if (s.compare(0, 3, "vqi") == 0) return 2;
   }
   return _VMenuListCode(code) ? 2 : 4;
@@ -1085,9 +1354,30 @@ inline bool _VMenuList(RimeApi* api, RimeSessionId session_id, const char* code)
   return _IsVMenu(api, session_id, code) && _VMenuListCode(code);
 }
 
-// [vmenu-grid] 序号是不是「顺序 1..N」（静态 v 菜单），否则按「行 × 列」编号（列表/普通打字）。
-inline bool _VMenuSeqLabels(RimeApi* api, RimeSessionId session_id, const char* code) {
-  return _IsVMenu(api, session_id, code) && !_VMenuListCode(code);
+// [vmenu-grid] 序号算法（前端 ctx.grid_2d）：
+//   0 = 顺序 1..N（静态 v 菜单：v 主菜单 5 项、v3 快捷输入 7 项，数字键由 Lua 顺序选）；
+//   1 = 按「行 × 列」编号（列表型 v 功能 + 普通打字的展开网格）；
+//   2 = **不画序号**（[vmenu-nolabel] 纯数字编码输入，且候选只剩一条「常用语预览」）。
+//       第二十一轮用户诉求（原话）：「把第一个 131 删除 只留下第二个（这个也最好不要显示
+//       序号）」—— 那条候选是「回车才上屏」的预览，序号「1」既没用又占地方。
+//       只在「候选恰好 1 条」时启用：万一是别的候选（比如数字真的出了候选），
+//       序号还得照画，否则数字键选词就没有对照了。
+inline int _VMenuSeqMode(RimeApi* api,
+                         RimeSessionId session_id,
+                         const char* code,
+                         int candidates) {
+  if (_IsVMenu(api, session_id, code)) {
+    // [vpick] 符号面板序号 = 3：与 1 同样「按行 × 列」画，但第 1 行（大栏）
+    //   只给前 4 格编号（5-9 是占位空格，画了就是一排没用的数字）。
+    if (_VPickCode(code)) return 3;
+    return _VMenuListCode(code) ? 1 : 0;
+  }
+  if (code && *code && candidates == 1) {
+    const std::string s(code);
+    if (s.find_first_not_of("0123456789") == std::string::npos)
+      return 2;
+  }
+  return 1;
 }
 
 bool RimeWithWeaselHandler::_Respond(WeaselSessionId ipc_id, EatLine eat) {
@@ -1096,6 +1386,9 @@ bool RimeWithWeaselHandler::_Respond(WeaselSessionId ipc_id, EatLine eat) {
 
   SessionStatus& session_status = get_session_status(ipc_id);
   RimeSessionId session_id = session_status.session_id;
+  // [vpick] 刚进符号面板的那一帧：把高亮钉回当前大栏（「首先是大栏」）。
+  // 必须在下面 get_context 之前做，否则发出去的就是旧的高亮格。
+  _PickEntryPin(session_id);
   RIME_STRUCT(RimeCommit, commit);
   if (rime_api->get_commit(session_id, &commit)) {
     actions.insert("commit");
@@ -1255,11 +1548,14 @@ bool RimeWithWeaselHandler::_Respond(WeaselSessionId ipc_id, EatLine eat) {
         std::to_string(_VMenuCols(rime_api, session_id, preedit_str.c_str())) +
         '\n');
     // [vmenu-grid] 序号算法：1 = 按「行 × 列」（列表 / 普通打字的展开网格），
-    // 0 = 按 1..N 顺序（静态 v 菜单：v 主菜单 5 项、v3 快捷输入 7 项，数字键就是顺序选）。
+    // 0 = 按 1..N 顺序（静态 v 菜单：v 主菜单 5 项、v3 快捷输入 7 项，数字键就是顺序选），
+    // 2 = 不画序号（纯数字编码输入且只剩 1 条候选，见 _VMenuSeqMode）。
     // 同样每次都发；老服务端不发这一行时前端默认 1 = 原来的行为。
     messages.push_back(
         std::string("ctx.grid_2d=") +
-        (_VMenuSeqLabels(rime_api, session_id, preedit_str.c_str()) ? "0" : "1") +
+        std::to_string(_VMenuSeqMode(rime_api, session_id,
+                                     preedit_str.c_str(),
+                                     ctx.menu.num_candidates)) +
         '\n');
     rime_api->free_context(&ctx);
   }

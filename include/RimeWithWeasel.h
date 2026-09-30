@@ -85,6 +85,15 @@ class RimeWithWeaselHandler : public weasel::RequestHandler {
   bool _IsSessionTSF(RimeSessionId session_id);
   void _UpdateInlinePreeditStatus(WeaselSessionId ipc_id);
 
+  // [vpick] 符号面板（v 菜单第 5 项，内部编码 vpick…）：切换「大栏」。
+  // 只写 option（vpick_cat0..3 + 页码归位），重翻译由 set_option 触发；
+  // 移动高亮与刷新界面由调用方负责（HighlightCandidateOnCurrentPage 内含 respond+update）。
+  void _PickActivate(RimeSessionId session_id, int cat);
+  // [vpick] 「进面板」第一帧把高亮钉回当前大栏（用户要求「首先是大栏」）。
+  // librime 的高亮下标会跨输入保留 —— 上一次选中的格子（如刚上屏的第 9 格「+」）
+  // 会直接带进面板，光标就默认落在小栏里了。_Respond 每次回数据前调一次即可。
+  void _PickEntryPin(RimeSessionId session_id);
+
   RimeSessionId to_session_id(WeaselSessionId ipc_id) {
     return m_session_status_map[ipc_id].session_id;
   }
@@ -115,6 +124,8 @@ class RimeWithWeaselHandler : public weasel::RequestHandler {
   static std::string m_message_label;
   static std::string m_option_name;
   SessionStatusMap m_session_status_map;
+  // [vpick] 每个 rime 会话「现在是不是在符号面板里」—— 用来识别「刚进面板」的那一帧。
+  std::map<RimeSessionId, bool> m_pick_active;
   bool m_current_dark_mode;
   bool m_global_ascii_mode;
   int m_show_notifications_time;
