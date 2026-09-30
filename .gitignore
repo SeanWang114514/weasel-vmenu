@@ -8,6 +8,7 @@ desktop.ini
 
 # 本地验证截图输出目录（tools 的默认输出；发布用的是 screenshots/）
 shots/
+tmp/
 _tmp/
 _temp/
 

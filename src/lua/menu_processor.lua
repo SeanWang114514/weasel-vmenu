@@ -18,12 +18,13 @@ local function is_more_key(repr)
   return repr == "m" or repr == "plus"
 end
 
--- 「这个输入是不是 v 功能」：菜单 v / 剪贴板 vclip / 快捷输入 vqi / 常用语 vfav / 设置 vset…
--- 用来把「退格 = 整条取消」的作用范围限制在 v 功能里，不影响普通打字和原符号编码。
+-- 「这个输入是不是 v 功能」：菜单 v / 剪贴板 vclip / 快捷输入 vqi / 常用语 vfav / 设置 vset… / 符号面板 vpick
+-- 用来把「退格 = 整条取消」「空格/回车不泄内部编码」的作用范围限制在 v 功能里。
 local function is_v_func(s)
   if s == "v" then return true end
   return s:sub(1, 5) == "vclip" or s:sub(1, 3) == "vqi"
     or s:sub(1, 4) == "vfav" or s:sub(1, 4) == "vset"
+    or s:sub(1, 5) == "vpick"
 end
 
 local function is_back_key(repr)
@@ -314,7 +315,9 @@ local function handle(key, env)
     if ok_c and cand and type(cand.text) == "string" and cand.text ~= "" then
       text = cand.text
     end
-    if core.is_list_code(cur) and text then
+    -- 列表型回车 = 上屏高亮条目；符号面板（vpick）同样 —— 回车在小栏里就是
+    -- 「上屏这个符号」（大栏行的回车被服务端补丁拦下切栏，到不了这里）。
+    if (core.is_list_code(cur) or core.is_pick_code(cur)) and text then
       local ok_commit = pcall(function()
         env.engine:commit_text(text)
         ctx:clear()
@@ -366,7 +369,9 @@ local function handle(key, env)
   -- _VMenuListCode 做了同样的判断，两边一致）。
   local is_v_mode = core.is_v_code(cur)
   local v_list_mode = is_v_mode and core.is_list_code(cur)
-  if cur ~= "" and (not is_v_mode or v_list_mode) then
+  -- [符号面板] vpick 要和列表一样进「翻页 / 展开钉住」这块，但导航规则单独一支（下面）。
+  local pick_mode = is_v_mode and core.is_pick_code(cur)
+  if cur ~= "" and (not is_v_mode or v_list_mode or pick_mode) then
     -- 「+ 号下翻」：用户要求保留这个功能 —— 收起态一行只有 9 个候选（v 列表是 4 个），
     -- 按 + 把可见窗口后移一屏，配合 Weasel 标签槽的序号即可直接选词。
     -- rime 默认把 KP_Add 绑成 plus（只当标点、会直接上屏），所以必须在这里拦下来。
@@ -391,7 +396,8 @@ local function handle(key, env)
     --     其余情况（纯数字编码见上面的 digit 分支、cC / U / N / R 这些带大写或数字的前缀）
     --     一律放行：`-` 会走方案自己的标点处理 —— 那正是「先把已输入内容上屏、再插入符号」。
     local plain_pinyin = cur:match("^[a-z']+$") ~= nil
-    local page_keys_ok = v_list_mode or plain_pinyin
+    -- 符号面板也认 -/=/Page_Down 这套翻页键（用户在面板里翻符号页）。
+    local page_keys_ok = v_list_mode or pick_mode or plain_pinyin
     local is_next = (repr == "plus" or repr == "KP_Add")
       or (page_keys_ok and (repr == "equal" or repr == "KP_Equal"
         or repr == "Next" or repr == "Page_Down"))
@@ -409,7 +415,31 @@ local function handle(key, env)
       pcall(core.page_prev, ctx)
       return 1
     end
-    if v_list_mode then
+    if pick_mode then
+      -- ===== 符号面板（vpick）=====
+      -- 正常情况：大栏 ←/→、小栏网格导航、数字键 1-9、大栏行 ↑ 关窗，全部由
+      -- 服务端补丁（RimeWithWeasel.cpp 的 vpick 分支）处理，键根本不会走到这里。
+      -- 走到这里只有两种情况：
+      --   ① 补丁放行的整屏翻页键（小栏最后一行的 ↓、+ / -）→ 换生成器的页片；
+      --   ② 跑的是原版 server（没有补丁）→ 字母 / 数字 / 方向键一律吞掉，
+      --      绝不让它们污染纯 vpick 编码（否则 rime 会把它们拼进输入行）。
+      pcall(core.grid_lock, ctx)  -- 面板永远是展开栏（用户要求「默认开启展开栏」）
+      if repr == "Down" then
+        pcall(core.page_next, ctx)  -- 服务端在最后一行放行的 ↓ = 下一屏 36 个
+        return 1
+      end
+      if repr == "Up" or repr == "Left" or repr == "Right" then return 1 end
+      -- Esc 必须在 Lua 里显式清空输入：以前 return 2（放行）意味着这把键直接
+      -- 交给应用程序，rime 的取消动作根本不会执行 —— 实测面板关不掉。
+      -- 其它 v 菜单能关是因为它们一路 return 0，最后由 express_editor 吃掉 Esc；
+      -- 面板不赌后面的处理器链，直接 clear + 吞键，手感一致。
+      if repr == "Escape" or repr == "Esc" then
+        pcall(function() ctx:clear() end)
+        return 1
+      end
+      if repr:match("^%d$") or repr:match("^%a$") then return 1 end
+      return 1  -- 其余标点也吞掉：编码必须保持纯 vpick
+    elseif v_list_mode then
       -- ===== 剪贴板 / 常用语：固定 2 列 × 3 行，**永远是展开态** =====
       -- 用户要求「一行 2 个、默认显示 3 行、用正常候选词的逻辑选择（但拓展栏默认展开）」，
       -- 并补充「按上键不要收起，默认就是展开态」。所以：
@@ -487,9 +517,18 @@ local function handle(key, env)
       pcall(core.grid_lock, ctx)
       return 1
     end
-    -- 第 5 项：原符号（第二次互换后在第 5 位）
-    -- 说明：原来的「文字设置」（vset 纯键盘设置）已去掉，vset* 代码保留但菜单进不去
+    -- [符号面板] 第 5 项：符号面板（用户要求「v 功能添加颜文字，v5……」）。
+    --   进入即锁定展开栏（默认开启，服务端的网格补丁以 vmenu_grid 为门槛）、页码归第 1 页；
+    --   之后大栏 ←/→、小栏网格导航、数字键全部由服务端补丁（RimeWithWeasel.cpp 的 vpick 分支）接管。
     if repr == "5" then
+      replace_input(ctx, "vpick")
+      pcall(core.grid_lock, ctx)
+      pcall(core.page_reset, ctx)
+      return 1
+    end
+    -- 第 6 项：原符号（原 v5 原样保留 —— 用户要求「原来的 v5 放到 v6」）。
+    -- 说明：原来的「文字设置」（vset 纯键盘设置）已去掉，vset* 代码保留但菜单进不去。
+    if repr == "6" then
       -- 还原原版 v 模式：输入回到 v，之后用户直接输入符号编码
       replace_input(ctx, "v")
       core.set_raw(ctx, true)

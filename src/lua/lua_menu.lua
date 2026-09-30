@@ -28,7 +28,38 @@ local function yield_menu(seg)
   yield(item(seg, "vmenu", "剪贴板", "历史"))
   yield(item(seg, "vmenu", "快捷输入", "计算 · 日期"))
   yield(item(seg, "vmenu", "常用语", "快捷内容"))
+  -- [符号面板] v5：新面板（大栏 + 4×9 小栏，按 5 进入）；
+  -- 原来的「原符号」顺延为第 6 项（内部仍 = 选中后 set_raw + 回到 v，行为不变）。
+  yield(item(seg, "vmenu", "符号面板", "字符 · 颜文字"))
   yield(item(seg, "vmenu", "原符号", "原版 v"))
+end
+
+-- ===== 符号面板（编码 vpick，v 菜单第 5 项）=====
+-- 窗口 = 1 行大栏 + 4 行小栏（服务端 grid_cols=9）：
+--   第 1 行：4 个大栏 + 5 个零宽占位空格 → 正好 9 格，大栏独占最上面一行；
+--   第 2-5 行：当前大栏的 36 个（本函数按页码切片，翻页由 page_next 换这一片）。
+-- 高亮 / 方向键导航 / 数字键全在服务端补丁里（RimeWithWeasel.cpp 的 vpick 分支），
+-- Lua 只负责产出「当前大栏 + 当前页」的候选。
+local function yield_pick(seg, ctx)
+  local ok, sym = pcall(require, "vmenu_symbols")
+  if not ok or type(sym) ~= "table" then return end
+  local cat = core.pick_cat(ctx)
+  local list = sym.CATS[cat + 1] or {}
+  -- 第 1 行：大栏（就是数据表里的 4 个名字，无注释）
+  for i = 1, #sym.TABS do
+    yield(item(seg, "vsym", sym.TABS[i], ""))
+  end
+  -- 占位空格：补齐 9 格；grid_2d=3 的标签算法会在这些格上画空格序号
+  for _ = 1, 9 - #sym.TABS do
+    yield(item(seg, "vsym", ZW, ""))
+  end
+  -- 第 2-5 行：小栏 = 当前大栏当前页的 36 个
+  local off = core.page_get(ctx) * core.PICK_PAGE
+  for i = 1, core.PICK_PAGE do
+    local s = list[off + i]
+    if not s then break end
+    yield(item(seg, "vsym", s, ""))
+  end
 end
 
 -- ===== 快捷输入（对应雾凇拼音自带的前缀）=====
@@ -183,6 +214,11 @@ local function gen(input, seg, env)
 
   if mode == "menu" then
     yield_menu(seg)
+    return
+  end
+
+  if mode == "pick" then
+    yield_pick(seg, ctx)
     return
   end
 

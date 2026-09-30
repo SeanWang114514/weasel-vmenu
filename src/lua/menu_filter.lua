@@ -175,12 +175,16 @@ local function filter(input, env)
   --     交给 Weasel 按 4 列自动换行（不会把第 5 项「原符号」藏起来）。
   local is_v = (want ~= nil)
   local is_list = is_v and core.is_list_code(code or "")
+  -- [符号面板] vpick：大栏行 9 + 小栏 36 = 一屏 45 个。生成器（lua_menu.yield_pick）
+  --   已经按页码切好片，这里只负责「全量放行 + 空页自愈」，不再套 list 的窗口逻辑。
+  local is_pick = is_v and core.is_pick_code(code or "")
 
   local buf = {}
   local n = 0
   local lim = core.grid_limit(ctx)
   if is_v then
     lim = is_list and core.grid_limit(ctx, code) or 36
+    if is_pick then lim = core.PICK_LIMIT end
   end
   local start = 0
   if is_list then
@@ -217,6 +221,12 @@ local function filter(input, env)
     -- 翻过头（例如删到只剩 3 条还停在第 2 页）就回第 1 页，绝不留空窗口
     if is_list and start >= n then
       if core.page_get(ctx) > 0 then pcall(core.page_reset, ctx) end
+      start = 0
+    end
+    -- [符号面板] 同样的自愈：某页只收回大栏行（n ≤ 9，一个符号都没有）说明页码
+    -- 超出了当前大栏的长度（换栏 / 翻页残留）→ 回第 1 页重来。
+    if is_pick and n <= core.GRID_COLS and core.page_get(ctx) > 0 then
+      pcall(core.page_reset, ctx)
       start = 0
     end
     -- 同样受当前窗口限制：普通打字收起 9 / 展开 36；v 列表固定 6 个。

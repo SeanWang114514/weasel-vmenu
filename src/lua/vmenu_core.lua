@@ -148,6 +148,29 @@ M.LIST_COLS = 2
 M.LIST_ROWS = 3
 M.LIST_LIMIT = M.LIST_COLS * M.LIST_ROWS   -- 6
 
+-- [符号面板（v 菜单第 5 项，编码 vpick）] 窗口结构：
+--   第 1 行 = 大栏（4 个大栏 + 5 个占位空格 = 9 格，服务端 grid_cols=9）；
+--   第 2-5 行 = 小栏 4 行 × 9 列 = 36 个一屏，+/- 或「最后一行再按 ↓」整屏翻页。
+--   大栏状态放 option：vpick_cat0..3（布尔只能表示 4 个独立开关），
+--   服务端 _PickActivate 写、本模块 pick_cat 读，两边必须一致。
+M.PICK_CODE = "vpick"
+M.PICK_CATS = 4                                  -- 大栏个数（与前端一致）
+M.PICK_PAGE = M.GRID_COLS * M.GRID_ROWS          -- 小栏每页 36 个
+M.PICK_LIMIT = M.GRID_COLS + M.PICK_PAGE         -- 45 = 大栏行 9 + 小栏 36
+
+function M.is_pick_code(code)
+  return type(code) == "string" and code:sub(1, #M.PICK_CODE) == M.PICK_CODE
+end
+
+-- 当前大栏（0..3）。option 全灭（第一次进面板）按 0 —— 与服务端 _PickGetCat 一致。
+function M.pick_cat(ctx)
+  for i = 0, M.PICK_CATS - 1 do
+    local ok, v = pcall(function() return ctx:get_option("vpick_cat" .. i) end)
+    if ok and v then return i end
+  end
+  return 0
+end
+
 -- 输入码是不是 v 功能菜单（v / vclip / vqi / vfav / vset…）
 function M.is_v_code(code)
   return M.mode_of(code) ~= nil
@@ -183,6 +206,10 @@ end
 -- 第二个参数是「输入码」：给了且是 v 功能菜单时按 4 / 16 算，否则（普通打字）按 9 / 36 算。
 -- 省略第二个参数 = 普通打字的旧行为，老的调用点不受影响。
 function M.grid_limit(ctx, code)
+  -- [符号面板] 一屏永远是 45 个（大栏 9 + 小栏 36），大栏行不是「收起态」。
+  if code ~= nil and M.is_pick_code(code) then
+    return M.PICK_LIMIT
+  end
   -- [一行 2 个] 剪贴板 / 常用语（列表型）：固定 6 个，**不看展开状态** —— 它们永远是展开态。
   if code ~= nil and M.is_list_code(code) then
     return M.LIST_LIMIT
@@ -352,6 +379,7 @@ end
 function M.mode_of(code)
   if type(code) ~= "string" or code == "" then return nil end
   if code == "v" then return "menu" end
+  if code:sub(1, 5) == "vpick" then return "pick" end
   if code:sub(1, 5) == "vclip" then return "clip" end
   if code:sub(1, 4) == "vfav" then return "fav" end
   if code:sub(1, 3) == "vqi" then return "quick" end
@@ -371,6 +399,7 @@ end
 function M.want_type(code)
   local m = M.mode_of(code)
   if m == "menu" then return "vmenu" end
+  if m == "pick" then return "vsym" end
   if m == "clip" then return "vclip" end
   if m == "fav" then return "vfav" end
   if m == "quick" then return "vqi" end

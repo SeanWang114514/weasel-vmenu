@@ -17,7 +17,10 @@
 > [Weasel](https://github.com/rime/weasel) IME on Windows (built and verified against
 > Weasel 0.17.4 + librime 1.13.1 + [rime-ice](https://github.com/iDvel/rime-ice)):
 > press `v` for a menu (`1` 设置 / `2` 剪贴板 / `3` 快捷输入 / `4` 常用语 /
-> `3` 快捷输入 = calculator, date/time, lunar date, number-to-Chinese, Unicode, radical lookup; `5` 原符号 = native `v` mode).
+> `5` 符号面板 / `6` 原符号);
+> `3` 快捷输入 = calculator, date/time, lunar date, number-to-Chinese, Unicode, radical lookup;
+> `5` 符号面板 = a two-layer symbol palette (categories × 4×9 cells) with颜文字;
+> `6` 原符号 = native `v` mode).
 > Includes a **resident WinForms settings GUI** that opens in ~0.1 s, a clipboard-history
 > quick picker, favourite snippets that appear as **candidate #2 while you type their code**
 > (Enter invokes them), a **candidate grid** (a single row of 9 by default; press `↓` to expand
@@ -30,7 +33,7 @@
 
 ## 1. 它是什么
 
-按 `v` 打开功能菜单（候选栏里只有 5 个短词）：
+按 `v` 打开功能菜单（候选栏里只有 6 个短词）：
 
 | 候选 | 功能 | 说明 |
 | --- | --- | --- |
@@ -38,22 +41,30 @@
 | `2 剪贴板` | 剪贴板快查 | 后台脚本同步系统剪贴板到文本文件，Lua 只读文件 |
 | `3 快捷输入` | 计算 / 日期 / 时间 / 星期 / 日期时间 / 农历 / 数字大写 / Unicode / 部件拆字 | 按 `3` 进子菜单（9 项 + 返回），**选中一项就直接启用，接着输入即可** |
 | `4 常用语` | 常用语快查 | 可继续输入编码过滤（注释显示「快捷内容」） |
-| `5 原符号` | 还原原版 `v` 模式 | 之后直接输入符号编码（`2` → 二 贰 ² ₂ Ⅱ …） |
+| `5 符号面板` | **两层符号面板**（字符 / 符号 / 希腊字符 / 颜文字） | 默认**展开**（4×9 小栏），大栏 ←/→ 换栏、↓ 进小栏、小栏 ←/→ 移动（到边界换行）、↑ 返回大栏、再 ↑ 关闭；数字 1-9 直接上屏，`+` `-` `=` `PageDown` 翻页 |
+| `6 原符号` | 还原原版 `v` 模式 | 之后直接输入符号编码（`2` → 二 贰 ² ₂ Ⅱ …） |
+
+**符号面板（`v`→`5`）怎么用**：进入时高亮一定落在**大栏**上（当前所在栏）：
+
+* **大栏**（第 1 行，4 个真实格）：`←` `→` 换大栏（首尾循环）；数字 `1`-`4` 同样换栏，`5`-`9` 忽略；`↓` 落到**同一列**的小栏；`↑` 关闭面板。
+* **小栏**（第 2-5 行，4×9 = 36 个）：`←` `→` 逐格移动、**到边界换行**（到小栏最左再 `←` 会**返回大栏**）、`↓` 下移一行（最后一行再按 = 翻页）、`↑` 上移一行（第 1 行再按 = 返回大栏）；
+  数字 `1`-`9` = 直接上屏该行第 N 格；空格 / 回车 = 上屏高亮格；`Esc` 关闭。
+* **翻页**：`+` `-` `=` `PageDown`（翻页后高亮自动回到**同一列的第 1 行**）。
 
 > 原来的第 5 项「文字设置」（`vset` 纯键盘设置）已从菜单**去掉**（现在第 3 项是**快捷输入**，第 4 项是**常用语**）：
 > `vset` / `vsetc` / `vsetf` / `vsetn` / `vsetx` 的 Lua 代码**保留但不再能从菜单进入**，
 > 只有手打 `vset` 才进得去。设置一律走第 1 项的可视化窗口。
 
-**快捷输入（`v`→`5`）是怎么工作的**：选中一项后会**把该功能的触发前缀直接写进输入框**
+**快捷输入（`v`→`3`）是怎么工作的**：选中一项后会**把该功能的触发前缀直接写进输入框**
 （例如「计算」填 `cC`、「日期」填 `rq`、「部件拆字」填 `u`），之后所有按键**完全交回原方案** ——
 计算、日期、农历、数字大写、Unicode、部件拆字这些能力本来就是雾凇拼音自带的
 （`recognizer/patterns` + `lua_translator`），本项目只是把前缀喂进去，所以**选中后接着输入就能用**：
 
-* `v`→`5`→`1`（计算）→ 接着敲 `1+2*3` → 候选第一项就是 **7**，空格 / 回车上屏（`9*9` → **81**）；
-* `v`→`5`→`2`（日期）→ 直接出今天的日期；`3` 时间、`4` 星期、`5` 日期时间同理；
-* `v`→`5`→`6`（农历）→ 会把**当天日期**一起填进去，所以立刻显示今天的农历；
-* `v`→`5`→`7`（数字大写）/ `8`（Unicode）→ 之后自己补数字 / 十六进制（`R1234`、`U4e2d`）；
-* `v`→`5`→`9`（部件拆字）→ 接着敲部件拼音，`nvzi` → **好**（等价于直接打字时的 `u` + `nvzi`）。
+* `v`→`3`→`1`（计算）→ 接着敲 `1+2*3` → 候选第一项就是 **7**，空格 / 回车上屏（`9*9` → **81**）；
+* `v`→`3`→`2`（日期）→ 直接出今天的日期；`3` 时间、`4` 星期、`5` 日期时间同理；
+* `v`→`3`→`6`（农历）→ 会把**当天日期**一起填进去，所以立刻显示今天的农历；
+* `v`→`3`→`7`（数字大写）/ `8`（Unicode）→ 之后自己补数字 / 十六进制（`R1234`、`U4e2d`）；
+* `v`→`3`→`9`（部件拆字）→ 接着敲部件拼音，`nvzi` → **好**（等价于直接打字时的 `u` + `nvzi`）。
 
 机制、实现位置与 9 项的实测结果见 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) §3.9。
 
@@ -357,7 +368,7 @@ radical_lookup/prefix: u
 | --- | --- |
 | `unvzi` | **好**（词典条目就是 `好` / `nv'zi`） |
 | `uriyue` | **明** |
-| `v`→`5`→`9` + `nvzi` | **好**（快捷输入第 9 项填的就是 `u`） |
+| `v`→`3`→`9` + `nvzi` | **好**（快捷输入第 9 项填的就是 `u`） |
 
 > 副作用：**旧的 `uU` 写法失效**（要打 `uUnvzi` 才行的那套没有了）；以 `u` 开头的英文词
 > 也会被当成拆字。想回退就把 `prefix` 改回 `uU`、recognizer 改回 `^uU[a-z]+$`，重启服务。
@@ -400,7 +411,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\v1-latency-test.ps1 
 # 4) 设置窗口「双击某一行 → 弹框编辑」（截图找行 + 真实鼠标双击）
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\gui-dblclick-test.ps1 -Row 1 -Out .\shots\dblclick.png
 
-# 5) v→5 快捷输入（真按键 → 读记事本标题=文档内容）
+# 5) v→3 快捷输入（真按键 → 读记事本标题=文档内容）
 #    `esc,v,5,1` = 选「计算」，再敲算式后空格上屏；工具的按键表里没有 + 和 *，所以示例用减法
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\type-and-shot.ps1 `
   -Target notepad -Keys 'esc,v,5,1,8,minus,3,space' -Out .\shots\v5-calc.png
@@ -438,7 +449,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\type-and-shot.ps1 `
 * **部件拆字把 `u` 变成了前缀**：以 `u` 开头的英文词会被当成拆字；旧的 `uU` 写法失效
   （见 §4「部件拆字（`u` 前缀）」的回退方法）。
 * 常驻设置窗口是一个 PowerShell + WinForms 进程，约占 150 MB 内存 —— 这是「秒开」的代价。
-* **快捷输入（`v`→`5`）的三个注意点**：「计算」按下 `1` 之后**必须继续输入算式**才出候选
+* **快捷输入（`v`→`3`）的三个注意点**：「计算」按下 `1` 之后**必须继续输入算式**才出候选
   （雾凇的 recognizer 是 `^cC.+`，光有 `cC` 不出结果）；「数字大写」「Unicode」按完还要自己补
   数字 / 十六进制（`R1234`、`U4e2d`）；「农历」按 `6` 时会把**当天日期**一起填进去
   （想查别的日子就把后面的数字改成那天的 `YYYYMMDD`）。
