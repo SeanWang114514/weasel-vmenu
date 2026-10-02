@@ -130,6 +130,61 @@ end
 M.GRID_COLS = 9
 M.GRID_ROWS = 4
 M.GRID_OPTION = "vmenu_grid"   -- 状态必须放在 context option 里！
+
+-- [vmenu-cfg] 候选方格列数的用户配置（<用户目录>\grid-settings.txt）。
+-- 用户诉求（原话）：「展开栏只显示 6 个，并且在 v1 的控制面板可以设置展开栏的每行数量
+--   和没有展开栏的默认的每行数量」。
+--   cols_collapsed = 收起（没有展开栏）时一行几个，默认 9
+--   cols_expanded  = 按下 ↓ 展开后一行几个，默认 6
+-- ★ **必须与服务端 RimeWithWeasel.cpp 的 _GridCfgCached() 读同一个文件**：
+--   前端画格子用的是服务端下发的 ctx.grid_cols，而这里决定「这一屏放几个候选」——
+--   两边不一致就会出现「一行画 6 格、却只给了 9 个候选」或者「给了 24 个候选、
+--   前端按 9 列排成 3 行」这种错位。
+-- ★ 节流：与 settings_cached 同构，1 秒 TTL（设置面板改完最迟 1 秒生效）。
+--   缺文件 / 缺键 / 值非法一律退回默认，绝不因为设置文件坏了而影响打字。
+M.GRID_CONFIG_FILE = "grid-settings.txt"
+M.GRID_COLS_COLLAPSED_DEFAULT = 9
+M.GRID_COLS_EXPANDED_DEFAULT = 6
+M.GRID_COLS_MIN = 1
+M.GRID_COLS_MAX = 20
+local _grid_cfg, _grid_cfg_at = nil, -1
+
+-- 解析 "键=值"（容忍行内 # 注释与两侧空白）；值必须是 [1,20] 的整数，否则用默认值。
+local function _grid_cfg_read()
+  local cfg = {
+    collapsed = M.GRID_COLS_COLLAPSED_DEFAULT,
+    expanded = M.GRID_COLS_EXPANDED_DEFAULT,
+  }
+  local f = io.open(user_dir() .. "/" .. M.GRID_CONFIG_FILE, "r")
+  if not f then return cfg end
+  for line in f:lines() do
+    line = line:gsub("#.*$", "")            -- 去掉行内/整行注释
+    local k, v = line:match("^%s*([%w_]+)%s*=%s*(-?%d+)%s*$")
+    if k then
+      local n = tonumber(v)
+      if n and n >= M.GRID_COLS_MIN and n <= M.GRID_COLS_MAX then
+        if k == "cols_collapsed" then cfg.collapsed = n end
+        if k == "cols_expanded" then cfg.expanded = n end
+      end
+    end
+  end
+  f:close()
+  return cfg
+end
+
+function M.grid_cfg()
+  local now = os.time()
+  if _grid_cfg ~= nil and now == _grid_cfg_at then return _grid_cfg end
+  _grid_cfg = _grid_cfg_read()
+  _grid_cfg_at = now
+  return _grid_cfg
+end
+
+-- 让设置面板改完能立刻生效（外部进程写文件，Lua 这边靠 TTL；写函数自己可以主动失效）
+function M.grid_cfg_invalidate()
+  _grid_cfg, _grid_cfg_at = nil, -1
+end
+
 -- [v 一行 4 个] v 功能菜单自己的列数 / 展开行数：
 --   用户要求「v 的功能…一行显示 4 个，同时参考正常输入的下键拓展按键进行拓展显示」。
 --   收起 = 一行 4 个，按 ↓ 展开 = 4 行 × 4 列 = 16 个。
@@ -216,12 +271,17 @@ function M.grid_limit(ctx, code)
   end
   local ok, open = pcall(function() return ctx:get_option(M.GRID_OPTION) end)
   local opened = (ok and open) and true or false
+  -- [vmenu-cfg] 普通打字 / v 静态菜单的列数：收起与展开各一个可配置值。
+  --   ★ 与前端一致：服务端 _VMenuCols 也是「展开读 expanded、收起读 collapsed」。
+  local cfg = M.grid_cfg()
   if code ~= nil and M.is_v_code(code) then
+    -- v 功能菜单自己的列数固定 4（不用用户值）：这是 v 菜单的专用排版。
+    -- vpick / 列表型在上面已经各自提前 return，走到这里的只有 v / vqi / vset* 静态菜单。
     if opened then return M.V_COLS * M.V_ROWS end
     return M.V_COLS
   end
-  if opened then return M.GRID_COLS * M.GRID_ROWS end
-  return M.GRID_COLS
+  if opened then return cfg.expanded * M.GRID_ROWS end
+  return cfg.collapsed
 end
 
 local function grid_open(ctx)
@@ -361,6 +421,24 @@ function M.grid_key(ctx, repr)
   end
   if repr == "Up" then
     if grid_open(ctx) then
+      -- ★ [翻页回上页] 服务端补丁在「已翻页 + 高亮在第 1 行」时按 ↑，会把
+      --   vmenu_uppage 这个一次性开关先置 true 再 process_key 进来。
+      --   那种情况**不是**收起，而是「翻回上一页、保持展开、光标落在上一页最后一行」。
+      --   这里只负责把页码退回上一页并把开关清掉；高亮的落点由服务端补丁算
+      --   （它知道 行数×列数，lua 侧拿不到这个几何信息）。
+      --   开关一定要在这里清掉：它是会话级 option，留着会让下一次 ↑ 也走这条路。
+      local want_uppage = false
+      pcall(function() want_uppage = ctx:get_option("vmenu_uppage") end)
+      if want_uppage then
+        pcall(function() ctx:set_option("vmenu_uppage", false) end)
+        local page = M.page_get(ctx)
+        if page > 0 then
+          pcall(M.page_prev, ctx)
+          debug_log(("[vmenu] 翻页回上页：page %d -> %d"):format(page, page - 1))
+          return true           -- 保持展开态，不收起
+        end
+        -- page == 0 却带着开关进来：异常情况，安全起见照常收起
+      end
       -- ↑ 只在「选中项位于第一行」时折叠：Weasel 侧补丁发现 -9 越界才会把按键放行到这里，
       -- 越界正说明当前在第一行，所以这里折叠是正确的；在下面几行时补丁会先处理掉按键。
       -- 【第二十七轮】收起时把页码一并拉回第 1 页：否则残留 page=1 时，收起后的单行
@@ -624,16 +702,25 @@ function M.fav_reads() return _fav_reads end
 
 -- 正常打字时的收藏命中：输入满 3 个字符后，只要输入的 3 个字符是某条收藏
 -- 编码的开头（编码本身不足 3 位的不用这种方式，靠 v 菜单取用），就命中它。
--- 只在输入 >= 3 个字符时查找，2 个字符以内不读文件，保证打字速度。
+-- 字母编码：仍要满 3 个字符才查找（2 个字符以内不读文件，保证打字速度）。
+-- [第二十五轮·问题3] 纯数字编码从**第 1 位**就开始命中：使用说明 376 行要求
+--   「只打了 1 候选栏就要自动预览那条常用语」。数字编码都是以数字打头的，
+--   一次最多 1-2 位，等满 3 位永远来不及预览（这正是「数字常用语 131 没完成」的缺口）。
 function M.fav_hit(code)
-  if type(code) ~= "string" or #code < 3 then return nil end
+  if type(code) ~= "string" or code == "" then return nil end
   local key = code:lower()
+  local is_digit = key:match("^%d+$") ~= nil
+  if #key < 3 and not is_digit then return nil end
   local list = fav_cached()   -- 【卡顿修复】热路径走缓存，不再每个键读盘
   for i = 1, #list do
     local k = (list[i].key or ""):lower()
     local w = list[i].word or ""
     if w ~= "" and (k == key or k:sub(1, #key) == key) then
-      return { word = w, key = list[i].key }
+      -- 纯数字输入只认纯数字编码（`1` 预览 `131` 这类，不去蹭 wsl123 那种
+      -- 「字母+数字」编码）；字母编码照旧前缀命中，规则不变。
+      if not is_digit or k:match("^%d+$") then
+        return { word = w, key = list[i].key }
+      end
     end
   end
   return nil

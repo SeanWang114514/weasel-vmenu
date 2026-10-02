@@ -109,6 +109,11 @@ end
 --   menu_processor.lua 那边的「数字分支」已经足够：
 --   数字能延伸编码 → 并进；延伸不了 → 直接上屏；- / = / + → 上屏数字再插符号。
 --   数字作为候选对齐方格已经没必要了，去掉反而干净。
+-- [第二十五轮] 又补了两块（问题3「131 没完成」、问题5「13 进了不显示候选的候选态」）：
+--   ① vmenu_core.fav_hit 放开纯数字编码：从第 1 位（只打了 `1`）就开始预览
+--      （使用说明 376 行），字母编码仍要满 3 位；
+--   ② 纯数字编码时这里直接只 yield 那一条预览（见文件末尾的短路分支），
+--      保证「只有一条、没有序号」（使用说明 378 行）。
 
 local function filter(input, env)
   local ctx = env.engine.context
@@ -257,6 +262,15 @@ local function filter(input, env)
   -- 收藏固定占第 2 位（数字编码输入时这就是唯一的候选：常用语预览）
   local c = Candidate("vfav", 0, #code, fav.word, "常用语")
   c.quality = 500000
+  -- [第二十五轮·问题3/5] 纯数字编码：候选栏**只**放这一条「常用语预览」。
+  -- 使用说明 378 行：「全数字输入时候选栏只有一条『常用语预览』，没有序号」——
+  -- 只有恰好 1 条候选、编码又全是数字时，服务端 _VMenuSeqMode 才返回 2（不画序号）。
+  -- 所以这里不把 librime 的候选掺进来（纯数字编码下它们通常一条都没有；
+  -- 就算有也一律不放：多一条既破坏「只有一条」的承诺，标点提交时还会选错候选）。
+  if code:match("^%d+$") then
+    yield(c)
+    return
+  end
   local out = place(buf, 2, c)
   for i = 1, #out do
     if i > lim then break end

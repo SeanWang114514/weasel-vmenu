@@ -3,6 +3,32 @@
 -- 整个处理体用 pcall 包裹：任何异常都退化为「不处理」，绝不阻塞输入。
 local core = require("vmenu_core")
 
+-- [第二十五轮·问题5 关联] ASCII 标点键名（librime KeyEvent::repr 的 X keysym 名，
+-- 见 librime key_table.cc 的 key_names 表：`.` → period、`,` → comma、`?` → question …）。
+-- 纯数字编码输入时这些键必须**先把数字原样上屏**再放行（见数字分支里的
+-- 「数字标点先上屏」）：候选栏现在始终有一条「常用语预览」，librime 的 punctuator
+-- 提交的是「当前选中的候选」，不拦的话 `13` + `.` 会把整条常用语打出去。
+local PUNCT_KEYS = {
+  exclam = true, quotedbl = true, numbersign = true, dollar = true,
+  percent = true, ampersand = true, apostrophe = true, quoteright = true,
+  parenleft = true, parenright = true, asterisk = true, comma = true,
+  period = true, slash = true, colon = true, semicolon = true,
+  less = true, greater = true, question = true, at = true,
+  bracketleft = true, backslash = true, bracketright = true,
+  asciicircum = true, underscore = true, grave = true,
+  braceleft = true, bar = true, braceright = true, asciitilde = true,
+}
+
+-- 三个「数字分隔符」标点（rime_ice 的 punctuator/digit_separators: ",.:"）：
+-- {ASCII 原字符, 半角/全角成形文本}。这三个在空输入下会走 librime 的
+-- ConvertDigitSeparator（读提交历史），纯数字上屏后放行它会留下 ".1" 这种
+-- 组合垃圾 —— 所以数字编码场景里由我们把「数字+标点」一次算好上屏（见数字分支）。
+local DIGIT_SEP_PUNCT = {
+  period = { ".", "。" },
+  comma  = { ",", "，" },
+  colon  = { ":", "：" },
+}
+
 -- [诊断·分段耗时] 由最外层包装函数在每次按键前置空/新建，handle 在关键分段打点。
 -- 只有整键 ≥5ms 时才会被拼进日志（限速 1 条/秒），平时只是几次 os.clock 调用（µs 级）。
 local PH = nil
@@ -174,8 +200,10 @@ local function handle(key, env)
   --   ② 已经延长不了（例如 131 之后再按 3）→ **不再交给选字键去选候选**（否则会把整条
   --      常用语直接打出去），而是把「已输入的数字 + 这个数字」原样上屏 = 正常地加在后面；
   --   ③ 符号键（- = +）→ 先把已输入的数字上屏，再插入符号（13 + - → 13-）；
-  --      其它符号不用管：数字本身已经占候选第 1 位（menu_filter.lua），方案自己的标点处理
-  --      提交的就是「当前选中的候选」= 那串数字，同样会得到「13。」这种结果；
+  --      其它标点（. , ? …）也要先拦下来把数字上屏（见下面「数字标点先上屏」）——
+  --      第二十一轮删掉 digit_cand 之后旧注释「数字占候选第 1 位所以标点提交数字」
+  --      已经不成立：第二十五轮起候选栏有「常用语预览」，punctuator 提交的
+  --      「当前选中的候选」会变成整条常用语，必须由这里先斩断。
   --   ④ 回车仍然是**唯一**把整条常用语上屏的按键（见下面的 Return 分支）。
   -- 放在最前面的原因：下面的翻页分支会把 `-`/`=` 吃掉（第二十轮已收窄，但数字编码这条
   -- 路径必须优先），而「- 插不进去」正是用户报的问题。
@@ -217,6 +245,50 @@ local function handle(key, env)
       local ok_pre2, is_pre2 = pcall(core.digit_prefix, cur)
       if ok_pre2 and is_pre2 then
         return 1  -- 吞掉空格，不做任何事
+      end
+    end
+    -- [第二十五轮·问题5 关联] 纯数字编码 + 标点：先把数字原样上屏，标点再交给原方案。
+    -- 使用说明 372 行：`13` 再按 `.` → `13。`（先上屏数字，再插符号）。
+    -- 为什么必须拦：候选栏现在始终有一条「常用语预览」（问题3/5 的修复），
+    -- librime 的 punctuator 提交的是**当前选中的候选**（punctuator.cc →
+    -- ConfirmUniquePunct → ConfirmCurrentSelection → OnSelect → _auto_commit →
+    -- Context::Commit → Composition::GetCommitText 取第 1 段的选中候选）——
+    -- 不拦的话上屏的会是整条常用语 `13122500717。` 而不是 `13。`
+    -- （第二十轮 digit_cand 还在时靠「数字候选占第 1 位」侥幸正确，
+    --   二十一轮删掉后当时候选栏是空的也没炸，第五轮预览一上就必然炸）。
+    -- 分两种放法：
+    --   ① `,` `.` `:`（方案 punctuator/digit_separators: ",.:"）：**数字+标点一起算好上屏**、
+    --      吞掉按键。原因：先把数字上屏再放行标点的话，librime 会走 ConvertDigitSeparator
+    --      （提交历史里上一条是「数字 raw」→ is_after_number 命中 → PushInput 后 Forward），
+    --      标点留在输入框里组成 ".1" 这种垃圾，后续数字再从它身上撞出一串错字（实测回归）。
+    --      半角/全角两种形状下这三个的成形文本相同（rime_ice：`，。：`），ascii_punct 开着才用原字符。
+    --   ② 其余标点（? ! < > / …）：数字先上屏、清空输入，然后 return 2 放行 ——
+    --      punctuator 在**空输入**下走通用路径（ConvertDigitSeparator 只认上面三个），
+    --      正常确认候选插入全角标点 → `13？`。
+    -- 回车不受影响（CommitRawInput 先弹掉未确认段，落回的是字面数字），
+    -- `-`/`=`/`+` 上面的 sym 分支已经先返回，也走不到这里。
+    if cur ~= "" and cur:match("^%d+$") and PUNCT_KEYS[repr] then
+      local sep = DIGIT_SEP_PUNCT[repr]
+      if sep then
+        local ok_a, ascii = pcall(function() return ctx:get_option("ascii_punct") end)
+        local text = (ok_a and ascii) and sep[1] or sep[2]
+        local ok_pd = pcall(function()
+          env.engine:commit_text(cur .. text)
+          ctx:clear()
+        end)
+        if ok_pd then
+          core.debug_log("[vmenu] 数字标点一起上屏 <" .. cur .. text .. ">")
+          return 1
+        end
+      else
+        local ok_pd = pcall(function()
+          env.engine:commit_text(cur)
+          ctx:clear()
+        end)
+        if ok_pd then
+          core.debug_log("[vmenu] 数字标点先上屏数字 <" .. cur .. " " .. tostring(repr) .. ">")
+          return 2
+        end
       end
     end
   end

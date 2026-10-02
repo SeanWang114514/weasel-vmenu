@@ -74,6 +74,45 @@ function M.func(input, env)
     return
   end
 
+  -- [第二十五轮·问题2] 首位已经把整串输入完整读出来时，不再前置词组。
+  -- 用户报障（原话）：「再输入如 jian 的拼音的时候会默认在 ji 和 an 中分开
+  --   无法轻易输入'键'」。
+  -- 根因：`jian` 本身就是一条完整读音（键）。词组前置把「积案（ji an）」提到第 1 位后，
+  --   预选拼读跟着首位候选走（librime composition.cc GetPreedit 直接取 cand.preedit()），
+  --   预编辑区从 `jian` 变成 `ji an` —— 既把整串拆开，又把自然首选「键」埋到第 9。
+  -- 跳过条件（三条同时成立 → 原样保持 librime 排序，不做前置）：
+  --   ① 首位不是词组（是词组的话它本来就在第 1 位，前置无害，不用跳）；
+  --   ② 首位 start==0 且 _end == #输入（把整串完整覆盖，没有尾巴）；
+  --   ③ 首位的 preedit 里没有音节分隔符（空格 / 撇号 —— speller delimiter 是 " '"），
+  --      即整串就是一个单音节读法。
+  -- 这样 `ceshi` / `zhongguo` 这类「首位只读了半个输入」的照常前置（测试 / 中国 提前），
+  --   而 `jian`→键、`xian`→先、`apple`→apple 保持原顺序，预编辑不再被拆开。
+  if not flag[1] then
+    local raw = nil
+    pcall(function() raw = env.engine.context.input end)
+    local skip = false
+    if type(raw) == "string" and raw ~= "" then
+      local ok_s, st = pcall(function() return head[1].start end)
+      local ok_e, en = pcall(function() return head[1]._end end)
+      st = ok_s and tonumber(st)
+      en = ok_e and tonumber(en)
+      if st == 0 and en == #raw then
+        local ok_p, pe = pcall(function() return head[1].preedit end)
+        if not (ok_p and type(pe) == "string"
+            and (pe:find(" ", 1, true) or pe:find("'", 1, true))) then
+          skip = true
+        end
+      end
+    end
+    if skip then
+      core.debug_log(("[vmenu] 词组前置跳过：整串单音节 <%s>（输入 %s）"):format(
+        tostring(head[1].text), raw))
+      for i = 1, #head do yield(head[i]) end
+      for cand in input:iter() do yield(cand) end
+      return
+    end
+  end
+
   -- 诊断：确实发生了「词组被提到单字前面」才记一条（避免每键都写日志）
   if phrase_count > 0 and not flag[1] then
     core.debug_log(("[vmenu] 词组前置：窗口 %d、词组 %d 个，原首位 <%s>"):format(
