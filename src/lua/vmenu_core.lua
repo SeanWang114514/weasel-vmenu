@@ -321,33 +321,75 @@ end
 M.PAGE_OPTION = "vmenu_page"
 M.GRID_PAGES = 16  -- [按行滚动] 4=整页翻(36)，16=按行翻(9)：最多 144 个候选 / 9 = 16 屏
 
+-- page_get 的「上一次确认过的页码」缓存，page_set / page_reset 同步维护。
+-- 提前声明在 page_set 之前，否则 page_set 里引用到的是 nil 全局（静默失效）。
+local _page_cache = nil
+
+-- ★★ [翻页卡顿修复] 单次写入实现 —— 这是本次修复的核心。
+-- 用户报障：「翻页的时候会有卡顿」。实测（tools\measure-page-latency.ps1）：
+--     普通打字 47~70ms / 键，翻页那一键 83ms，明显掉帧。
+-- 根因（用 os.clock 探针量出来的，不是猜的）：
+--     ① ctx:set_option() 是**昂贵的**操作 —— 它通知引擎重跑整条候选管线
+--        （翻译 + 全部 filter），实测**单次 8~13ms**；
+--     ② 旧 page_set 是「写 n=true，再逐个 get+set 清掉其余 15 个」，
+--        最坏情况 16 次 get_option + 16 次 set_option ≈ 200ms 的重复重翻译；
+--     ③ 更糟的是 page_get() 自己也要 get_option 16 次，且**读到的是上一轮的残留**
+--        （set_option 在当前 filter pass 之后才生效），所以守卫会误判、重复写。
+-- 修法：页码改成**单向编码** —— 同一时刻最多只有一个 vmenu_page_* 为 true。
+--     翻页 = 「先把目标页置 true，再把**已知的旧页**置 false」，共 2 次 set_option
+--     （旧实现最坏 16 次）。旧页直接取 page_get 的结果，不再扫 16 个 get_option 去
+--     「找」还有谁是开着的：正常路径下只有旧页开着，那次全量扫描纯属浪费。
+--     清零仍必须做：两个开关同时为 true 时 page_get 的语义就不确定了。
+--     顺序不能反（先清后置）：那样中间帧 filter 读到页码 0，画面会先跳回第 1 页再跳到
+--     目标页，就是「翻页时闪一下」。
 local function page_set(ctx, n)
-  -- ⚠️ 关键性能点：只在**真的换页**时写 option。旧写法无条件写 4 个开关，
-  --    而 page_reset 在每个按键上都会被调用 → 每个键都让 rime 重翻译一整份候选，
-  --    表现就是「打字卡顿」（实测：按键时日志里成片刷 updated option: vmenu_page_*）。
-  if M.page_get(ctx) == n then return end
-  -- ★ 写入顺序也关键：**先把目标页置 true，再清掉其余页**。
-  --   反过来（i 从 0 顺着写）会出现「page_0 已清、page_n 还没置」的瞬间，
-  --   这一瞬间 rime 就会重翻译一次，filter 读到的页码是 0 →
-  --   画面先回到第 1 页再跳到目标页，用户看到的就是**翻页时闪一下/卡一下**。
-  --   实测日志：同一次按 = 出现「本页 page=0」紧跟「本页 page=2」两条。
+  if n < 0 then n = 0 end
+  if n >= M.GRID_PAGES then n = M.GRID_PAGES - 1 end
+  local cur = M.page_get(ctx)
+  if cur == n then return end
+  local _pt0 = os.clock()
+  -- ★ 写入顺序关键：**先把目标页置 true，再清掉旧页**。
+  --   反过来（先清后置）会出现「旧页已清、新页还没置」的瞬间，这一瞬间 filter 读到的
+  --   页码是 0 → 画面先回到第 1 页再跳到目标页，就是「翻页时闪一下」。
   pcall(function() ctx:set_option(M.PAGE_OPTION .. "_" .. n, true) end)
-  for i = 0, M.GRID_PAGES - 1 do
-    if i ~= n then
-      local ok, cur = pcall(function() return ctx:get_option(M.PAGE_OPTION .. "_" .. i) end)
-      if ok and cur then
-        pcall(function() ctx:set_option(M.PAGE_OPTION .. "_" .. i, false) end)
-      end
-    end
+  -- 只清「刚刚还在的那一页」。cur 是 page_get 得到的真实旧页码，必然 ≠ n。
+  -- 旧实现是扫 16 个 get_option「找」还有谁开着再逐个清 —— 正常路径下只有旧页开着，
+  -- 那次全量扫描纯属浪费，而且扫描期间的 set_option 会各自触发一次整份重翻译。
+  pcall(function() ctx:set_option(M.PAGE_OPTION .. "_" .. cur, false) end)
+  local dt = (os.clock() - _pt0) * 1000
+  _page_cache = n     -- 与 ctx 选项同步维护，page_get 才能走「1 次校验」的快路径
+  -- 只在「真的慢」时记一条（避免诊断日志本身成为热路径开销）
+  if dt > 4 then
+    debug_log(("[vmenu] PAGE_SET %d->%d %.2fms"):format(cur, n, dt))
   end
 end
 
-function M.page_get(ctx)
+-- ★ [翻页卡顿修复·第二部分] page_get 的「记忆 + 定向校验」。
+-- 旧实现无条件 get_option 16 次，而 get_option 也不是免费的（每次都要查 option map、
+-- 跨 Lua/C++ 边界）。每屏排版（menu_filter.window_of）都要问一次页码，翻页时
+-- 一次按键会问 3~4 次 → 白白几十次调用。
+-- 做法：记住**上一次我们确认过的页码**（模块级缓存；lua_processor 与 lua_filter
+--   各自 require 一份模块，所以缓存不跨组件共享 —— 这一点不影响正确性，见下），
+--   下次先验这个候选值，命中就直接返回（1 次 get_option）；
+--   未命中才退回全量扫描。服务端改页码只可能通过 page_set / 会话重置，
+--   两条路径都会同步刷新这个缓存，因此校验是为了兜住「模块重载 / 会话切换」。
+local function page_scan(ctx)
   for i = 0, M.GRID_PAGES - 1 do
     local ok, v = pcall(function() return ctx:get_option(M.PAGE_OPTION .. "_" .. i) end)
     if ok and v then return i end
   end
   return 0
+end
+
+function M.page_get(ctx)
+  local c = _page_cache
+  if c ~= nil and c >= 0 and c < M.GRID_PAGES then
+    local ok, v = pcall(function() return ctx:get_option(M.PAGE_OPTION .. "_" .. c) end)
+    if ok and v then return c end
+  end
+  local n = page_scan(ctx)
+  _page_cache = n
+  return n
 end
 
 function M.page_set(ctx, n) page_set(ctx, n) end
