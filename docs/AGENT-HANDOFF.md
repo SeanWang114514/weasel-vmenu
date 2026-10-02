@@ -112,6 +112,7 @@ librime 的 `DetectModifications` 判定「无改动」后会**直接中止整�
 | 3 | 普通打字路径**不读写文件**（`fav_hit` 只在输入 ≥ 3 字符时才读） | 打字流畅度优先 |
 | 4 | 候选顺序：filter 的 yield 顺序是权威，但**必须同时把 `quality` 改成严格递减** | 否则后置排序会打乱「常用语在第 2 位」 |
 | 5 | 改完 lua **必须重启 `WeaselServer.exe`** | librime-lua 是启动时加载模块 |
+| 5b | ★★ **重编 `rime.dll` 必须带 librime-lua 插件**，否则整个项目的 lua 层（v 菜单 / u 拆字 / 展开栏 / menu_filter / menu_processor）**全部静默失效** | 实测事故：某次重编 librime 时 `librime/plugins/` 下没有 `lua` 子目录（`plugins/CMakeLists.txt` 用 `file(GLOB)` 扫子目录来发现插件），编出来的 `rime.dll` 只有 2673664 字节、**不含 `lua_translator` / `lua_filter` / `lua_processor` / `lua_segmentor` / `luaL_newstate`**。启动日志里是 `E engine.cc:374] error creating filter: 'lua_filter'`（**不在** `appdata` 而在 `%TEMP%\rime.weasel\rime.weasel.*.log` 里）。症状极具误导性：输入法还能打字、候选还能出，只是 v 菜单/拆字全没了，而且 `vmenu-debug.log` 也**不再被写入**（当时的错误结论是「日志路径 bug」，其实是写日志的 lua 根本没加载）。**自检命令**：`[Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes($rimeDll)).Contains('luaL_newstate')` 必须是 `True`；正常体积 **≈3.5 MB**（带 lua 3564032 / 原版 2024096），只有 ~2.6 MB 就一定漏了 lua。**修法**：`git clone https://github.com/hchunhui/librime-lua.git plugins/lua`，再 `cd plugins/lua && git clone https://github.com/hchunhui/librime-lua.git -b thirdparty --depth=1 thirdparty`（lua5.4 源码，CMake 会检测 `thirdparty/lua5.4/lua.h`），然后照常 `build.bat rime` |
 | 6 | 两个 lua 目录必须同步（MD5 一致） | 双目录结构，不同步会出现「改了没生效」 |
 | 7 | `.ps1` 里**要么纯 ASCII，要么带 BOM** | PS 5.1 把无 BOM 的 UTF-8 当 ANSI 解析，中文注释/字符串会炸解析 |
 | 8 | `.bat` 必须 **CRLF + 纯 ASCII** | cmd.exe 按活动代码页逐块解码，多字节字符跨块会错位 |
