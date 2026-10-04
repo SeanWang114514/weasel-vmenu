@@ -233,6 +233,7 @@ request_gui()  ──写──► open-settings.flag ──轮询 60 ms──►
 | `+` / `-` 干什么 | `core.page_next / page_prev` | `src/lua/menu_processor.lua` | **列表型 v 功能**与普通打字：按「这一屏的条数」翻页；`-` 回上一屏。静态 v 菜单不接（条目本来就全显示） |
 | `↓` / `↑` 干什么 | `core.grid_key` | `src/lua/menu_processor.lua` + 服务端箭头补丁 | 列表型 v 功能：`↓` 展开 4 行 × 4 列 = 16 个、`↑` 在第一行收回；静态 v 菜单不接（保持原菜单手感） |
 | 一行放不下怎么办 | `visible_cols_` + `row_budget` | `WeaselUI/HorizontalLayout.cpp` | ① **每行少放 1–3 列**（最少 1 列），被省掉的**尾部格子里什么都不画**（空矩形 = 点不到），列槽位保留；② 丢到 3 条还放不下 → **压窄每格**（`col_width = row_budget / draw_cols`，下限 `120 + candidate_spacing`），多出来的字画 `…`。**静态 v 菜单不参与这两步** |
+| 符号面板第 1 行几个大类 | `ctx.pick_cats`（服务端下发） | `RimeWithWeasel.cpp` `kPickTabs` → `Context::pick_cats` → `WeaselUI/HorizontalLayout.cpp` | 符号面板（`grid_2d == 3`）**4**；不在符号面板发 **0**。**0 = 老服务端** → 前端退回「按候选宽度猜占位空格」的老办法（那个猜法在格宽 ≥ 191 时会把第一个表情误当成第 5 个大类，大类行右偏 36px —— 见 CHANGELOG 0.2.31） |
 
 **为什么「少放几列」而不是「重新折行」**：重排会让收起态那一行与展开后的每一行**列位置对不上**
 （用户明确要求「拓展栏也要有相应的缩减 以保证对齐」）。现在的做法是：
