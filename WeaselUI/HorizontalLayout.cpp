@@ -160,7 +160,44 @@ void HorizontalLayout::DoLayout(CDCHandle dc, PDWR pDWR) {
   //   相对整屏宽度算是「减少 4/5」）。改这一个数字就能整体调宽/调窄（往下还有 120px 的字宽保底）。
   const int kVMenuFixedCellPercent = 20;
   const bool grid_multi_row = !static_menu && (candidates_count > kGridCols);
+  // [vpick-center] 符号面板（v5，服务端 ctx.grid_2d = 3）：第 1 行是「大栏」（4 个），
+  //   下面 4 行是新栏的小栏。用户诉求（原话）：「将最上方的大类改为默认在中间并且
+  //   不随候选框大小而变化」。
+  //   要做到「不随候选框大小变」，光把大栏居中还不够 —— 框宽本身原来是**跟着内容走**的
+  //   （col_width = 当页最宽候选，max_width_of_rows 按实际画出的格数算），换一个大栏
+  //   内容一变，框宽就变，大栏即使居中也会跟着左右漂一半。所以这里两件事一起做：
+  //     1. **框宽钉死**成「9 格 × 格宽」（下面 width_cols 那处）；
+  //     2. 大栏行按**文字自身宽度**整组居中（下面 ycenter 那处）。
+  //   格宽仍然自适应（取最宽候选），只是不再因为「这一页只画得出几格」而缩框。
+  const bool vpick_panel = explicit_cols && (_context.grid_2d == 3);
+  // [vpick-tabwidth] 符号面板的**大栏行专属格宽**。
+  //   ★ 这是「大类行不居中 + 颜文字串进大类行」两个 bug 的共同根因：
+  //     col_width 是**全局**的 —— 它取全部 45 个候选里最宽的那一格。颜文字（如
+  //     "(╯°□°)╯︵ ┻━┻"）动辄 250~300px，于是切到颜文字栏时 col_width 暴涨，
+  //     而大栏行（候选 0..3）**也用同一个 col_width 排格子**，后果有两个：
+  //       ① 第 4 格（颜文字）从 170px 变成 277px → 整组宽度变 → 居中位移 dx 每栏都不同
+  //          → 大类行左右乱跳（用户报的「还是不会在中间」）；
+  //       ② 大栏行的格子被撑高/撑宽后，第 1 个颜文字候选在折行与行高计算里被算进
+  //          第 0 行，视觉上就「跑进最上面那一大栏」（用户报的第二个现象）。
+  //   修法：大栏行自己量一个 **tab_col_width**（只按 4 个大栏文字量，与颜文字无关），
+  //   并在下面「设置 rect」那一趟里对大栏格改用它。这样无论选哪个大类，
+  //   大栏行的格子宽度都只由「常用字符 / 符号 / 希腊字符 / 颜文字」4 个词决定。
   int col_width = 0;
+  int tab_col_width = 0;               // [vpick-tabwidth] 大栏行专属格宽（仅 vpick 用）
+  int draw_tab_cells = 0;              // [vpick-tabwidth] 大栏行的真实格数（仅 vpick 用）
+  int tab_cells_found = 0;             // [vpick-tabwidth] 实量到的「可见大栏」个数
+  // [vpick-tabwidth] 位置 → 原始候选下标 的重映射表（见下面「大栏行的内容修复」）。
+  //   非 vpick 面板时为空，取候选时一律走 vpick_remap 或直接用 i。
+  std::vector<int> vpick_remap;
+  bool vpick_has_remap = false;
+  // [vpick-tabwidth] 「第 pos 格实际该画哪个候选」：有重映射表就查表，否则就是它自己。
+  //   所有读 candidates/comments/labels 的地方都要用它，否则「格子搬了、文字没搬」。
+  auto vpick_src = [&](int pos) -> int {
+    if (vpick_has_remap && pos >= 0 && pos < (int)vpick_remap.size() &&
+        vpick_remap[pos] >= 0)
+      return vpick_remap[pos];
+    return pos;
+  };
   int grid_label_w = 0;                // 网格态统一序号槽宽（见下面注释）
   int draw_cols = kGridCols;           // 本行实际画几格（<= kGridCols，见下面「少放几个」）
   // [vmenu-hug] 每格「自然宽度」（标签 + 间距 + 候选词 + 注释，不含格间间距）。
@@ -210,6 +247,56 @@ void HorizontalLayout::DoLayout(CDCHandle dc, PDWR pDWR) {
   // [vmenu-nolabel] 不画序号时，标签槽宽度是 0，标签与候选词之间那个间距也要省掉
   //   （否则候选词左侧会多出约 8px 的空隙，框看着不贴合）。
   const bool no_labels = (_context.grid_2d == 2);
+
+  // [vpick-tabwidth] 大栏行的**内容修复** —— 必须在本函数最前面就定下来，
+  //   因为后面所有读候选的地方（量格宽 / 排 rect / 画文字）都按「位置」取，
+  //   它们要看到的是**修好之后**的顺序。
+  //
+  //   为什么要修（用户报的 bug ②「下一行候选的第一个跑到最上面那一大栏」
+  //   的最后一层根因）：
+  //     lua_menu.yield_pick 的产出顺序本该是
+  //       [0..3] 4 个大栏 → [4..8] 5 个零宽占位 → [9..44] 36 个小栏
+  //     但 librime 合并各 translator 的候选时按 quality 排序，而所有 vsym 候选的
+  //     quality 一模一样 → 排序不稳定。**本轮 dump 实测取证**：第 5 格（索引 4）
+  //     被塞进一个颜文字，零宽占位被挤到 5..8：
+  //         c[0..3] = 常用字符 / 符号 / 希腊字符 / 颜文字      ✓
+  //         c[4]    = (；一_一)   w=99   row=0                  ← 这儿该是零宽占位
+  //         c[5..8] = 零宽占位     w=23
+  //     那个颜文字于是被画进大栏行的格子里 —— 正是用户看到的现象。
+  //   （试过在 lua 侧给每个候选递减 quality，**无效**：quality 透不到前端。
+  //     所以只能在前端按**内容特征**兜底。）
+  //
+  //   判据：大栏是 4 个可见词，其后跟的应是零宽占位（U+200B）。因此
+  //   「第 4 格之后、还留在第 0 行里的可见内容」一定不是大栏 ——
+  //   把它与后面第一个零宽占位对调，颜文字就回到小栏行第一格该在的位置。
+  //   candidates 是 const 引用不能改，所以记一张「位置 → 原始下标」重映射表，
+  //   后面一律通过 vpick_src(i) 取候选。
+  vpick_remap.assign(candidates_count, -1);
+  vpick_has_remap = false;
+  if (vpick_panel && candidates_count > 0 && cols_per_row > 0) {
+    const int n_tabs = (_context.pick_cats > 0 && _context.pick_cats <= cols_per_row)
+                           ? _context.pick_cats
+                           : 4;
+    for (int i = 0; i < candidates_count; ++i)
+      vpick_remap[i] = i;
+    auto is_ph = [&](int idx) {
+      return idx >= 0 && idx < candidates_count &&
+             (candidates.at(idx).str.empty() ||
+              candidates.at(idx).str.find(L'\u200B') != std::wstring::npos);
+    };
+    for (int t = n_tabs; t < cols_per_row && t < candidates_count; ++t) {
+      if (is_ph(t))
+        continue;  // 本来就是占位，不用动
+      for (int k = cols_per_row; k < candidates_count; ++k) {
+        if (!is_ph(k))
+          continue;
+        std::swap(vpick_remap[t], vpick_remap[k]);
+        vpick_has_remap = true;
+        break;
+      }
+    }
+  }
+
   if (candidates_count) {
     w = offsetX + real_margin_x;
     // [vmenu-grid] 「严格整齐」：网格态先量出**统一列宽**。
@@ -235,9 +322,10 @@ void HorizontalLayout::DoLayout(CDCHandle dc, PDWR pDWR) {
       std::vector<vmenu_annot::Seg> annot_segs;
       std::vector<vmenu_annot::Run> annot_runs;
       for (auto i = 0; i < candidates_count && i < MAX_CANDIDATES_COUNT; ++i) {
+        const int src = vpick_src(i);   // [vpick-tabwidth] 大栏行内容修复
         int cw = grid_label_w + (no_labels ? 0 : _style.hilite_spacing);
-        if (vmenu_annot::Parse(comments.at(i).str, annot_segs)) {
-          vmenu_annot::BuildRuns(candidates.at(i).str, annot_segs, annot_runs);
+        if (vmenu_annot::Parse(comments.at(src).str, annot_segs)) {
+          vmenu_annot::BuildRuns(candidates.at(src).str, annot_segs, annot_runs);
           int tw = 0;
           for (const auto& r : annot_runs) {
             GetTextSizeDW(r.s, r.s.length(),
@@ -248,14 +336,14 @@ void HorizontalLayout::DoLayout(CDCHandle dc, PDWR pDWR) {
           }
           cw += tw + annot_gap * (static_cast<int>(annot_runs.size()) - 1);
         } else {
-          GetTextSizeDW(candidates.at(i).str, candidates.at(i).str.length(),
+          GetTextSizeDW(candidates.at(src).str, candidates.at(src).str.length(),
                         pDWR->pTextFormat, pDWR, &size);
           cw += size.cx * textFontValid;
           bool cmtOk =
               (i == id && (_style.hilited_comment_text_color & 0xff000000)) ||
               (i != id && (_style.comment_text_color & 0xff000000));
-          if (!comments.at(i).str.empty() && cmtFontValid && cmtOk) {
-            GetTextSizeDW(comments.at(i).str, comments.at(i).str.length(),
+          if (!comments.at(src).str.empty() && cmtFontValid && cmtOk) {
+            GetTextSizeDW(comments.at(src).str, comments.at(src).str.length(),
                           pDWR->pCommentTextFormat, pDWR, &size);
             cw += _style.hilite_spacing + size.cx * cmtFontValid;
           }
@@ -269,6 +357,64 @@ void HorizontalLayout::DoLayout(CDCHandle dc, PDWR pDWR) {
     // [vmenu-fixed] 固定格宽：覆盖上面「按最宽候选」量出来的列宽（本身只当兜底）。
     if (fixed_cells)
       col_width = fixed_col_width;
+    // [vpick-tabwidth] 大栏行专属格宽：只按第 0 行那几格（4 个大栏）的自然宽度算，
+    //   故意**不看**颜文字等宽候选。cand_widths[] 已在上面那一趟量好，
+    //   所以这里直接取前 tabs 个的最大值即可（tabs 的判定在下面，这里先用
+    //   「第 0 行的格数」保守取满一行 —— 反正大栏行只会用到前 4 格）。
+    //   ★ 关键：格宽里要**加上列间距**，与 col_width 的口径一致
+    //     （col_width 在 290 行也是「内容宽 + candidate_spacing」），
+    //     否则大栏格会比小栏格窄一个间距，居中的整组宽度就量不准。
+    if (vpick_panel && candidates_count > 0) {
+      int tab_cells = min(cols_per_row, candidates_count);
+      for (int t = 0; t < tab_cells && t < MAX_CANDIDATES_COUNT; ++t)
+        tab_col_width = max(tab_col_width, cand_widths[t]);
+      if (tab_col_width > 0)
+        tab_col_width += _style.candidate_spacing;
+
+      // [vpick-tabwidth] 大栏格数：lua_menu.yield_pick 产出「#TABS 个大栏 + 补满一行的
+      //   占位空格」。① 首选服务端下发的 ctx.pick_cats（就是 TABS，最可靠）；
+      //   ② 老服务端不发（= 0）时量占位：占位是零宽字符（U+200B），自然宽度远小于
+      //      一格 → 用它兜底。★ 兜底那套原来用 **col_width** 当分母，会被颜文字撑爆，
+      //      这里改成用大栏行自己的 tab_col_width，判定才稳。
+      if (_context.pick_cats > 0 && _context.pick_cats <= cols_per_row) {
+        draw_tab_cells = _context.pick_cats;
+      } else {
+        for (int t = 0; t < tab_cells && t < MAX_CANDIDATES_COUNT; ++t) {
+          if (tab_col_width <= 0 || cand_widths[t] * 4 >= tab_col_width)
+            ++draw_tab_cells;
+        }
+      }
+      if (draw_tab_cells < 1)
+        draw_tab_cells = min(4, tab_cells);
+
+      // [vpick-tabwidth] 大栏格宽只按**真正的大栏文字**量，绝不能掺进颜文字。
+      //
+      //   背景：librime 合并各 translator 的候选时会重排，实测第 5 格（索引 4）会
+      //   偶尔被塞进一个颜文字（本来该是零宽占位空格）。上面那趟「取前 tab_cells 格
+      //   的最大宽度」因此会把颜文字算进大栏格宽。
+      //   大栏文字的特征很明确：**有可见文字、且不是零宽占位**。占位和越界内容都排除掉，
+      //   取「前 4 个可见格」的最大宽度，才是大栏行真正的格宽。
+      //   注意：这一段必须在 draw_tab_cells 定下来之后算，所以重置再量一遍。
+      {
+        const int probe_cells = min(cols_per_row, candidates_count);
+        int visible_tabs = 0;
+        int w2 = 0;
+        for (int t = 0; t < probe_cells && t < MAX_CANDIDATES_COUNT; ++t) {
+          if (visible_tabs >= draw_tab_cells)
+            break;
+          // 零宽占位（U+200B）与空串都不是大栏
+          if (candidates.at(t).str.empty() ||
+              candidates.at(t).str.find(L'\u200B') != std::wstring::npos)
+            continue;
+          w2 = max(w2, cand_widths[t]);
+          ++visible_tabs;
+        }
+        if (w2 > 0) {
+          tab_col_width = w2 + _style.candidate_spacing;
+          tab_cells_found = visible_tabs;  // 真正找到的大栏格数
+        }
+      }
+    }
     // [vmenu-grid] 统一列宽的另一面：万一有**超长候选**（例如很长的常用语 / 剪贴板长句 /
     // English 长词），N 列 × 那个宽度会把面板撑得几乎整屏宽。用户允许「实在太长就少放 1-3 个」：
     // 从「这一行本来有几格」往下减，减到这一行能放进**框宽上限**为止。
@@ -315,12 +461,24 @@ void HorizontalLayout::DoLayout(CDCHandle dc, PDWR pDWR) {
       } else if (col_width > 0) {
         // 展开态：格子等宽，按「格数 × 格宽」超标就少放几列（列位置仍钉在列号上，
         //   所以上下每一行省掉的是同样的那几格，仍然严格对齐）。
-        while (draw_cols > floor_cols && draw_cols * col_width > row_budget)
-          --draw_cols;
-        if (draw_cols * col_width > row_budget) {
-          col_width = max(row_budget / max(draw_cols, 1),
-                          120 + _style.candidate_spacing);
-          cells_shrunk = true;
+        //
+        // [vpick-tabwidth] ★ 符号面板**绝对不能**在这里减列。
+        //   为什么：符号面板是「大栏行 9 格 + 小栏 4 行 × 9 列」的**固定网格**，
+        //   而且框宽已经在下面钉死成 row_budget。颜文字那一栏 col_width 会到 191，
+        //   9 × 191 = 1719 > row_budget(1379) → 旧代码把 draw_cols 减到 7：
+        //     · 每行第 8、9 格被 SetRectEmpty（不画）；
+        //     · 于是每一行的**可见内容**都比上一行短两格，大栏行也跟着少画，
+        //       而「下一个大栏 / 小栏候选」的位置是按列号算的 —— 看起来就像
+        //       下一行的候选挤进了最上面那一大栏（用户报的 bug ②）。
+        //   颜文字本来就允许画到框外 / 被裁，宁可让它溢出也不能动网格结构。
+        if (!vpick_panel) {
+          while (draw_cols > floor_cols && draw_cols * col_width > row_budget)
+            --draw_cols;
+          if (draw_cols * col_width > row_budget) {
+            col_width = max(row_budget / max(draw_cols, 1),
+                            120 + _style.candidate_spacing);
+            cells_shrunk = true;
+          }
         }
       }
     }
@@ -385,12 +543,12 @@ void HorizontalLayout::DoLayout(CDCHandle dc, PDWR pDWR) {
       const int lab_gap = no_labels ? 0 : _style.hilite_spacing;
       w += lab_gap;
       current_cand_width += lab_gap;
-      const std::wstring& text = candidates.at(i).str;
+      const std::wstring& text = candidates.at(vpick_src(i)).str;
       // [vmenu-fuzzy] 内联拼音标注：词段用正文字体、拼音段用注释字体逐段量宽求和，
       // 段间加 annot_gap（与 WeaselPanel 的分段绘制完全一致）。
       std::vector<vmenu_annot::Seg> annot_segs;
       std::vector<vmenu_annot::Run> annot_runs;
-      const bool annot = vmenu_annot::Parse(comments.at(i).str, annot_segs);
+      const bool annot = vmenu_annot::Parse(comments.at(vpick_src(i)).str, annot_segs);
       GetTextSizeDW(text, text.length(), pDWR->pTextFormat, pDWR, &size);
       int text_natural_w = size.cx * textFontValid;
       const int text_h = size.cy;
@@ -416,11 +574,11 @@ void HorizontalLayout::DoLayout(CDCHandle dc, PDWR pDWR) {
           (i != id && (_style.comment_text_color & 0xff000000));
       // [vmenu-fuzzy] 带内联标注协议的候选：词尾不再画注释（整段已被词内拼音消费）。
       const bool cmt_drawn =
-          (!annot && !comments.at(i).str.empty() && cmtFontValid &&
+          (!annot && !comments.at(vpick_src(i)).str.empty() && cmtFontValid &&
            cmtFontNotTrans);
       int cmt_adv = 0, cmt_h = 0;
       if (cmt_drawn) {
-        GetTextSizeDW(comments.at(i).str, comments.at(i).str.length(),
+        GetTextSizeDW(comments.at(vpick_src(i)).str, comments.at(vpick_src(i)).str.length(),
                       pDWR->pCommentTextFormat, pDWR, &size);
         cmt_adv = size.cx * cmtFontValid;
         cmt_h = size.cy;
@@ -449,7 +607,7 @@ void HorizontalLayout::DoLayout(CDCHandle dc, PDWR pDWR) {
       current_cand_width += (text_natural_w + _style.hilite_spacing) * textFontValid;
 
       if (cmt_drawn) {
-        const std::wstring& comment = comments.at(i).str;
+        const std::wstring& comment = comments.at(vpick_src(i)).str;
         if (clip_cells) {
           // [vmenu-fixed] 注释右对齐到格子右缘：所有行的注释排成整齐的一列。
           //   注释自己放不下时（格子太窄 / 注释太长）同样裁成「…」。
@@ -479,8 +637,13 @@ void HorizontalLayout::DoLayout(CDCHandle dc, PDWR pDWR) {
           grid_multi_row && i > 0 && (i % cols_per_row) == 0;
       if (vmenu_line_break) {
         // max_width_of_rows current row
-        max_width_of_rows =
-            max(max_width_of_rows, _candidateCommentRects[i - 1].right);
+        // [vpick-center] 符号面板不在这里累计宽度：它的框宽由下面**单独钉死**成
+        //   row_budget。若这里也累计，颜文字那一行的文字右缘（远超 row_budget）
+        //   会把 max_width_of_rows 顶上去，钉死的那一行就被 max() 盖掉 ——
+        //   面板宽度重新随内容漂移（实测 cat4 被撑到 2477px，而其它栏是 1686）。
+        if (!vpick_panel)
+          max_width_of_rows =
+              max(max_width_of_rows, _candidateCommentRects[i - 1].right);
         w = offsetX + real_margin_x +
             ((i == id && !grid_multi_row) ? base_offset : 0);
         int ofx = w - _candidateLabelRects[i].left;
@@ -491,12 +654,13 @@ void HorizontalLayout::DoLayout(CDCHandle dc, PDWR pDWR) {
         _candidateCommentRects[i].OffsetRect(ofx, ofy);
         // max width of next row, if it's the last candidate, make sure
         // max_width_of_rows calc right
-        max_width_of_rows =
-            max(max_width_of_rows, _candidateCommentRects[i].right);
+        if (!vpick_panel)
+          max_width_of_rows =
+              max(max_width_of_rows, _candidateCommentRects[i].right);
         mintop_of_rows[row_cnt] = height;
         height += ofy;
         row_cnt++;
-      } else if (!grid_multi_row)
+      } else if (!grid_multi_row && !vpick_panel)
         max_width_of_rows = max(max_width_of_rows, w);
 
       // [vmenu-grid] 把光标「钉」到本列右缘：列号 = i % cols_per_row。
@@ -508,10 +672,25 @@ void HorizontalLayout::DoLayout(CDCHandle dc, PDWR pDWR) {
             _style.candidate_spacing;
         // [vmenu-grid] 面板宽度按**实际画出的格数**算：候选比一行格数还少时不留空格
         //   （例如 v 常用语只有 2 条，就不要按 4 格宽画）。
-        const int width_cols = min(draw_cols, candidates_count);
-        max_width_of_rows =
-            max(max_width_of_rows,
-                offsetX + real_margin_x + width_cols * col_width);
+        // [vpick-center] 符号面板例外：宽度**钉死**成 row_budget（= 主题 style/layout/
+        //   max_width），与「当前是哪个大栏、这一页有几条、格宽是多少」**全都无关**。
+        //   为什么不能只把 width_cols 钉成 9：格宽 col_width 本身是跟着内容走的
+        //   （颜文字那一栏能到 300px），9 × 300 = 2700px 会把框推出屏幕外。
+        //   钉 row_budget 则天然是「一行放得下」的量，宽内容那一栏只是右边留白，
+        //   框宽恒定 → 大栏居中后**真正不会动**（这是用户诉求的核心）。
+        //   注意：这里只钉「框宽」，col_width 仍是内容自适应（格子照样紧贴候选词），
+        //   比「格宽也钉死」更好 —— 长的颜文字不会被裁成「…」。
+        int row_width = 0;
+        if (vpick_panel && row_budget > 0) {
+          // [vpick-center] 钉死就是**钉死**：不走 max()，否则上面任何一处累计
+          //   （颜文字长文案的右缘）都会把框宽顶大，面板宽度重新随栏目漂移。
+          //   注意这里**不能 continue** —— 下面的行高统计每个候选都要跑。
+          max_width_of_rows = offsetX + real_margin_x + row_budget;
+        } else {
+          row_width = min(draw_cols, candidates_count) * col_width;
+          max_width_of_rows = max(max_width_of_rows,
+                                  offsetX + real_margin_x + row_width);
+        }
       }
       // calculate height of current row is the max of three rects
       mintop_of_rows[row_cnt] = height;
@@ -537,11 +716,31 @@ void HorizontalLayout::DoLayout(CDCHandle dc, PDWR pDWR) {
                                 : _candidateLabelRects[i].left;
       if (grid_uniform) {
         // [vmenu-grid] 高亮块 = 完整一格（等宽），所有格子的选中块大小一致
-        const int cell_left =
-            offsetX + real_margin_x + (i % cols_per_row) * col_width;
+        // [vpick-tabwidth] 大栏行（第 0 行前 tabs 格）改用专属格宽 tab_col_width。
+        //
+        //   ★ 这里**不能**写 `(列号) * cell_w`：大栏行里「前 4 格用大栏格宽、
+        //     后面几格用小栏格宽」，格子宽度不一样，用乘法会把第 5 格及其后的
+        //     位置算飞 —— 大栏格宽 121、小栏格宽 191 时，第 5 格的左缘会被算成
+        //     4×191=764（应该是 4×121=484），那几格于是横向错位、看起来像
+        //     「下一行的候选挤进了大栏行」。
+        //     正确做法是**累加**：逐格把宽度加起来得到本格的左缘。
+        int cell_left = offsetX + real_margin_x;
+        if (vpick_panel && row_of_candidate[i] == 0) {
+          for (int k = 0; k < (i % cols_per_row); ++k) {
+            // 同一行里：前 draw_tab_cells 格用大栏格宽，其余用小栏格宽
+            cell_left += (k < draw_tab_cells && tab_col_width > 0) ? tab_col_width
+                                                                   : col_width;
+          }
+        } else {
+          cell_left += (i % cols_per_row) * col_width;
+        }
+        const bool tab_cell = vpick_panel && row_of_candidate[i] == 0 &&
+                              tab_col_width > 0 &&
+                              (i % cols_per_row) < draw_tab_cells;
+        const int cell_w = tab_cell ? tab_col_width : col_width;
         _candidateRects[i].SetRect(
             cell_left, mintop_of_rows[row_of_candidate[i]],
-            cell_left + col_width - _style.candidate_spacing,
+            cell_left + cell_w - _style.candidate_spacing,
             mintop_of_rows[row_of_candidate[i]] +
                 height_of_rows[row_of_candidate[i]]);
       } else
@@ -572,7 +771,63 @@ void HorizontalLayout::DoLayout(CDCHandle dc, PDWR pDWR) {
       _candidateTextRects[i].OffsetRect(0, ot);
       _candidateCommentRects[i].OffsetRect(0, oc);
     }
+
+    // [vpick-tabrow] 符号面板：把「大栏行」（第 0 行）整行**重新摆一遍**。
+    //
+    // 为什么必须在主循环之后再单独摆一次：
+    //   上面主循环里每个候选的 rect 是跟着一个**自然宽度游标 w** 走的，而
+    //   `cell_right`（决定文案裁剪与注释右对齐）用的是全局 col_width。颜文字那一栏的
+    //   col_width 被长表情撑到 250~300px，于是大栏格宽度随大类变（170px ↔ 277px）、
+    //   大栏行末尾还会多算出一截 —— 整组宽度因此每栏都不同，居中位移也跟着变，
+    //   大栏行看起来「不在中间」（bug ①）。
+    //   这两件事**只发生在大栏行**（小栏行本来就该跟 col_width 走），
+    //   所以这里对大栏格做一次**权威覆写**：格子位置 = 行首 + 列号 × tab_col_width，
+    //   与这一栏的小栏内容完全无关。切遍 4 个大类，大栏行几何**逐像素恒定**。
+    if (vpick_panel && draw_tab_cells > 0 && tab_col_width > 0) {
+      const int tab_top = mintop_of_rows[0];
+      // 大栏行的高度只由 4 个大栏自己的文字决定。
+      //   ★ 绝不能沿用 height_of_rows[0] —— 颜文字候选会把第 0 行的高度撑大
+      //     （实测面板从 356 涨到 363），高亮块跟着变高就盖到下面一行上，看起来
+      //     正是用户报的「下一行候选的第一个跑进最上面那一大栏」（bug ②）。
+      int tab_h = 0;
+      for (int t = 0; t < draw_tab_cells && t < MAX_CANDIDATES_COUNT; ++t) {
+        if (row_of_candidate[t] != 0)
+          break;
+        tab_h = max(tab_h, _candidateLabelRects[t].Height());
+        tab_h = max(tab_h, _candidateTextRects[t].Height());
+        tab_h = max(tab_h, _candidateCommentRects[t].Height());
+      }
+      const int tab_bottom = tab_top + tab_h;
+      for (int t = 0; t < draw_tab_cells && t < MAX_CANDIDATES_COUNT; ++t) {
+        if (row_of_candidate[t] != 0)
+          break;
+        const int cell_l = offsetX + real_margin_x + t * tab_col_width;
+        // [vpick-tabwidth] 四套矩形各自按「自己的左缘 → cell_l」的位移搬。
+        //   ★ 为什么不能四套共用一个 tdx：主循环里**文字**是跟着「自然宽度游标 w」
+        //     走的，而**格子**（_candidateRects）在 grid_uniform 分支里已经被拉到
+        //     「列号 × col_width」上。两者基准本来就不同，共用一个位移会把文字和
+        //     格子错开 —— 实测就是「颜文字碎片卡在大栏之间」。
+        //     各搬各的，才能保证序号槽 / 文字 / 注释 / 高亮块**左缘对齐**在同一格。
+        _candidateLabelRects[t].OffsetRect(cell_l - _candidateLabelRects[t].left, 0);
+        _candidateTextRects[t].OffsetRect(cell_l - _candidateTextRects[t].left, 0);
+        _candidateCommentRects[t].OffsetRect(
+            cell_l - _candidateCommentRects[t].left, 0);
+        // 高亮块必须**四边都钉死**成一格：只改 bottom 不够 —— grid_uniform 会把
+        //   最后一格的 right 拉到 row_budget（面板宽度），高亮块就横着铺满大半行
+        //   （实测 cat1 高亮块被拉成 1195px 宽）。
+        _candidateRects[t].SetRect(
+            cell_l, tab_top, cell_l + tab_col_width - _style.candidate_spacing,
+            tab_bottom);
+      }
+    }
     height = mintop_of_rows[row_cnt] + height_of_rows[row_cnt] - offsetY;
+    // [vpick-center] 符号面板的框宽**最终裁定**放在这里：
+    //   主循环里逐候选累计 max_width_of_rows 的地方全都绕过了（见上面 !vpick_panel
+    //   的几个判断），但保险起见在最后再钉一次 —— 只要 vpick_panel 为真，
+    //   框宽就恒等于 row_budget，与当前大栏 / 本页条数 / 格宽**完全无关**。
+    //   这是「大类行居中后不会随栏目左右跳」的地基。
+    if (vpick_panel && row_budget > 0)
+      max_width_of_rows = offsetX + real_margin_x + row_budget;
     width = max(width, max_width_of_rows);
   } else {
     visible_cols_ = 0;  // [vmenu-grid] 没有候选：不留下上一帧的裁列状态
@@ -606,10 +861,89 @@ void HorizontalLayout::DoLayout(CDCHandle dc, PDWR pDWR) {
           _candidateRects[i].right = width - real_margin_x;
     }
   }
+  // [vpick-tabrow-clean] 大栏行**只能**有 pick_cats 个大栏，其后第 4..8 格一律清空。
+  //
+  //   为什么必须在前端硬清（不能指望 lua 的零宽占位）：
+  //     lua_menu.yield_pick 的产出顺序本该是「4 个大栏 + 5 个零宽占位(U+200B) +
+  //     36 个小栏」，但 librime 合并各 translator 的候选时按 quality 排序，而所有
+  //     vsym 候选的 quality 一模一样 → 顺序**不稳定**。实测第 5 格（索引 4）会被塞进
+  //     一个颜文字，零宽占位被挤到 5..8。
+  //     上面那趟 vpick_remap 想按「内容特征」把它换回去，但它依赖「占位里含 U+200B」
+  //     这个判据；只要重排后第 5 格是**真候选**、而 9 号位之后又凑不齐占位，换位就会
+  //     落空 —— 那个候选留在第 0 行被画出来。它的格宽用的是大栏格宽（窄），文字被
+  //     DirectWrite 裁成一个「…」，于是大栏行末尾出现一撮**孤零零的省略号**。
+  //     实测（颜文字栏，面板 1686x358）：x=1203..1219, y=45..47 三个白方块，
+  //     而 cat1/cat2/cat3 同一位置完全干净 —— 用户看到的就是这个。
+  //
+  //   判据改用**位置**而不是内容：vpick 面板第 0 行就该只有 pick_cats 个大栏，
+  //   位置 4..8 不论 librime 塞进来什么都必须不画。位置判据不受候选重排影响，
+  //   是这类「顺序不稳定」问题唯一可靠的兜底。
+  //
+  //   ★ 只在服务端明确下发了 pick_cats（权威大类个数）时才清：pick_cats == 0 是
+  //     老服务端，那时 draw_tab_cells 是猜出来的，清了可能把真大栏一起清掉。
+  //   ★ 放在这里（而不是上面 vpick-tabrow 那一趟）是因为下面「末格拉到右缘」的
+  //     美化会把第 8 格的 right 撑开、把空 rect 又变回非空 —— 清空必须最后做。
+  if (vpick_panel && _context.pick_cats > 0 &&
+      _context.pick_cats <= cols_per_row && draw_tab_cells > 0) {
+    for (int t = draw_tab_cells; t < cols_per_row && t < MAX_CANDIDATES_COUNT;
+         ++t) {
+      if (row_of_candidate[t] != 0)
+        continue;  // 只清第 0 行（大栏行）
+      _candidateRects[t].SetRectEmpty();
+      _candidateLabelRects[t].SetRectEmpty();
+      _candidateTextRects[t].SetRectEmpty();
+      _candidateCommentRects[t].SetRectEmpty();
+    }
+  }
   _highlightRect = _candidateRects[id];
   UpdateStatusIconLayout(&width, &height);
   _contentSize.SetSize(width + offsetX, height + 2 * offsetY);
   _contentRect.SetRect(0, 0, _contentSize.cx, _contentSize.cy);
+
+  // [vpick-center] 符号面板（v5）：**第 1 行 = 大栏**（常用字符 / 符号 / 希腊字符 /
+  //   颜文字）整组水平居中。用户诉求（原话）：「将最上方的大类改为默认在中间并且
+  //   不随候选框大小而变化」。
+  //
+  //   ★ 必须放在这里，不能放进上面那个「对齐」循环：那时 width 还没并进
+  //     max_width_of_rows、也没加 real_margin_x，_contentSize 还是**上一帧**的值，
+  //     拿它算居中会用到过期宽度（改法里最容易踩的坑）。
+  //
+  //   按**格**居中而不是按文字自身宽度居中：这一行最显眼的元素是「选中大栏」的
+  //     高亮底块，它铺满整格。按文字居中会让格子整体偏几像素，高亮块看着不居正；
+  //     按格居中（第 1 格左缘 → 最后一格右缘）才是高亮块左右留白相等。
+  if (vpick_panel && candidates_count > 0 && cols_per_row > 0) {
+    // [vpick-tabwidth] 大栏个数已经在上面的 tab_col_width 那一趟算好了（服务端
+    //   ctx.pick_cats 优先，量占位兜底），这里直接用，避免两处各算一套、判定漂移。
+    const int tabs = draw_tab_cells;
+    if (tabs > 0) {
+      // ★ 组宽取**真实 rect**（第 1 格的左缘 → 最后一格的右缘），
+      //   此时还没有任何 rect 被移动过，所以量到的是原始布局。
+      //   按**格**而不是按文字居中：高亮块（选中那一栏的白底）是这一行最显眼的元素，
+      //   格子左右留白相等才看着「正」；按文字居中会让格子整体偏几像素。
+      const int group_l = _candidateRects[0].left;
+      const int group_r = _candidateRects[tabs - 1].right;
+      if (group_r > group_l) {
+        const int area_l = offsetX + real_margin_x;
+        const int area_r = _contentSize.cx - offsetX - real_margin_x;
+        // 整组只算一次位移，然后**所有大栏格用同一个 dx**。
+        //   如果每格各按「自己当前的 rect」算，第 2 格起会把上一格已经移过的位置
+        //   又算进去，位移逐格累加、整组被推飞。
+        const int dx = (area_l + area_r) / 2 - (group_l + group_r) / 2;
+        for (int t = 0; t < tabs && t < MAX_CANDIDATES_COUNT; ++t) {
+          // ★ _candidateRects 也必须一起移：它是**高亮块**与**鼠标命中区**。
+          //   只移文字不移格子的话，选中那一栏的白底会孤零零留在最左边、文字却飘到
+          //   中间（实测就是这样，肉眼一看就是坏的）。一起移则高亮块跟着文字走，
+          //   鼠标点在大栏上换栏也仍然点得准。
+          _candidateRects[t].OffsetRect(dx, 0);
+          _candidateLabelRects[t].OffsetRect(dx, 0);
+          _candidateTextRects[t].OffsetRect(dx, 0);
+          _candidateCommentRects[t].OffsetRect(dx, 0);
+        }
+        // 高亮块在上面（630 行）已经按**移动前**的 rect 赋过值了，这里要重算一次。
+        _highlightRect = _candidateRects[id];
+      }
+    }
+  }
 
   // calc page indicator
   if (page_en && candidates_count && !_style.inline_preedit) {

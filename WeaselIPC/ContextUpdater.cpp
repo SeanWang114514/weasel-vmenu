@@ -52,6 +52,19 @@ void ContextUpdater::Store(Deserializer::KeyType const& k,
     m_pTarget->p_context->grid_2d = _wtoi(value.c_str());
     return;
   }
+
+  // [vpick] ctx.pick_cats=N —— 符号面板（grid_2d=3）第 1 行「大类」的**真实个数**（当前 4）。
+  //   为什么必须由服务端下发、不能在前端靠宽度猜：
+  //     前端原本用「本格自然宽度 × 4 ≥ 格宽」猜哪些是占位空格。格宽 col_width 由
+  //     **当页最宽的候选**决定 —— 颜文字那一栏的格宽会涨到 191，而第一个表情
+  //     （99px）满足 99×4 ≥ 191，于是被误判成第 5 个大类，居中算出来的整组宽度
+  //     多带了一格，大类行整体右偏（实测偏 36px）。服务端本来就知道大类是几个
+  //     （_PickGetCat 那套 vpick_cat0..3），直接说实话最省事。
+  //   同样走文本协议：老服务端不发这一行 → 保持 0 → 前端退回「按宽度猜」的老行为。
+  if (k[1] == L"pick_cats") {
+    m_pTarget->p_context->pick_cats = _wtoi(value.c_str());
+    return;
+  }
 }
 
 void ContextUpdater::_StoreText(Text& target,

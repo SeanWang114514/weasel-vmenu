@@ -9,6 +9,7 @@
 
 #include <cstring>
 #include <filesystem>
+#include <fstream>   // [vmenu-cfg] 读 grid-settings.txt（候选方格列数设置）
 #include <map>
 #include <regex>
 #include <rime_api.h>
@@ -32,6 +33,150 @@ typedef enum { COLOR_ABGR = 0, COLOR_ARGB, COLOR_RGBA } ColorFormat;
 using namespace weasel;
 
 static RimeApi* rime_api;
+
+// [vmenu-cfg] 候选方格列数的用户配置（<用户目录>\grid-settings.txt）。
+//
+// 用户诉求（原话）：「展开栏只显示 6 个，并且在 v1 的控制面板可以设置展开栏的每行数量
+// 和没有展开栏的默认的每行数量」。于是列数从「硬编码 9 / 4 / 2」变成两个可调值：
+//   cols_collapsed = 收起（没展开栏）时一行几个，默认 9
+//   cols_expanded  = 按下 ↓ 展开后一行几个，默认 6
+// 文件格式与 lua 侧的 fuzzy-settings.txt / candidate-settings.txt 同构：
+//   「# 注释头 + 键=值」、LF、UTF-8 无 BOM；缺键 / 缺文件一律用默认值。
+//
+// ★ 为什么读盘放在服务端：前端 HorizontalLayout 的列数**只能**由服务端下发的
+//   ctx.grid_cols 决定（客户端 DLL 是独立的进程内模块，自己不知道用户的设置），
+//   而 lua 又拿不到「前端一行画几个」的权威值（换行是前端算的）。服务端在这里读一次，
+//   lua 侧同时读同一个文件（见 vmenu_core.lua 的 grid_cfg），两边保持一致。
+//
+// ★ 读盘节流：ProcessKeyEvent / _Respond 都是热路径，所以加 1 秒 TTL 缓存
+//   （与 lua 侧的 settings_cached 同构）。设置面板改完最迟 1 秒生效。
+namespace {
+const int kGridColsCollapsedDefault = 9;
+const int kGridColsExpandedDefault = 6;
+const int kGridColsMin = 1;
+const int kGridColsMax = 20;
+// [vmenu-uppage] 与 src/lua/vmenu_core.lua 必须一致：
+//   GRID_ROWS = 4（展开栏的行数）、GRID_PAGES = 16（页码 option vmenu_page_0..15）。
+// 改了 lua 那边这两个值，这里也要跟着改，否则「↑ 回上页」会读不到页码 / 落错行。
+const int kGridRows = 4;
+const int kGridPages = 16;
+
+struct GridCfg {
+  int collapsed = kGridColsCollapsedDefault;
+  int expanded = kGridColsExpandedDefault;
+};
+
+// 把 "键=值" 里的整数夹到合法区间；非法就返回 fallback。
+int _GridClampInt(const std::string& v, int fallback) {
+  try {
+    const int n = std::stoi(v);
+    if (n < kGridColsMin || n > kGridColsMax) return fallback;
+    return n;
+  } catch (...) {
+    return fallback;
+  }
+}
+
+// 读 <用户目录>\grid-settings.txt。1 秒 TTL；失败一律返回默认值（绝不抛异常）。
+const GridCfg& _GridCfgCached() {
+  static GridCfg cfg;
+  static DWORD last_tick = 0;
+  const DWORD now = ::GetTickCount();
+  // 注意 last_tick == 0 表示「从没读过」；GetTickCount 回绕时也只是多读一次。
+  if (last_tick != 0 && (now - last_tick) < 1000) return cfg;
+
+  last_tick = now;
+  GridCfg fresh;  // 先建默认值：中途任何失败都退化为默认，不会留下半读状态
+  try {
+    const std::filesystem::path p =
+        std::filesystem::path(WeaselUserDataPath().wstring()) / L"grid-settings.txt";
+    std::ifstream in(p, std::ios::binary);
+    if (in) {
+      std::string line;
+      while (std::getline(in, line)) {
+        // 兼容 CRLF：把行尾的 \r 去掉
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        const size_t hash = line.find('#');
+        if (hash != std::string::npos) line.erase(hash);  // 允许行内注释
+        const size_t eq = line.find('=');
+        if (eq == std::string::npos) continue;
+        std::string k = line.substr(0, eq);
+        std::string v = line.substr(eq + 1);
+        // 去掉两侧空白
+        const char* ws = " \t";
+        const size_t kb = k.find_first_not_of(ws);
+        k = (kb == std::string::npos) ? "" : k.substr(kb, k.find_last_not_of(ws) - kb + 1);
+        const size_t vb = v.find_first_not_of(ws);
+        v = (vb == std::string::npos) ? "" : v.substr(vb, v.find_last_not_of(ws) - vb + 1);
+        if (k == "cols_collapsed")
+          fresh.collapsed = _GridClampInt(v, kGridColsCollapsedDefault);
+        else if (k == "cols_expanded")
+          fresh.expanded = _GridClampInt(v, kGridColsExpandedDefault);
+      }
+    }
+  } catch (...) {
+    // 读盘/解析异常：保持默认值（输入法绝不能因为设置文件坏了而不能打字）
+  }
+  cfg = fresh;
+  return cfg;
+}
+
+// [vmenu-uppage-trace] 把「翻页后在第 1 行按 ↑」这次处理写进用户目录的
+// vmenu-uppage.log。用途：让验收脚本能直接读文件确认这条分支真的被走到、
+// 以及落点算成了什么，不必依赖 rime 的 log_level=debug（默认看不到 DLOG）。
+//
+// 为什么要单独一个文件而不是复用 vmenu-debug.log：
+//   vmenu-debug.log 是 lua 侧写的，lua 与 C++ 各自 open/write/close，
+//   分开写避免两边同时追加造成内容交错。
+//
+// 拿到用户目录：优先环境变量 RIME_USER_DATA_DIR，其次读注册表里 Weasel 的
+// RimeUserDir，最后回落到 WeaselServer.exe 所在目录。全都失败就静默放弃
+// （诊断代码绝不能影响输入）。
+inline void _UpPageTrace(int page, int col, int restore, int count) {
+  try {
+    wchar_t dir[MAX_PATH] = {0};
+    DWORD n = GetEnvironmentVariableW(L"RIME_USER_DATA_DIR", dir, MAX_PATH);
+    if (n == 0 || n >= MAX_PATH) {
+      HKEY hk = nullptr;
+      if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\Rime\\Weasel", 0,
+                        KEY_READ, &hk) == ERROR_SUCCESS) {
+        DWORD cb = sizeof(dir);
+        DWORD type = 0;
+        if (RegQueryValueExW(hk, L"RimeUserDir", nullptr, &type,
+                             reinterpret_cast<LPBYTE>(dir), &cb) != ERROR_SUCCESS)
+          dir[0] = 0;
+        RegCloseKey(hk);
+      }
+    }
+    if (dir[0] == 0) {
+      if (GetModuleFileNameW(nullptr, dir, MAX_PATH) == 0)
+        return;
+      if (wchar_t* p = wcsrchr(dir, L'\\'))
+        *p = 0;
+    }
+    std::wstring path(dir);
+    path += L"\\vmenu-uppage.log";
+
+    SYSTEMTIME st;
+    GetLocalTime(&st);
+    char line[256];
+    _snprintf_s(line, sizeof(line), _TRUNCATE,
+                "%02d:%02d:%02d up-page from page=%d col=%d -> restore=%d "
+                "of %d\r\n",
+                st.wHour, st.wMinute, st.wSecond, page, col, restore, count);
+    HANDLE f = CreateFileW(path.c_str(), FILE_APPEND_DATA,
+                           FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+                           OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (f == INVALID_HANDLE_VALUE)
+      return;
+    DWORD written = 0;
+    WriteFile(f, line, (DWORD)strlen(line), &written, nullptr);
+    CloseHandle(f);
+  } catch (...) {
+    // 诊断代码失败一律忽略
+  }
+}
+}  // namespace
 
 // [vmenu-grid] v 功能菜单判定与「一行几列」——定义在下面（_Respond 之前），
 // ProcessKeyEvent 里也要用（数字键换行换算、方向键网格导航），先声明。
@@ -325,6 +470,12 @@ inline bool _VPickCode(const char* code) {
   if (!code) return false;
   return strncmp(code, "vpick", 5) == 0;
 }
+
+// [vpick] 第 1 行大类的个数。必须与这三处保持一致：
+//   src/lua/vmenu_symbols.lua 的 TABS、src/lua/vmenu_core.lua 的 PICK_CATS（都是 4）、
+//   以及下面 _PickGetCat / _PickActivate 里写死的 vpick_cat0..3。
+// 用 kPickTabs 下发（ctx.pick_cats），前端据此算大类行居中。
+static const int kPickTabs = 4;
 
 // [vpick] 当前激活的大栏（option vpick_cat0..3，第一个为 true 的下标；全灭时按 0）。
 // 与 vmenu_core.lua 的 pick_cat 同一套读法。
@@ -728,6 +879,75 @@ BOOL RimeWithWeaselHandler::ProcessKeyEvent(KeyEvent keyEvent,
         const int count = ctx.menu.num_candidates;
         rime_api->free_context(&ctx);
         const int target = current + delta;
+        // [vmenu-uppage] ★ 翻页后在第 1 行按 ↑ = **翻回上一页**（而不是收起展开栏）。
+        //
+        // 用户诉求（原话）：「在翻页以后 当用户选择在展开栏的第一行时 注意是在翻页的情况下
+        //   按↑键 它是回到上页 而不是关闭展开栏」。
+        //
+        // 语义：只有「已经翻过页（page > 0）」且「高亮就在第 1 行」时，↑ 才走这条路。
+        //   * 光标落点 = **上一页的最后一行**（用户选择的口径）里与当前同一列的那一格，
+        //     这样「↑ 一下、↓ 一下」能原样回到原位，手感是连续的；
+        //   * 一页放不满时（上一页候选不够 rows 行），就落到上一页实际存在的最后一行；
+        //   * page == 0 时**不走这里**：那时 ↑ 仍然是「收起展开栏」（原有行为，用户没要求改）。
+        //
+        // ★ 必须在下面那条通用翻页路径**之前**判断：否则 -kGridColumns 会先命中
+        //   「target >= 0」分支？不会 —— 第 1 行时 target = current - cols < 0 会落到翻页路径，
+        //   而那条路径只处理「+ / - 」与 ↓，↑ 会掉到最底下被吞掉（既不翻页也不收起），
+        //   正是用户报的那个 bug。所以这里显式处理。
+        const bool kUpKey = (keyEvent.keycode == ibus::Keycode::Up);
+        if (kUpKey && delta < 0 && current >= 0 && current < kGridColumns) {
+          // 高亮在第 1 行 → 看当前页码；page > 0 就翻回上一页。
+          int page = -1;
+          for (int i = 0; i < kGridPages; ++i) {
+            char pname[32];
+            snprintf(pname, sizeof(pname), "vmenu_page_%d", i);
+            if (rime_api->get_option(session_id, pname)) {
+              page = i;
+              break;
+            }
+          }
+          if (page > 0) {
+            const int col = current % kGridColumns;
+            // ★ [翻页回上页] 先把一次性开关 vmenu_uppage 置 true，再把这记 ↑ 交给 rime。
+            //
+            // 为什么需要这个开关：
+            //   Lua 的 menu_processor 收到 ↑ 时的默认语义是「收起展开栏」（见
+            //   vmenu_core.lua 的 M.grid_key：expanded + ↑ → grid_set(false) + page_reset(0)）。
+            //   于是「先 process_key 再改高亮」会被 lua 抢先收起网格、并把页码清零 ——
+            //   实测面板高度 796x190 → 729x49，用户看到的就是「按 ↑ 还是收起了」。
+            //   置上这个开关后，lua 改走「翻回上一页且保持展开」，两边语义才一致。
+            //   lua 用完会自己清掉；这里再兜底清一次，避免异常路径残留。
+            rime_api->set_option(session_id, "vmenu_uppage", True);
+            Bool handled = rime_api->process_key(
+                session_id, keyEvent.keycode, expand_ibus_modifier(keyEvent.mask));
+            // 兜底清开关（正常路径 lua 已清，重复清是幂等的）。
+            rime_api->set_option(session_id, "vmenu_uppage", False);
+            // 翻页后重新取一次候选总数：新一页可能不足 rows 行。
+            int new_count = 0;
+            RIME_STRUCT(RimeContext, pctx_up);
+            if (rime_api->get_context(session_id, &pctx_up)) {
+              new_count = pctx_up.menu.num_candidates;
+              rime_api->free_context(&pctx_up);
+            }
+            // 目标 = 本页最后一行里同一列；再夹进 [0, new_count-1]。
+            int restore = (kGridRows - 1) * kGridColumns + col;
+            if (restore >= new_count) restore = new_count - 1;
+            if (restore < 0) restore = 0;
+            DLOG(INFO) << "vmenu-grid: up-page (row1 -> prev page), col " << col
+                       << ", restore " << restore << " of " << new_count;
+            // [vmenu-uppage-trace] 除了 DLOG（需要 debug 日志等级才看得到），
+            // 再往用户目录写一行纯文本。这样验收脚本可以直接读文件取证，
+            // 不依赖 rime 的 log_level 设置。
+            _UpPageTrace(page, col, restore, new_count);
+            if (new_count > 0)
+              rime_api->highlight_candidate_on_current_page(session_id,
+                                                            (size_t)restore);
+            _Respond(ipc_id, eat);
+            _UpdateUI(ipc_id);
+            m_active_session = ipc_id;
+            return handled;
+          }
+        }
         // 普通方向键：目标下标没越界 → 直接移动高亮（候选窗口不变）。
         if (!kPageFwdKey && !kPageBackKey && target >= 0 && target < count) {
           DLOG(INFO) << "vmenu-grid: move highlight " << current << " -> "
@@ -1333,8 +1553,23 @@ inline bool _VMenuListCode(const char* code) {
 // 前端 WeaselUI/HorizontalLayout.cpp 按这个列号钉格子，收起态那一行与展开后每一行的
 // 同一列逐像素对齐；万一某个格子实在太宽（很长的剪贴板条目），前端会少画 1 格
 // （2 → 1），但仍保住列位置，不重排候选。
+//
+// [vmenu-cfg] 现在「普通打字」的列数由 grid-settings.txt 决定（收起 / 展开两套）：
+//   用户诉求（原话）：「展开栏只显示 6 个，并且在 v1 的控制面板可以设置展开栏的
+//   每行数量 和 没有展开栏的默认的每行数量」。
+//   * 收起（vmenu_grid 未开）→ cfg.collapsed（默认 9）
+//   * 展开（vmenu_grid 已开）→ cfg.expanded（默认 6）
+//   v 功能自己的列数（4 / 2 / 9）保持不变：那些是 v 菜单的专用排版，
+//   而且剪贴板 / 常用语「2 列 = 固定格宽」与 v3 的 2 列都依赖它，不能跟着用户值走。
+// ★ vmenu_grid 是会话级 option，必须用 get_option 读（不能靠参数传）。
 inline int _VMenuCols(RimeApi* api, RimeSessionId session_id, const char* code) {
-  if (!_IsVMenu(api, session_id, code)) return 9;
+  if (!_IsVMenu(api, session_id, code)) {
+    const GridCfg& cfg = _GridCfgCached();
+    // vmenu_grid = 「展开栏已打开」。它是会话级 option，由 lua 的 core.grid_set 维护；
+    // get_option 对不存在的 option 返回 False（不会崩），所以这里直接读。
+    const bool opened = (api != nullptr) && api->get_option(session_id, "vmenu_grid");
+    return opened ? cfg.expanded : cfg.collapsed;
+  }
   // [快捷输入 2 列] 用户要求：v3 快捷输入的候选显示也改成「和剪贴板相似的 2 列格式」。
   //   注意 vqi **不是列表型**：它仍是静态菜单 —— 序号顺序 1..N（ctx.grid_2d = 0），
   //   数字键仍由 menu_processor.lua 按序号选，服务端不接管。
@@ -1556,6 +1791,16 @@ bool RimeWithWeaselHandler::_Respond(WeaselSessionId ipc_id, EatLine eat) {
         std::to_string(_VMenuSeqMode(rime_api, session_id,
                                      preedit_str.c_str(),
                                      ctx.menu.num_candidates)) +
+        '\n');
+    // [vpick] 符号面板的大类个数（当前恒为 4）。只有真在符号面板时才发，
+    //   别的时候发 0 = 「不是符号面板」。
+    //   为什么要发：前端要用它算「第 1 行整组居中」。前端原来靠候选宽度猜哪几个是
+    //   补齐用的占位空格，但格宽由当页最宽候选决定 —— 颜文字那一栏格宽涨到 191 时，
+    //   第一个表情（99px）会被猜成大类，整组宽度多带一格、大类行右偏 36px（实测）。
+    //   服务端本来就知道是 4 个（vpick_cat0..3），直接发过去最可靠。
+    messages.push_back(
+        std::string("ctx.pick_cats=") +
+        std::to_string(_VPickCode(preedit_str.c_str()) ? kPickTabs : 0) +
         '\n');
     rime_api->free_context(&ctx);
   }

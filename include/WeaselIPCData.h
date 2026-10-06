@@ -119,7 +119,7 @@ struct CandidateInfo {
 };
 
 struct Context {
-  Context() : grid_cols(0), grid_2d(1) {}
+  Context() : grid_cols(0), grid_2d(1), pick_cats(0) {}
   void clear() {
     preedit.clear();
     aux.clear();
@@ -127,7 +127,9 @@ struct Context {
   }
   bool empty() const { return preedit.empty() && aux.empty() && cinfo.empty(); }
   bool operator==(const Context& ctx) {
-    if (preedit == ctx.preedit && aux == ctx.aux && cinfo == ctx.cinfo)
+    if (preedit == ctx.preedit && aux == ctx.aux && cinfo == ctx.cinfo &&
+        grid_cols == ctx.grid_cols && grid_2d == ctx.grid_2d &&
+        pick_cats == ctx.pick_cats)
       return true;
     return false;
   }
@@ -152,6 +154,11 @@ struct Context {
   //   0 = 按 1..N 顺序编号（静态 v 菜单：v 主菜单 5 项、v3 快捷输入 7 项，数字键就是顺序选）。
   //   默认 1 = 旧服务端没发这个键时的原行为。
   int grid_2d;
+  // [vpick] 符号面板（grid_2d = 3）第 1 行「大类」的真实个数（文本协议 ctx.pick_cats）。
+  //   当前 = 4（常用字符 / 符号 / 希腊字符 / 颜文字）。
+  //   0 = 旧服务端没发这个键 → 客户端退回「按候选宽度猜大类个数」的老办法
+  //   （那个猜法在格宽变大时会把第一个符号误当成第 5 个大类，导致居中算错）。
+  int pick_cats;
 };
 // for icon type in tip
 enum IconType { SCHEMA, FULL_SHAPE };
