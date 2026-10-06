@@ -429,6 +429,35 @@ local function handle(key, env)
         return 1
       end
     end
+
+    -- ★ [第二十七轮修复] 数字**没打满**时按回车 = 换行，不是「提交候选」。
+    --
+    --   用户报障（原话）：「再输入数字的时候如果这个数字正好是常用字里的数字的话
+    --   它会按下回车它会不直接显示…必须要按两次回车它才能正常进入回车的功能」。
+    --
+    --   为什么会这样：数字编码 `131` 存在，于是按 `1` 就被上面那段
+    --   `digit_prefix` 并进了 composition（输入框非空）。此时按回车：
+    --     · 上面的 `fav_exact("1")` **不命中**（`1` 不是完整编码，是前缀）；
+    --     · 于是这条 Return 落到 librime 的 `express_editor`，
+    --       它把 Return 绑到 `Editor::CommitRawInput` → 把输入框里的 `1`
+    --       **原样上屏**，而不是插入换行。
+    --   用户看到的就是「第一次回车没换行（只把 1 打出去了），要按两次」。
+    --   （同理 `13`：第一次回车打出 `13`，第二次才换行。）
+    --
+    --   修法：既然已经确定「不是完整编码」，回车就不该有任何「提交」语义 ——
+    --   把已输入的数字原样上屏、清空 composition，然后把回车**放行**给应用
+    --   （`return 2`）。应用收到的是「光标处插入 1 + 换行」，正是用户要的。
+    --   注意必须 `return 2` 而不是 `return 1`：return 1 只是吞掉按键，换行就丢了。
+    if is_digit_code then
+      local ok_pre = pcall(function()
+        env.engine:commit_text(cur)
+        ctx:clear()
+      end)
+      if ok_pre then
+        core.debug_log("[vmenu] 数字未打满，回车=上屏数字并换行 <" .. cur .. ">")
+        return 2   -- 数字落盘 + 回车交给应用换行
+      end
+    end
   end
 
   -- 候选窗口展开/收起 + 加减号翻页。
@@ -551,6 +580,15 @@ local function handle(key, env)
         ctx:clear()
       end)
       if ok_commit then return 1 end
+    end
+    -- 同上（见上面第一处 Return 的详细注释）：数字没打满时回车 = 上屏数字 + 换行，
+    -- 不能让 librime 的 CommitRawInput 把回车吃掉（否则要按两次回车才换行）。
+    if cur:match("^%d+$") then
+      local ok_pre = pcall(function()
+        env.engine:commit_text(cur)
+        ctx:clear()
+      end)
+      if ok_pre then return 2 end
     end
   end
 

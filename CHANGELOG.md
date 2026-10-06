@@ -3,6 +3,70 @@
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 本项目在真机（Windows 11 + Weasel 0.17.4 + librime 1.13.1 + rime-ice）上验证。
 
+## [0.2.34] - 2026-10-06
+
+### 修复 · 两个用户报障：数字回车不换行 + 符号面板切大类文字重影
+
+#### ① 数字没打满时按回车不换行，要按两次
+
+用户复报（原话）：「再输入数字的时候如果这个数字正好是常用字里的数字的话它会按下
+回车它会不直接显示…必须要按两次回车它才能正常进入回车的功能」。澄清后确认：
+打 **1 位或 2 位**数字也会这样。
+
+* **根因**：常用语里有编码 `131`，于是按 `1` 时 `digit_prefix("1")` 判定
+  「`1` 是 `131` 的前缀」→ 把 `1` **并进输入框**（composition 非空），而不是直接
+  打出字符 `1`。接着按回车，`fav_exact("1")` **不命中**（`1` 只是前缀、不是完整
+  编码），这条 Return 就落到 librime 的 `express_editor`，而 `rime_ice.schema.yaml`
+  把 Return 绑成了 `commit_raw_input` —— **把输入框里的 `1` 原样上屏，而不是换行**。
+  用户看到的就是「第一次回车没换行，要按两次」（`13` 同理）。
+* **修法**：在 `menu_processor.lua` 的 Return 分支（两处）加判定 —— 既然已经确定
+  「不是完整编码」，回车就不该有任何「提交」语义：把已输入的数字原样上屏、清空
+  composition，然后 **`return 2` 把回车放行给应用**。
+  必须是 `return 2` 而不是 `return 1`：`return 1` 只是吞掉按键，换行就丢了。
+* **配套**：`vmenu_core.lua` 新增 `M.FAV_MIN_KEY = 3`，把「编码最少几位才算数」
+  收敛成唯一出处（`fav_hit` 预览与 `digit_prefix` 共用）。
+  注意 `digit_prefix` 的**有效门槛仍然是 1 位**，不能跟着改成 3 —— 否则第 1 个 `1`
+  会走原生直接上屏，后面再没有 composition 可续接，编码 `131` 永远打不出来。
+  这条**写进注释**了，免得以后有人「统一门槛」时踩回去。
+* **真机验证**（干净构建，`tmp/test-enter2.ps1`）：
+
+  | 输入 | 回车后文档内容 | 说明 |
+  |---|---|---|
+  | `1` + 回车 | `1\r\n` | 数字上屏**且换行**（修复前只有 `1`，无换行） |
+  | `13` + 回车 | `13\r\n` | 同上 |
+  | `131` + 回车 | `13122500717` | 完整编码 → 上屏常用语，**不**换行 |
+
+  日志可见判定路径确实触发：`[vmenu] 数字未打满，回车=上屏数字并换行 <1>`。
+
+#### ② 符号面板切大类时文字重影（旧字没擦掉，叠在新字上）
+
+* **根因**：`WeaselIPCData.h` 的 `Context::operator==` 只比了 `preedit` / `aux` /
+  `cinfo`，**没有比 `grid_cols` / `grid_2d` / `pick_cats`** —— 而这三个正是 vmenu
+  加进来的字段。`WeaselPanel.cpp` 的重绘门槛是唯一一处
+  `if (m_ctx != m_octx) { m_octx = m_ctx; RedrawWindow(); }`，于是当切大类只改动了
+  这三个字段、可见文本恰好相同时，`m_ctx == m_octx` 被判成「没变化」→
+  **`RedrawWindow()` 被跳过** → 上一帧的字留在屏幕上，新一帧再画上去，就是重影。
+* **修法**：把这三个字段补进 `operator==`。
+* **真机验证**：6 倍放大「颜文字」高亮块，修复前 vision 描述为
+  「a distinct pixel-level artifact where the text appears to have a double outline,
+  creating a smeared or ghosted effect」；修复后为
+  「sharp and clear, with no visible artifacts such as double outlines or ghosting」。
+  另用 `tmp/ghost-test.ps1` 做「慢速切换 vs 快速切换」白像素计数对比，
+  四个大类 `1319 / 1227 / 1227 / 1242` 两种节奏**完全一致**
+  （若有残留叠字，快速那组会明显偏大）。
+
+### 排查过程中修掉的三个测试环境坑（免得重踩）
+
+1. **微信输入法（`wetype*`）抢 IME 槽** —— 开机自启，会把 Weasel 的输入抢走。
+   表现是「按键完全进不了 IME」、Rime 日志一行不出，看起来像 IME 坏了。
+2. **裸 `SetForegroundWindow` 会被 Windows 静默拒绝** —— 当前台是别的进程时直接
+   返回 false，**按键全部落到那个程序里**。必须用 `AttachThreadInput` 借前台线程
+   再抢。本轮踩到时整轮测试按键打进了记事本/Chrome，表现得像「IME 没反应」。
+3. **`PrintWindow` 抓不到面板** —— 面板是 layered window
+   （`WeaselPanel.cpp` 的 `ModifyStyleEx(WS_EX_TRANSPARENT, WS_EX_LAYERED)`），
+   `PrintWindow` 对它返回全黑（实测抓到 8 张全 0 像素）。必须用
+   `Graphics.CopyFromScreen`。
+
 ## [0.2.33] - 2026-10-05
 
 ### 修复 · v5 符号面板两个遗留 bug：大类行不居中 + 颜文字串进大类行
