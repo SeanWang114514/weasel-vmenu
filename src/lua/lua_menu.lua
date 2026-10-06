@@ -14,6 +14,22 @@ local function item(seg, t, text, comment)
   return cand(seg, t, text, comment, 1000000)
 end
 
+-- [vpick-order] 符号面板专用：给每个候选一个**严格递减**的 quality。
+--
+-- 为什么必须这么做（这是「颜文字栏第一行候选跑进最上面那一大栏」的根因）：
+--   `item()` 给所有候选取的都是**同一个** quality = 1000000。librime 合并各
+--   translator 的候选时会按 quality 排序，而它用的是**不稳定排序** —— 一大批
+--   quality 完全相同的候选，先后顺序就变成未定义的（实测：颜文字栏第 11 个表情
+--   「(；一_一)」会跑到索引 4，也就是大栏行里，视觉上就是「第一个表情挤进了上面
+--   那一大栏」）。
+--   给每个候选递减的 quality 之后，排序结果与产出顺序**逐项一致**，面板结构
+--   （前 4 格大栏 + 5 格占位 + 后面才是小栏）才稳定。
+--   基准取 2000000 是为了稳稳压过普通词典候选，同时留足空间让 45 项彼此不撞。
+local PICK_Q_BASE = 2000000
+local function pick_item(seg, t, text, comment, idx)
+  return cand(seg, t, text, comment, PICK_Q_BASE - idx)
+end
+
 local function action(seg, comment, n)
   -- 操作行：文本用零宽字符占位，注释才是给用户看的提示
   return cand(seg, "vact", string.rep(ZW, n or 1), comment, -1000000)
@@ -45,20 +61,28 @@ local function yield_pick(seg, ctx)
   if not ok or type(sym) ~= "table" then return end
   local cat = core.pick_cat(ctx)
   local list = sym.CATS[cat + 1] or {}
+
+  -- 全屏 45 格的**槽位序号**：0..3 大栏、4..8 占位、9..44 小栏。
+  -- 每一格都用「基准 - 槽位号」当 quality（见上面 pick_item 的注释），
+  -- 这样排序结果必然与产出顺序一致，第 4 格永远不会被颜文字挤进来。
+  local slot = 0
   -- 第 1 行：大栏（就是数据表里的 4 个名字，无注释）
   for i = 1, #sym.TABS do
-    yield(item(seg, "vsym", sym.TABS[i], ""))
+    yield(pick_item(seg, "vsym", sym.TABS[i], "", slot))
+    slot = slot + 1
   end
   -- 占位空格：补齐 9 格；grid_2d=3 的标签算法会在这些格上画空格序号
   for _ = 1, 9 - #sym.TABS do
-    yield(item(seg, "vsym", ZW, ""))
+    yield(pick_item(seg, "vsym", ZW, "", slot))
+    slot = slot + 1
   end
   -- 第 2-5 行：小栏 = 当前大栏当前页的 36 个
   local off = core.page_get(ctx) * core.PICK_PAGE
   for i = 1, core.PICK_PAGE do
     local s = list[off + i]
     if not s then break end
-    yield(item(seg, "vsym", s, ""))
+    yield(pick_item(seg, "vsym", s, "", slot))
+    slot = slot + 1
   end
 end
 
