@@ -201,7 +201,7 @@ M.GRID_OPTION = "vmenu_grid"   -- 状态必须放在 context option 里！
 -- 用户诉求（原话）：「展开栏只显示 6 个，并且在 v1 的控制面板可以设置展开栏的每行数量
 --   和没有展开栏的默认的每行数量」。
 --   cols_collapsed = 收起（没有展开栏）时一行几个，默认 9
---   cols_expanded  = 按下 ↓ 展开后一行几个，默认 6
+--   cols_expanded  = 按下 ↓ 展开后一行几个，默认 9
 -- ★ **必须与服务端 RimeWithWeasel.cpp 的 _GridCfgCached() 读同一个文件**：
 --   前端画格子用的是服务端下发的 ctx.grid_cols，而这里决定「这一屏放几个候选」——
 --   两边不一致就会出现「一行画 6 格、却只给了 9 个候选」或者「给了 24 个候选、
@@ -210,7 +210,7 @@ M.GRID_OPTION = "vmenu_grid"   -- 状态必须放在 context option 里！
 --   缺文件 / 缺键 / 值非法一律退回默认，绝不因为设置文件坏了而影响打字。
 M.GRID_CONFIG_FILE = "grid-settings.txt"
 M.GRID_COLS_COLLAPSED_DEFAULT = 9
-M.GRID_COLS_EXPANDED_DEFAULT = 6
+M.GRID_COLS_EXPANDED_DEFAULT = 9
 M.GRID_COLS_MIN = 1
 M.GRID_COLS_MAX = 20
 local _grid_cfg, _grid_cfg_at = nil, -1
