@@ -39,7 +39,7 @@ static RimeApi* rime_api;
 // 用户诉求（原话）：「展开栏只显示 6 个，并且在 v1 的控制面板可以设置展开栏的每行数量
 // 和没有展开栏的默认的每行数量」。于是列数从「硬编码 9 / 4 / 2」变成两个可调值：
 //   cols_collapsed = 收起（没展开栏）时一行几个，默认 9
-//   cols_expanded  = 按下 ↓ 展开后一行几个，默认 6
+//   cols_expanded  = 按下 ↓ 展开后一行几个，默认 9
 // 文件格式与 lua 侧的 fuzzy-settings.txt / candidate-settings.txt 同构：
 //   「# 注释头 + 键=值」、LF、UTF-8 无 BOM；缺键 / 缺文件一律用默认值。
 //
@@ -52,7 +52,7 @@ static RimeApi* rime_api;
 //   （与 lua 侧的 settings_cached 同构）。设置面板改完最迟 1 秒生效。
 namespace {
 const int kGridColsCollapsedDefault = 9;
-const int kGridColsExpandedDefault = 6;
+const int kGridColsExpandedDefault = 9;
 const int kGridColsMin = 1;
 const int kGridColsMax = 20;
 // [vmenu-uppage] 与 src/lua/vmenu_core.lua 必须一致：
@@ -60,6 +60,15 @@ const int kGridColsMax = 20;
 // 改了 lua 那边这两个值，这里也要跟着改，否则「↑ 回上页」会读不到页码 / 落错行。
 const int kGridRows = 4;
 const int kGridPages = 16;
+// [vmenu-uppage-list] ★ 列表型 v 功能（vclip / vfav / vsetc / vsetf）的实际几何是
+//   2 列 × 3 行（lua 侧 M.LIST_COLS=2 / M.LIST_ROWS=3 / M.LIST_LIMIT=6），**不是** 4 行。
+//   这里原先把 kGridRows(=4) 无差别地用来算「↑ 回上页」的落点：
+//     restore = (4-1)*2 + col = 6 + col   →  一页只有 6 条（索引 0..5），6/7 双双越界，
+//     又被下面的 new_count-1 夹成同一个 5 —— 列信息在这一步被抹掉，于是用户要的
+//     「上一页最后一行、同一列」退化成「永远落在最后一条」。
+//   改成按列表实际行数算，col 才真正起作用：
+//     col=0 → 4（上一页最后一行左格），col=1 → 5（上一页最后一行右格）。
+const int kListRows = 3;
 
 struct GridCfg {
   int collapsed = kGridColsCollapsedDefault;
@@ -908,6 +917,13 @@ BOOL RimeWithWeaselHandler::ProcessKeyEvent(KeyEvent keyEvent,
           }
           if (page > 0) {
             const int col = current % kGridColumns;
+            // [vmenu-uppage-list] 行数按当前 v 功能类型取：列表型 3 行，其它（普通打字
+            //   展开栏）仍是 4 行。用错行数会让 restore 越界、被夹成同一条，列就丢了。
+            // vpick 是 9 列特殊符号面板，不属于 2×3 固定列表。
+            const bool fixed_list =
+                _VMenuList(rime_api, session_id, grid_input.c_str()) &&
+                !_VPickCode(grid_input.c_str());
+            const int rows = fixed_list ? kListRows : kGridRows;
             // ★ [翻页回上页] 先把一次性开关 vmenu_uppage 置 true，再把这记 ↑ 交给 rime。
             //
             // 为什么需要这个开关：
@@ -929,8 +945,9 @@ BOOL RimeWithWeaselHandler::ProcessKeyEvent(KeyEvent keyEvent,
               new_count = pctx_up.menu.num_candidates;
               rime_api->free_context(&pctx_up);
             }
-            // 目标 = 本页最后一行里同一列；再夹进 [0, new_count-1]。
-            int restore = (kGridRows - 1) * kGridColumns + col;
+            // 目标 = 本页最后一行里**同一列**那一格；再夹进 [0, new_count-1]。
+            // 上一页不满一整屏时（例如只剩 2 条），夹取会把它压回该页实际最后一条。
+            int restore = (rows - 1) * kGridColumns + col;
             if (restore >= new_count) restore = new_count - 1;
             if (restore < 0) restore = 0;
             DLOG(INFO) << "vmenu-grid: up-page (row1 -> prev page), col " << col
@@ -1558,7 +1575,7 @@ inline bool _VMenuListCode(const char* code) {
 //   用户诉求（原话）：「展开栏只显示 6 个，并且在 v1 的控制面板可以设置展开栏的
 //   每行数量 和 没有展开栏的默认的每行数量」。
 //   * 收起（vmenu_grid 未开）→ cfg.collapsed（默认 9）
-//   * 展开（vmenu_grid 已开）→ cfg.expanded（默认 6）
+//   * 展开（vmenu_grid 已开）→ cfg.expanded（默认 9）
 //   v 功能自己的列数（4 / 2 / 9）保持不变：那些是 v 菜单的专用排版，
 //   而且剪贴板 / 常用语「2 列 = 固定格宽」与 v3 的 2 列都依赖它，不能跟着用户值走。
 // ★ vmenu_grid 是会话级 option，必须用 get_option 读（不能靠参数传）。
