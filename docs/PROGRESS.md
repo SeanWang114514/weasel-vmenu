@@ -752,6 +752,40 @@ vclip 的内部代码 还有剪切板的候选词无法翻页 没有办法继续
 * **体积**：12.0 MB / 100 MB 预算（每条后继约 9 字节，格式很省，剩余 88 MB）。
   再扩容只需换/加语料重跑 `extract_all.py` + `build_bigram.py`，**`predict_filter.lua` 零改动**。
 
+### 1.41 第三十轮：v2「翻页后按 ↑ 回上一页」丢失列位置（0.2.37，2026-10-07）
+
+* **需求（用户原话）**：「翻到下一页之后 在第一行 如果光标在第一行的第一个 继续翻到上一页
+  就在上一页的最后到最后一行的第一个 如果在上下一页第一行第二个 翻到上一页 就变成在上一页的
+  最后一行第二个」——回上一页要落在**上一页最后一行、与当前列相同**的格子。
+* **根因**：`RimeWithWeasel.cpp` 的 `kGridRows = 4` 是**普通打字展开栏**的行数（与 lua
+  `M.GRID_ROWS` 对齐），但剪贴板 / 常用语是**列表型**，几何是 **2 列 × 3 行**
+  （lua `M.LIST_COLS/LIST_ROWS/LIST_LIMIT = 2/3/6`）。回上页落点却用了 4 行：
+  `restore = (4-1)*2 + col = 6 + col`；一页只有 6 条（索引 0..5），`6+col` 无论 col 都越界，
+  被 `new_count - 1` 夹成同一个 `5` → **列信息被抹掉**，退化成「永远落在最后一条（右下）」。
+* **修法**：新增 `kListRows = 3`，按 `_VMenuList(...)` 选行数（列表型 3 / 其它 4），
+  `restore = (rows - 1) * kGridColumns + col`。列表型 `col=0→4`（左下）、`col=1→5`（右下）。
+* **验证（A/B，只换 `WeaselServer.exe`，同一探针）**：判别点在 col=0（旧 `6+0=6→夹成5`，新 `4+0=4`）。
+
+  | 二进制 | col=0 | col=1 |
+  | --- | --- | --- |
+  | 旧 `F619EA5F…` | `restore=5` ❌ | `restore=5` ✅ |
+  | 新 `7F706166…` | `restore=4` ✅ 左下 | `restore=5` ✅ 右下 |
+
+  证据：`<用户目录>\vmenu-uppage.log`（C++ `_UpPageTrace` 直写，不依赖 `log_level`）
+  `00:54:29 up-page from page=1 col=0 -> restore=4 of 6` /
+  `00:54:38 up-page from page=1 col=1 -> restore=5 of 6`；截图确认高亮落点。
+* **部署面**：`RimeWithWeasel` 只被 `WeaselServer.vcxproj` 引用（唯一一条 `ProjectReference`），
+  所以**只需换 `WeaselServer.exe`**；`weasel.dll` / `weaselx64.dll`（TSF 客户端，只链
+  WeaselIPC + WeaselUI）不重链、不重部署。
+* **踩坑**：探针脚本里 Notepad 被 `MoveWindow(40,40,760,420)` 后，点击 `(120,110)` 会落在
+  **菜单栏边缘**导致焦点不进编辑区、按键不被 IME 处理（日志只有「设置读盘」、面板不出现）——
+  点深一点（`(300,200)`）即稳定复现。另有**两个 Notepad 窗口完全重叠**在同坐标，
+  导致点击落到另一个窗口、结果时好时坏：跑探针前先杀掉全部 Notepad 只留一个。
+* **顺带同步**：`vmenu_core.lua` 三份副本此前不一致（运行时 `D:\rime-sandbox\lua` 含
+  2026-10-06 卡顿修复 `MISINPUT_MIN=20` / `debug_log` 限速+512KB 上限 / `TRACE_KEYS=false`，
+  repo 与 `%APPDATA%` 仍是旧版）。已以运行时版本为准同步三份，
+  MD5 统一 `D185E6C4367EE4FB353CF109C67AD4D8`。
+
 ## 2. 时间线（2026-09-13）
 
 | 时间 | 事件 |

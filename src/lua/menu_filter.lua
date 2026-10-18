@@ -119,6 +119,11 @@ local function filter(input, env)
   local ctx = env.engine.context
   local code = ctx.input
 
+  -- [探针·临时] F 行：候选管线跑到本滤镜的时刻（与 processor 的 P 行配对算耗时）
+  if core.PROBE then
+    core.probe_log("F |%s| caret=%s", tostring(code), tostring(ctx.caret_pos))
+  end
+
   local want = nil
   local fav = nil
 

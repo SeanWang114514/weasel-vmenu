@@ -14,8 +14,14 @@ M.WINDOW = 9          -- 管理/删除模式每屏条数，与 menu/page_size �
 -- [防误触] 两次按键之间的最小间隔（毫秒）。低于这个间隔的连续按键会被吞掉。
 -- 推荐值 30ms：人类最快打字速度 ≈ 200 WPM ≈ 300ms/键，30ms 远低于人类下限，
 -- 但能拦住键盘抖动、系统重复、手滑连击等误输入。
+-- ★★ [卡顿修复 · 2026-10-06] 下限从 10ms 提到 20ms。
+--   10ms 不是「人类几乎无法达到的间隔」，而是**键盘自动重复**的量级：按住退格 /
+--   方向键 / 字母时，Windows 的重复间隔可低至 ~31ms，键盘连击也常在 10ms 内 ——
+--   阈值定在 10ms 会把这些**真实输入**静默吃掉，表现为「打字丢字 / 明显卡顿」。
+--   20ms 仍远低于人类最快的连续按键（≈100ms），防误触的本意（拦抖动与手滑）不变，
+--   但不再误伤键盘重复。前端设置窗口的 MiMin 必须同步改成 20（Data.cs）。
 M.MISINPUT_DEFAULT = 30    -- 推荐值（ms）
-M.MISINPUT_MIN = 10        -- 允许的最小值（再小就没意义了）
+M.MISINPUT_MIN = 20        -- 允许的最小值（低于此值会误伤键盘自动重复）
 M.MISINPUT_MAX = 200       -- 允许的最大值（再大会影响正常打字）
 
 local raw_flag = false
@@ -39,15 +45,75 @@ M.DEBUG_LOG = true
 -- 默认 false：那是**每个按键一次文件写入**，排查「画面显示的顺序 / 选中的候选对不上」
 -- 这类问题时才临时改 true（配合 tools\verify-grid-digit.ps1）。
 M.DEBUG_CAND = false
+
+-- ★★ [卡顿修复 · 2026-10-06] debug_log 必须**限速 + 截断**。
+--   用户报障（原话）：「现在输入会有明显卡顿」。
+--   根因之一就是这里：debug_log 原来无条件「每个调用者每键一次 io.open/append/close」。
+--   取证（<Rime目录>\vmenu-debug.log 0.98 MB / 15701 行）：
+--       11654 条「放行组合键」  ← 每一个 Ctrl/Alt/Win 组合键都写盘
+--        1279 条「设置读盘」
+--         890 条「收藏读盘」
+--   其中「放行组合键」最要命：它在**按键放行的最早分支**上，Ctrl+C / Ctrl+V /
+--   Win 键（Ctrl+Meta_L）全都会走到，等于输入法每按一个非打字键都同步写一次磁盘。
+--   这三类都不是「异常事件」，而是**每次都会发生的正常事件**，写日志毫无诊断价值。
+--   现在做了三件事：
+--     ① debug_log 全局限速（同秒最多 1 条）+ 单文件 512KB 上限；
+--     ② 「放行组合键」改由 M.TRACE_KEYS 控制（默认关），不再每键写；
+--     ③ 文件到上限后直接停写：诊断日志绝不能因为涨大而拖慢打字。
+--   ★ 为什么必须限速而不能只靠调用方自律：debug_log 是对外公开的（各 lua 都调它），
+--     任何一个新增调用点都可能重新引入「每键一写」，限速是唯一的结构性保险。
+local _dbg_at = 0
+local DBG_MIN_GAP = 1.0            -- 秒：同一秒最多写 1 条
+local DBG_MAX_BYTES = 512 * 1024   -- 超过就不再写（正常排查足够，且永不会拖慢打字）
+local _dbg_size = nil
+
 local function debug_log(msg)
   if not M.DEBUG_LOG then return end
-  local f = io.open(user_dir() .. "/vmenu-debug.log", "a")
+  local now = os.clock()
+  if now - _dbg_at < DBG_MIN_GAP then return end
+  _dbg_at = now
+  local path = user_dir() .. "/vmenu-debug.log"
+  if _dbg_size == nil then
+    local probe = io.open(path, "r")
+    if probe then
+      _dbg_size = probe:seek("end") or 0
+      probe:close()
+    else
+      _dbg_size = 0
+    end
+  end
+  if _dbg_size > DBG_MAX_BYTES then return end
+  local f = io.open(path, "a")
   if f then
-    f:write(os.date("%H:%M:%S "), msg, "\n")
+    local line = os.date("%H:%M:%S ") .. msg .. "\n"
+    f:write(line)
     f:close()
+    _dbg_size = _dbg_size + #line
   end
 end
 M.debug_log = debug_log
+
+-- [诊断·TRACE] 逐键 TRACE 开关。默认 false：
+--   menu_processor 的「放行组合键」是**每个 Ctrl/Alt/Win 键都命中**的正常分支，
+--   旧代码无条件写盘 —— 实测占满了整个日志（15701 行里 11654 行是它）。
+--   要排查「某个组合键为什么被放行 / 没被放行」时才把它改成 true。
+M.TRACE_KEYS = false
+
+-- [探针] 逐键延迟诊断：把 os.clock() 写进独立文件，事后用「processor 的 P 行 →
+-- 紧跟的 filter 的 F 行」的差算出「按键进来 → 候选管线重跑完」的耗时。
+-- **默认关**：开着时每按一个键都要写一次盘，正常使用不要打开；
+-- 要复测延迟就把 M.PROBE 改成 true，跑完记得改回 false 并删掉 probe-latency.log。
+M.PROBE = false
+local function probe_log(fmt, ...)
+  if not M.PROBE then return end
+  local f = io.open(user_dir() .. "/probe-latency.log", "a")
+  if f then
+    local ok, s = pcall(string.format, fmt, ...)
+    f:write(("%.3f "):format(os.clock()), ok and s or "FMT-ERR", "\n")
+    f:close()
+  end
+end
+M.probe_log = probe_log
 
 -- ---------------------------------------------------------------------------
 -- 【卡顿修复·设置读盘】vmenu-settings.txt 的 1 秒 TTL 缓存
@@ -745,14 +811,25 @@ function M.fav_reads() return _fav_reads end
 -- 正常打字时的收藏命中：输入满 3 个字符后，只要输入的 3 个字符是某条收藏
 -- 编码的开头（编码本身不足 3 位的不用这种方式，靠 v 菜单取用），就命中它。
 -- 字母编码：仍要满 3 个字符才查找（2 个字符以内不读文件，保证打字速度）。
--- [第二十五轮·问题3] 纯数字编码从**第 1 位**就开始命中：使用说明 376 行要求
---   「只打了 1 候选栏就要自动预览那条常用语」。数字编码都是以数字打头的，
---   一次最多 1-2 位，等满 3 位永远来不及预览（这正是「数字常用语 131 没完成」的缺口）。
+-- [第二十六轮] 纯数字编码**必须打满 3 位**才命中（回到和字母编码同一条门槛）。
+--   用户诉求（原话）：「给数字的常用词只有在完全输入 3 位之后才显示常用词否则不显示」。
+--   第二十五轮曾经让数字编码「从第 1 位就命中」，那是把「打满 3 位才显示」错读成了
+--   「第 1 位就预览」：结果每敲一个数字键，候选栏里都先蹦出一条「常用语」预览，
+--   1 位、2 位时就显示，用户看到的正是「没输入满显示」。
+--   现在 1 位 / 2 位一律不命中（短路必须在读缓存**之前**，
+--   这样纯数字前缀连收藏文件都不用碰，逐键零读盘）。
+--
+-- ★ 这个 3 就是「编码最少几位才算数」的唯一出处：`fav_hit`（预览）、
+--   `digit_prefix`（数字要不要并进输入框）都用它，两处**必须同口径** ——
+--   只改一边会出现「不预览但被抢进输入框」这种半吊子状态（回车换行就是被它搞坏的，
+--   见 digit_prefix 的注释）。
+M.FAV_MIN_KEY = 3
+
 function M.fav_hit(code)
   if type(code) ~= "string" or code == "" then return nil end
   local key = code:lower()
   local is_digit = key:match("^%d+$") ~= nil
-  if #key < 3 and not is_digit then return nil end
+  if #key < M.FAV_MIN_KEY then return nil end
   local list = fav_cached()   -- 【卡顿修复】热路径走缓存，不再每个键读盘
   for i = 1, #list do
     local k = (list[i].key or ""):lower()
@@ -772,6 +849,13 @@ end
 -- 中文模式下数字是「选字键」，根本进不了编码。所以由 menu_processor 在
 -- 输入为空 / 全是数字时接管：只要「已输入的数字 + 刚按的数字」还是某条
 -- 数字编码的开头，就把这个数字并进编码，而不是交给选字逻辑。
+--
+-- ★ 门槛**必须留 1 位**（不能像 fav_hit 那样要求打满 3 位）：
+--   否则第 1 个 `1` 会走原生直接上屏成字面字符，后面就再也没有 composition
+--   可以续接，编码 `131` 永远打不出来（实测：`digit_prefix("1")` 为假 →
+--   menu_processor 走 `cur == ""` 的 `return 2` → `1` 进文档 → 输入框清空）。
+--   所以「1、13 这种短数字要能当普通字符用」这件事**不能靠这里拦**，
+--   得靠下面「回车」那条修（见 menu_processor 的 Return 分支）。
 function M.digit_prefix(s)
   if type(s) ~= "string" or s == "" then return false end
   if not s:match("^%d+$") then return false end

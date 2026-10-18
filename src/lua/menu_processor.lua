@@ -403,6 +403,53 @@ local function handle(key, env)
     return 1
   end
 
+  -- ===== [第二十六轮] 数字常用语编码：**可且仅可用回车输入** =====
+  -- 用户诉求（原话）：「并且可且仅可用回车输入」。
+  -- 背景：打满 3 位后候选栏里有一条「常用语」预览（menu_filter 那个 vfav 候选），
+  --   而 librime 的选字键 / 标点 / 空格都会去提交「当前选中的候选」，
+  --   于是除了回车之外，还有一串键能把它打出去 —— 必须在这里一一堵死。
+  -- 字母编码不走这条（用户明确「只改数字，字母保持原样」），所以全程 `^%d+$` 限定。
+  -- 逐键说明：
+  --   ① 数字键：能延伸编码的已在上面 digit 分支并入输入框；延伸不了的会落到
+  --      selector 去「选字」—— 数字编码态下候选栏第一位就是那条常用语预览，
+  --      于是按 3 会把常用语打出去。这里拦下：先把已输入的数字原样上屏、再把这个
+  --      数字当作普通输入接在后面（13 + 5 → `135`），符合「数字要能正常连打」。
+  --   ② 空格：原来已有拦截，但它回落到 selector 的那条路径仍然会提交候选；
+  --      这里统一改成「纯数字编码态一律吞掉空格」，只剩回车能上屏整条常用语。
+  --   ③ 标点（PUNCT_KEYS）：上面的分支已经把 `, . :` 等做成了「数字+标点」一起上屏，
+  --      走到这里说明是别的情况，同样不允许它去提交候选。
+  -- 注意：这一整段必须在**竖线以下**的翻页 / 方格分支之前，否则 `-` `=` `+` 会被
+  --   当翻页键先吃掉（第二十轮的老坑），也与上面 digit 分支的优先级保持一致。
+  if cur ~= "" and cur:match("^%d+$") and not core.mode_of(cur) then
+    -- ① 数字键：不是编码前缀时，把数字接在已输入内容后面（绝不选候选）
+    if repr:match("^%d$") then
+      local ok_c = pcall(function()
+        env.engine:commit_text(cur .. repr)
+        ctx:clear()
+      end)
+      if ok_c then
+        core.debug_log("[vmenu] 数字编码后再按数字：原样上屏 <" .. cur .. repr .. ">")
+        return 1
+      end
+    end
+    -- ② 空格：吞掉，不提交常用语预览
+    if repr == "space" then
+      core.debug_log("[vmenu] 数字编码态吞掉空格（只认回车） <" .. cur .. ">")
+      return 1
+    end
+    -- ③ 其余标点：数字先原样上屏，按键再交回原方案（标点照常插入）
+    if PUNCT_KEYS[repr] then
+      local ok_c = pcall(function()
+        env.engine:commit_text(cur)
+        ctx:clear()
+      end)
+      if ok_c then
+        core.debug_log("[vmenu] 数字编码态标点：先上屏数字 <" .. cur .. ">")
+        return 2
+      end
+    end
+  end
+
   -- [第二十二轮] 收藏编码「打完 + 回车」= 直接调用收藏内容。
   -- 纯数字编码（如 131）本来靠「整屏只有一个候选时回车上屏」这个巧合生效，
   -- 这里显式接管：数字编码、字母编码一律支持，行为统一，也不再依赖巧合。
@@ -783,6 +830,17 @@ local SLOW_MS = 5
 return function(key, env)
   local t0 = os.clock()
   PH = {}
+  -- [探针·临时] P 行：本键进入处理器的时刻 + 键名 + 当前输入 + 光标位置
+  if core.PROBE then
+    local ok_k, krep = pcall(function() return key:repr() end)
+    local ok_c, cin = pcall(function() return env.engine.context.input end)
+    local ok_p, cpos = pcall(function() return env.engine.context.caret_pos end)
+    local ok_r, isrel = pcall(function() return key:release() end)
+    core.probe_log("P %s %s |%s| caret=%s",
+      (ok_r and isrel) and "REL" or "DOWN",
+      ok_k and tostring(krep) or "?", ok_c and tostring(cin) or "?",
+      ok_p and tostring(cpos) or "?")
+  end
   local ok, res = pcall(handle, key, env)
   local ph = PH
   PH = nil
