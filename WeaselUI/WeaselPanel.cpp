@@ -934,11 +934,19 @@ bool WeaselPanel::_DrawCandidates(CDCHandle& dc, bool back) {
             const int rtop = r.is_py
                                  ? rect.top + max(0, (rect.Height() - rs.cy) / 2)
                                  : rect.top;
-            CRect rr(x, rtop, x + rs.cx, rtop + rs.cy);
+            // The annotation path paints each run separately, so the text
+            // layout's cell rectangle alone cannot keep later runs inside the
+            // candidate cell. Clamp every run to the remaining cell width.
+            const int run_width = min(rs.cx, max(0, rect.right - x));
+            if (run_width <= 0)
+              break;
+            CRect rr(x, rtop, x + run_width, rtop + rs.cy);
             _TextOut(rr, r.s.c_str(), r.s.length(),
                      r.is_py ? comment_text_color : candidate_text_color,
-                     fmt.Get(), false);
-            x += rs.cx;
+                     fmt.Get(), run_width < rs.cx);
+            if (run_width < rs.cx)
+              break;
+            x += run_width;
             if (k + 1 < runs.size())
               x += annot_gap;
           }

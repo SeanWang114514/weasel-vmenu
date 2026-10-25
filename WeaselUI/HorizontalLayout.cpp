@@ -488,16 +488,38 @@ void HorizontalLayout::DoLayout(CDCHandle dc, PDWR pDWR) {
     //   也要把高亮所在的那一列画出来（最多也就多放 1 格）。
     if (id >= 0 && id < candidates_count)
       draw_cols = max(draw_cols, (id % kGridCols) + 1);
+    // [vmenu-hug] 统一列宽只在展开态启用。
+    if (!grid_uniform)
+      grid_uniform = !static_menu && grid_multi_row && col_width > 0;
     // 凡是「格宽被钉死」的两种情况，文字/注释都要裁在格子里（DirectWrite 自动画「…」）。
-    const bool clip_cells = fixed_cells || cells_shrunk;
+    // 展开网格也必须把文字裁在自己的格子内。此前只有固定格宽/压窄兜底才裁切，
+    // 正常展开态遇到长注释或字体度量偏差时，文字会越过列右缘覆盖下一项。
+    const bool clip_cells = fixed_cells || cells_shrunk || grid_uniform;
+    auto grid_cell_left = [&](int idx) {
+      const int col = idx % cols_per_row;
+      int left = offsetX + real_margin_x;
+      // 符号面板第 0 行的大栏使用独立格宽，不能用 col_width * col 估算。
+      if (vpick_panel && idx / cols_per_row == 0) {
+        for (int k = 0; k < col; ++k)
+          left += (k < draw_tab_cells && tab_col_width > 0) ? tab_col_width
+                                                            : col_width;
+      } else {
+        left += col * col_width;
+      }
+      return left;
+    };
+    auto grid_cell_width = [&](int idx) {
+      if (vpick_panel && idx / cols_per_row == 0 &&
+          idx % cols_per_row < draw_tab_cells && tab_col_width > 0)
+        return tab_col_width;
+      return col_width;
+    };
     visible_cols_ = draw_cols;
     const bool cols_trimmed = (draw_cols < kGridCols);
     // [vmenu-hug] 统一列宽**只在展开态启用**（用户要求「打开后就同步成最长的候选词」）。
     //   收起态刻意不统一：框宽紧贴候选词的自然宽度，最长的那个不再把整条框撑宽
     //   （用户要求「不开启折叠栏的时候候选词框的大小跟随这个候选词」）。
     //   固定格宽（剪贴板 / 常用语）与「压窄兜底」当然也是等宽的。
-    if (!grid_uniform)
-      grid_uniform = !static_menu && grid_multi_row && col_width > 0;
     for (auto i = 0; i < candidates_count && i < MAX_CANDIDATES_COUNT; ++i) {
       // [vmenu-grid] 「实在太长就少放 1-3 个」：这一行第 draw_cols 格之后的候选不画。
       //   注意不画 ≠ 挪走：列位置仍按 kGridCols 的步长排，所以被省掉的永远是每行的**最后几格**，
@@ -584,8 +606,7 @@ void HorizontalLayout::DoLayout(CDCHandle dc, PDWR pDWR) {
         cmt_h = size.cy;
       }
       // 本格的右缘（= 下一格左缘 - 列间距），与下面 grid_uniform 的「钉列号」算法一致。
-      const int cell_right = offsetX + real_margin_x +
-                             ((i % cols_per_row) + 1) * col_width -
+      const int cell_right = grid_cell_left(i) + grid_cell_width(i) -
                              _style.candidate_spacing;
       int draw_text_w = text_natural_w;
       // 注释占位宽度（注释 + 与候选词之间的间距）：固定格宽下文字区与光标都要让出这块。
@@ -668,8 +689,7 @@ void HorizontalLayout::DoLayout(CDCHandle dc, PDWR pDWR) {
       //     换行时 w 被重置成新行的行首，而累加值还是上一行末尾的值，
       //     用它补齐会把新行第 2 格起推到面板外（实测第 2–4 行只剩第 1 格可见）。
       if (grid_uniform) {
-        w = offsetX + real_margin_x + ((i % cols_per_row) + 1) * col_width -
-            _style.candidate_spacing;
+        w = cell_right;
         // [vmenu-grid] 面板宽度按**实际画出的格数**算：候选比一行格数还少时不留空格
         //   （例如 v 常用语只有 2 条，就不要按 4 格宽画）。
         // [vpick-center] 符号面板例外：宽度**钉死**成 row_budget（= 主题 style/layout/
@@ -943,6 +963,14 @@ void HorizontalLayout::DoLayout(CDCHandle dc, PDWR pDWR) {
         _highlightRect = _candidateRects[id];
       }
     }
+  }
+
+  // [vmenu-grid-mark] 等宽网格的候选文字从格子左缘开始绘制，不能沿用自然宽度
+  // 布局的 base_offset；否则高亮标记会和第一项文字重叠。把高亮背景向左扩出
+  // mark_gap，标记就位于格子外侧，而候选文字与其它列仍保持严格对齐。
+  if (grid_uniform && id >= 0 && id < candidates_count && mark_gap > 0 &&
+      !_candidateRects[id].IsRectEmpty()) {
+    _highlightRect.left -= mark_gap;
   }
 
   // calc page indicator

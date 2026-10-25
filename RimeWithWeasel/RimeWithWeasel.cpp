@@ -841,6 +841,36 @@ BOOL RimeWithWeaselHandler::ProcessKeyEvent(KeyEvent keyEvent,
       return FALSE;
     }
   }
+  // [collapsed-candidate-nav] 普通候选栏在收起态也要支持左右键移动高亮。
+  //   展开网格由下面的 vmenu-grid 分支处理；vpick 符号面板则由上面的专用分支处理。
+  //   这里仅接管普通拼音候选，避免把 v 菜单的左右键语义改掉。
+  if (!(keyEvent.mask & ibus::Modifier::RELEASE_MASK) &&
+      !rime_api->get_option(session_id, "vmenu_grid") && !grid_is_v &&
+      RIME_API_AVAILABLE(rime_api, highlight_candidate_on_current_page)) {
+    const bool kLeft = keyEvent.keycode == ibus::Keycode::Left;
+    const bool kRight = keyEvent.keycode == ibus::Keycode::Right;
+    if (kLeft || kRight) {
+      RIME_STRUCT(RimeContext, ctx);
+      if (rime_api->get_context(session_id, &ctx)) {
+        const int current = ctx.menu.highlighted_candidate_index;
+        const int count = ctx.menu.num_candidates;
+        rime_api->free_context(&ctx);
+        if (count > 0) {
+          // librime 在没有高亮时通常返回 -1；首次按左右键时从对应端进入。
+          const int target =
+              (current < 0) ? (kRight ? 0 : count - 1)
+                            : (current + (kRight ? 1 : -1));
+          if (target >= 0 && target < count) {
+            HighlightCandidateOnCurrentPage((size_t)target, ipc_id, eat);
+            m_active_session = ipc_id;
+            return TRUE;
+          }
+          // 边界处吞掉方向键，避免它落到应用里移动文本光标；候选仍保持高亮。
+          return TRUE;
+        }
+      }
+    }
+  }
   if (!(keyEvent.mask & ibus::Modifier::RELEASE_MASK) &&
       rime_api->get_option(session_id, "vmenu_grid") &&
       (!grid_is_v ||
