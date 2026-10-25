@@ -1,0 +1,64 @@
+diff --git a/build.bat b/build.bat
+index 38a3311d..aabcb731 100644
+--- a/build.bat
++++ b/build.bat
+@@ -90,7 +90,8 @@ if %clean% == 1 (
+ )
+ 
+ if defined CMAKE_GENERATOR (
+-  set common_cmake_flags=%common_cmake_flags% -G%CMAKE_GENERATOR%
++  rem [local-build] 加引号，否则 "Visual Studio 18 2026" 这种带空格的生成器名会被拆开
++  set common_cmake_flags=%common_cmake_flags% -G"%CMAKE_GENERATOR%"
+ )
+ if defined ARCH (
+   set common_cmake_flags=%common_cmake_flags% -A%ARCH%
+diff --git a/src/rime/gear/table_translator.cc b/src/rime/gear/table_translator.cc
+index ccbc36fc..4506e936 100644
+--- a/src/rime/gear/table_translator.cc
++++ b/src/rime/gear/table_translator.cc
+@@ -255,6 +255,45 @@ an<Translation> TableTranslator::Query(const string& input,
+   string code = input;
+   boost::trim_right_if(code, boost::is_any_of(delimiters_));
+ 
++  // [vmenu-radical 2026-10-01] 修「u 部件拆字查不到词」。
++  //
++  // 背景（实测结论，不是猜的）：
++  //   radical_pinyin.dict.yaml 的码是「部首音节用撇号连起来」的整串
++  //   （好 = nv'zi、明 = ri'yue、江 = shui'gong），59020 个码里 59012 个含撇号。
++  //   但 prism 的元数据 alphabet = "abcdefghijklmnopqrstuvwxyz"（**没有撇号**），
++  //   Darts 双数组按 alphabet 建 trie —— 于是编译时撇号就被丢掉了，
++  //   prism 里真正存的 key 是**去掉撇号的连写**：nvzi / riyue / shuigong。
++  //   （把 59020 个码去掉撇号后剩 59009 个，11 个碰撞合并，与 prism 的
++  //     num_syllables=59020 同量级，印证「撇号在存储阶段已消失」。）
++  //
++  //   而这里 code = 用户 raw 输入，撇号还在 → GetValue("nv'zi") 永远 MISS，
++  //   候选数为 0。lua 侧也修不了：table_translator 的查表路径**不经过**
++  //   speller/algebra（algebra 只在 dict_compiler 编译期和 script_translator
++  //   里用，见 dict_compiler.cc:319），所以声明式的 xform/'// 对这里无效。
++  //
++  //   实测对照（真实按键 + 截图）：
++  //     u n v ' z i  → 0 个候选      ← 撇号原样送进 GetValue
++  //     u n v   z i  → 1 好 hao      ← 连写命中，证明 prism 存的就是 nvzi
++  //
++  // 修法：查表前把分隔符（撇号和空格）从 code 里删掉。对普通拼音表
++  //   （如 rime_ice 的 melt_eng / table_translator@custom_phrase）没有副作用，
++  //   因为它们的码本来就不含分隔符，删了等于没删。
++  //   注意 preedit 仍用原始 input，所以候选上方显示的还是用户打的原样。
++  {
++    const string kSep = delimiters_ + " ";
++    string cleaned;
++    cleaned.reserve(code.size());
++    for (char ch : code) {
++      if (kSep.find(ch) == string::npos)
++        cleaned.push_back(ch);
++    }
++    if (cleaned != code) {
++      DLOG(INFO) << "table lookup: stripping delimiters '" << code << "' -> '"
++                 << cleaned << "'";
++      code.swap(cleaned);
++    }
++  }
++
+   an<Translation> translation;
+   if (enable_completion_) {
+     translation = Cached<LazyTableTranslation>(this, code, segment.start,

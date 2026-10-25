@@ -65,7 +65,13 @@
 - `build.bat`：给带空格的 CMake generator 加引号。
 - `deps/*`、`dist_x64/`、`lib_x64/` 等还有本地构建状态或产物。
 
-这些子模块改动未随父仓库本次提交上传。若要继续使用它们，请先在子模块单独建立明确分支和提交，再决定是否推送到有权限的 librime fork；不要把生成目录提交进仓库，也不要直接强推官方 `rime/librime`。
+父仓库中的 `librime-local.patch` 保存了前两项顶层源文件改动，可在需要时执行：
+
+```powershell
+git -C D:\weasel-build\weasel\librime apply ..\librime-local.patch
+```
+
+补丁不包含 `deps/*` 的嵌套子模块状态和 `dist_x64/`、`lib_x64/` 生成目录。若要继续使用这些子模块改动，请先在子模块单独建立明确分支和提交，再决定是否推送到有权限的 librime fork；不要把生成目录提交进仓库，也不要直接强推官方 `rime/librime`。
 
 ## 操作约束
 
